@@ -1,0 +1,83 @@
+services:
+  - type: web
+    name: votrix-managed-agents-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: scripts/start-web.sh
+    healthCheckPath: /health
+    preDeployCommand: scripts/migrate.sh
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: VMA_RUNTIME_BACKEND
+        value: deepagents
+      - key: VMA_DEFAULT_MODEL_PROVIDER
+        value: anthropic
+      - key: DATABASE_URL
+        fromDatabase:
+          name: votrix-managed-agents-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: VMA_API_KEY
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_PUBLIC_URL
+        sync: false
+      - key: S3_REGION
+        value: auto
+
+  - type: worker
+    name: votrix-managed-agents-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: scripts/start-worker.sh
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: VMA_RUNTIME_BACKEND
+        value: deepagents
+      - key: VMA_DEFAULT_MODEL_PROVIDER
+        value: anthropic
+      - key: DATABASE_URL
+        fromDatabase:
+          name: votrix-managed-agents-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: VMA_API_KEY
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_PUBLIC_URL
+        sync: false
+      - key: S3_REGION
+        value: auto
+
+databases:
+  - name: votrix-managed-agents-db
+    databaseName: votrix_managed_agents
+    user: votrix_managed_agents
