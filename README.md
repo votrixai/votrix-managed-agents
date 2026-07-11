@@ -15,12 +15,13 @@ Implemented in the open core:
 - A Deep Agents runtime adapter with server-controlled Anthropic, OpenAI, DeepSeek, and custom model-provider configuration.
 - LangGraph checkpoint selection for Postgres, SQLite, and explicit in-memory development mode.
 - S3-compatible object storage for files and skill archives.
+- An optional E2B sandbox provider for isolated session command and filesystem execution.
 - An optional self-hosted work-queue worker and an importable deployment scheduler tick.
 
 Important partial areas:
 
 - Streaming previews are process-local; separate web and worker processes need Redis Streams, NATS, or another tenant-scoped broker.
-- A production deployment needs a remote sandbox implementation supplied through `VMA_SANDBOX_FACTORY`. The safe default has checkpointed file state but no shell execution.
+- The safe default has checkpointed file state but no shell execution. Isolated execution requires the optional E2B provider or an operator-supplied `VMA_SANDBOX_FACTORY`.
 - MCP connections, restart-safe custom-tool/approval resume, skills, seeded memory files, and synchronous subagents are mapped to Deep Agents but do not yet reproduce every Claude semantic.
 - Deployment scheduling, webhook delivery, OAuth token refresh, distributed run locking, and enterprise controls need additional production services.
 
@@ -122,9 +123,30 @@ Run migrations once per release. The reference [Docker Compose deployment](deplo
 
 ## Sandbox configuration
 
-Without `VMA_SANDBOX_FACTORY`, VMA uses Deep Agents' `StateBackend`: files can be checkpointed, but the agent cannot execute shell commands. That is intentional.
+Unless a provider or factory is selected, VMA uses Deep Agents' `StateBackend`: files can be checkpointed, but the agent cannot execute shell commands. That remains the intentional safe default.
 
-Production tenant code must run in an isolated remote container or VM. Configure a factory using `module:attribute` syntax:
+For isolated E2B execution, install the pinned optional extra and configure the server-owned API key:
+
+```bash
+uv sync --extra sandbox-e2b
+```
+
+```dotenv
+VMA_SANDBOX_PROVIDER=e2b
+E2B_API_KEY=...
+VMA_E2B_TEMPLATE=vma-hardened
+VMA_E2B_GUEST_USER=user
+```
+
+The extra pins `langchain-e2b==0.0.5` and `e2b==2.31.0`. Creating a Session immediately provisions exactly one E2B sandbox, uploads its fixed Skills, read-only inputs, and initial memory seed once, seals the immutable files, and pauses the sandbox. Every turn reconnects the same private `external_sandbox_id`, verifies the seal and input digest, and gives Deep Agents an `AsyncE2BSandbox`; the control plane never re-uploads or synchronizes Session files on resume. Changing a Skill, initial input, initial memory source, configured template, or Session resource after the seal is rejected and requires a new Session.
+
+`VMA_E2B_TEMPLATE` is required and must name an operator-owned hardened template. At bootstrap and before every turn, VMA checks that the template's default execution user matches `VMA_E2B_GUEST_USER`, is not root, and cannot complete `sudo -n true`; all remaining Linux filesystem and privilege hardening belongs to that trusted template.
+
+`/workspace` and read-write memory remain mutable and persist with that sandbox, but edits are not written back to VMA Memory Store versions and generated artifacts are not automatically exported. Read-only uploads default below `/mnt/session/uploads` and cannot overlap mutable workspace or memory roots. The seal protects VMA-owned immutable files; the hardened template is responsible for confining other guest writes.
+
+Provider auto-resume is disabled, secure access is enabled, public traffic is disabled, and turn exit uses full-memory pause. Archive preserves the sandbox, deletion kills it, and the in-process janitor provides best-effort cleanup after 30 days by default. Limited networking is passed through E2B's `allow_out` setting without a separate deny-all rule. Packages and CPU/memory/disk sizing must be built into and match the operator-owned template. VMA has no sandbox generations, provider snapshots, Daytona migration, operation leases/heartbeats, durable lifecycle outbox, orphan recovery, or managed-file sync. VMA does not return the external sandbox ID in its public API, although E2B may expose runtime identifiers inside the sandbox itself. See the detailed [sandbox runtime](docs/sandbox-runtime.md) and [E2B persistence](https://e2b.dev/docs/sandbox/persistence).
+
+To use a different isolated container or VM provider, configure a factory using `module:attribute` syntax:
 
 ```dotenv
 VMA_SANDBOX_FACTORY=my_service.sandboxes:create_backend

@@ -29,6 +29,11 @@ from app.models.memory_stores import (
 )
 from app.models.resources import GenericBody, deleted_response, resource_to_response
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
+from app.runtime.sandbox_lifecycle import (
+    SandboxLifecycleConfigurationError,
+    provision_session_sandbox,
+)
+from app.runtime.sandbox_providers import SandboxProviderError
 from app.session_resources import create_session_resource
 
 router = APIRouter(tags=["managed resources"], dependencies=[Depends(require_api_access)])
@@ -2238,28 +2243,41 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
     metadata.update({"deployment_id": deployment.id, "deployment_run_id": run.id})
     vault_input = run_input["vault_ids"] if "vault_ids" in run_input else data.get("vault_ids")
     vault_ids = await _validate_deployment_vault_ids(db, vault_input)
-    session = await sessions_q.create_session(
-        db,
-        agent=agent,
-        agent_version=version,
-        environment=environment,
-        title=run_input.get("title") or data.get("title") or data.get("name") or deployment.name,
-        metadata=metadata,
-        vault_ids=vault_ids,
-    )
-    resource_input = run_input["resources"] if "resources" in run_input else data.get("resources")
-    for resource_data in _normalize_deployment_resources(resource_input):
-        await create_session_resource(
-            db,
-            session,
-            resource_data,
-            allowed_types={"file", "github_repository", "memory_store"},
-        )
-    await _append_deployment_session_events(
-        db,
-        session,
-        run_input.get("initial_events") or data.get("initial_events") or [],
-    )
+    try:
+        async with db.begin_nested():
+            session = await sessions_q.create_session(
+                db,
+                agent=agent,
+                agent_version=version,
+                environment=environment,
+                title=run_input.get("title") or data.get("title") or data.get("name") or deployment.name,
+                metadata=metadata,
+                vault_ids=vault_ids,
+            )
+            resource_input = run_input["resources"] if "resources" in run_input else data.get("resources")
+            for resource_data in _normalize_deployment_resources(resource_input):
+                await create_session_resource(
+                    db,
+                    session,
+                    resource_data,
+                    allowed_types={"file", "github_repository", "memory_store"},
+                )
+            await _append_deployment_session_events(
+                db,
+                session,
+                run_input.get("initial_events") or data.get("initial_events") or [],
+            )
+            await provision_session_sandbox(
+                db,
+                session=session,
+                agent_version=agent_version,
+                environment_config=environment.config,
+            )
+    except (SandboxLifecycleConfigurationError, SandboxProviderError) as exc:
+        raise DeploymentRunCreationError(
+            "sandbox_provision_error",
+            "The deployment session sandbox could not be provisioned",
+        ) from exc
     return session
 
 

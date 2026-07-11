@@ -106,11 +106,24 @@ def _validate_sandbox(sandbox: Any) -> None:
     if not isinstance(sandbox, dict):
         raise ValueError("environment config.sandbox must be an object")
     backend = sandbox.get("backend")
-    if backend not in {None, "unix_local", "self_hosted_worker", "unconfigured_cloud"}:
+    if backend not in {None, "e2b", "unix_local", "self_hosted_worker", "unconfigured_cloud"}:
         raise ValueError("environment config.sandbox.backend is unsupported")
     root = sandbox.get("root")
     if root is not None and not isinstance(root, str):
         raise ValueError("environment config.sandbox.root must be a string")
+    for key in ("template", "workdir"):
+        value = sandbox.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"environment config.sandbox.{key} must be a non-empty string")
+    for key in ("auto_pause", "auto_resume", "keep_memory", "pause_on_exit", "allow_public_traffic"):
+        value = sandbox.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"environment config.sandbox.{key} must be a boolean")
+    idle_timeout = sandbox.get("idle_timeout_seconds")
+    if idle_timeout is not None:
+        _validate_positive_number(idle_timeout, "environment config.sandbox.idle_timeout_seconds")
+    if sandbox.get("auto_resume") is True and sandbox.get("keep_memory") is False:
+        raise ValueError("environment config.sandbox.auto_resume requires keep_memory")
     _validate_limit_object(
         sandbox.get("concurrency_limits"),
         "environment config.sandbox.concurrency_limits",

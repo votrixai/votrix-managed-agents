@@ -1,6 +1,7 @@
 import asyncio
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,8 @@ async def create_environment(
     name = _normalize_environment_name(body.name)
     try:
         config = environment_config_with_scope(body.config, body.scope)
-    except ValueError as exc:
+        _validate_sandbox_policy(config)
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     environment = await env_q.create_environment(
         db,
@@ -92,7 +94,9 @@ async def update_environment(
             config = environment_config_with_scope(config or environment.config, body.scope)
         elif config is not None:
             config = environment_config_with_scope(config, environment_scope(environment.config))
-    except ValueError as exc:
+        if config is not None:
+            _validate_sandbox_policy(config)
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     environment = await env_q.update_environment(
         db,
@@ -110,6 +114,17 @@ def _normalize_environment_name(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise HTTPException(status_code=422, detail="environment name must be a non-empty string")
     return value.strip()
+
+
+def _validate_sandbox_policy(config: dict[str, Any]) -> None:
+    from app.runtime.sandbox_lifecycle import (
+        E2B_PROVIDER,
+        sandbox_policy_from_environment,
+        selected_sandbox_provider,
+    )
+
+    if selected_sandbox_provider(config) == E2B_PROVIDER:
+        sandbox_policy_from_environment(config)
 
 
 @router.post("/{environment_id}/archive", response_model=EnvironmentResponse)

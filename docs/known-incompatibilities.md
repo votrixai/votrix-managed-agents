@@ -1,6 +1,6 @@
 # Known Incompatibilities
 
-Snapshot: 2026-07-10
+Snapshot: 2026-07-11
 Runtime kernel: Deep Agents 0.6.12
 
 This is the explicit gap ledger between VMA and [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview). It covers differences that can be hidden by a compatible route or response shape but materially affect execution, security, durability, or operations.
@@ -15,14 +15,14 @@ Status terms match the [compatibility matrix](./compatibility-matrix.md): **Impl
 | --- | --- | --- |
 | Cross-process live preview broker | Gap | Separate workers cannot deliver token/tool deltas to web-process SSE subscribers. |
 | Distributed per-session run ownership | Gap | Process-local locks cannot prevent duplicate turns across replicas. |
-| Production remote sandbox | Gap | Default execution has no shell; unsafe local shell is not tenant isolation. |
+| E2B remote sandbox | Partial | Optional isolated execution exists, but E2B is hosted unless deployed through BYOC and is not Claude's managed sandbox service. |
 | Provider behavioral parity | Inherently partial | Tool calls, streaming, reasoning, multimodal input, usage, and failures vary by model/provider. |
 | `deepseek-reasoner` runtime | Unsupported | The current Deep Agents adapter rejects it because the harness requires tool calling. |
 | Exact declared subagent roster | Partial | Deep Agents can add a built-in general-purpose subagent when `task` is exposed. |
 | Claude durable multiagent threads | Gap | Deep Agents synchronous subagents are ephemeral; background subagents use another protocol. |
 | MCP OAuth lifecycle | Gap | Stored/matched access tokens are not automatically refreshed or revoked. |
 | Anthropic system skills | Gap | Their private packages and behavior are unavailable to VMA. |
-| Claude memory mount/writeback | Gap | VMA currently injects bounded memory context rather than a bidirectional mounted store. |
+| Claude memory mount/writeback | Gap | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
 | Production deployment scheduler | Gap | An idempotent tick exists, but no always-on scheduler service is included. |
 | Webhook delivery | Gap | Cryptographic helpers exist, but endpoint management and delivery do not. |
 | RBAC, quotas, billing, and audit | Gap | Workspace API keys alone are not a hosted enterprise control plane. |
@@ -85,25 +85,40 @@ Two replicas can otherwise start work for one session, race checkpoint writes, d
 
 ### Cancellation is not end-to-end
 
-Changing a public session state or cancelling an async task does not guarantee that an in-flight provider request, MCP request, or remote command has stopped. Each adapter needs cooperative cancellation plus a hard sandbox termination path. Cost and side effects may continue after the client sees a cancelled/interrupted state until that work is truly stopped.
+Changing a public Session state or cancelling an async task does not prove that an in-flight MCP request or remote command has stopped. The current E2B path has no sandbox-operation lease, heartbeat, fencing token, or durable cancellation outbox. Turn exit attempts to pause the sandbox and Session deletion attempts to kill it, but production still needs cooperative command cancellation, hard termination, and distributed run ownership.
 
 ## Sandbox and environment behavior
 
-### No production sandbox ships with VMA
+### The optional E2B provider is not Claude's sandbox service
 
-Claude cloud environments include managed, isolated execution infrastructure. VMA ships an integration hook, not a comparable fleet:
+Claude cloud environments include Anthropic-managed isolated execution infrastructure and lifecycle behavior. VMA has three materially different choices:
 
 - Default: Deep Agents `StateBackend`, with checkpointed files and no shell.
-- Explicit development escape hatch: `LocalShellBackend` on the control-plane host.
-- Production extension: `VMA_SANDBOX_FACTORY` returning an operator-provided backend.
+- Optional `sandbox-e2b` extra: `langchain-e2b==0.0.5` and `e2b==2.31.0`, selected with `VMA_SANDBOX_PROVIDER=e2b`, a server-owned `E2B_API_KEY`, and a required operator-owned `VMA_E2B_TEMPLATE`.
+- Custom integration: `VMA_SANDBOX_FACTORY` returning an operator-provided backend.
 
-A remote sandbox is therefore required before enabling `bash` or arbitrary tenant code. See [sandbox runtime](./sandbox-runtime.md).
+The E2B path provisions exactly one isolated sandbox while creating a Session. It uploads the fixed initial bundle once, seals the immutable inputs, pauses with full-memory preservation, and later reconnects the same opaque external ID. Before every turn it recomputes the input identity and verifies the stored seal; it never re-uploads, repairs, or synchronizes files on resume. Deep Agents receives an `AsyncE2BSandbox` backend and invokes command and file operations through tool calls.
 
-### Environment policy is declarative until the provider enforces it
+Provider auto-resume is disabled so every reconnect passes through VMA authorization. Secure access is enabled and public traffic is disabled. Archive preserves the sandbox, deletion kills it, and best-effort retention cleanup defaults to 30 days. E2B remains an external dependency unless the operator deploys [E2B BYOC](https://e2b.dev/docs/byoc), and VMA makes no guarantee that its performance, failure behavior, isolation implementation, or lifecycle is behaviorally equal to [Claude Managed Agents sessions](https://platform.claude.com/docs/en/managed-agents/sessions). See [sandbox runtime](./sandbox-runtime.md).
 
-VMA validates and summarizes network, package, and resource fields. The control plane does not itself enforce them. A factory that ignores `allowed_hosts`, package-manager policy, memory, disk, CPU, or timeout produces an unrestricted sandbox even if the environment response says otherwise.
+The hardened template is the trusted computing base for guest filesystem confinement. VMA verifies only that the template's default execution user matches the configured non-root guest and that passwordless sudo is unavailable; it does not scan or harden the whole Linux image. E2B may expose its own sandbox/team/template identifiers inside the guest runtime even though VMA omits the external sandbox ID from control-plane API responses.
 
-Providers must fail closed when a policy cannot be implemented.
+### Sandbox lifecycle has no recovery protocol
+
+VMA records one external E2B sandbox ID as opaque private database state; it is not a public resource identifier or an authorization boundary. Database transactions and provider side effects cannot be atomic. A failed Session create attempts to kill a sandbox it already created, but VMA has no provisioning generations, snapshots, operation leases, heartbeat/fencing, durable outbox, or automatic orphan discovery/recovery. A process crash can therefore leave provider and database state inconsistent, and operators must inspect failed creates and E2B inventory.
+
+When retention cleanup is enabled, VMA's in-process janitor makes eligible paused sandboxes best-effort cleanup candidates after a configurable threshold, which defaults to 30 days. This is not an E2B retention guarantee or exact deletion deadline. Scale-to-zero and suspended API services also suspend the loop, so overdue cleanup waits for a later API start. Once the janitor or Session deletion kills a sandbox, its filesystem and process state cannot be resumed; conversation events follow their separate database retention policy.
+
+### Environment policy support depends on the provider
+
+VMA validates and summarizes network, package, and resource fields. The E2B adapter maps supported `none`, `limited`, and `unrestricted` egress policies, enables secure access, and disables public traffic. Limited mode passes destinations through E2B's `allow_out`; VMA does not add a separate `deny_out` or deny-all rule, so the effective guarantee depends on E2B's service semantics. Other environment declarations do not automatically acquire Claude semantics:
+
+- CPU, memory, disk, and preinstalled packages are selected at the E2B template level rather than sized independently for every session request. VMA compares requested values with the operator-declared `VMA_E2B_TEMPLATE_RESOURCES` profile but does not independently attest that profile in this MVP.
+- Package caches and installed environment state are not shared across session sandboxes. A custom template is required for a common prepared image.
+- Package changes made by the guest remain only in that one sandbox until deletion or cleanup.
+- `networking.allow_mcp_servers` does not create sandbox egress exceptions because VMA's MCP clients currently execute in the control plane.
+
+A custom factory that ignores `allowed_hosts`, package-manager policy, memory, disk, CPU, or timeout can still produce an unrestricted sandbox even if the Environment response says otherwise. Every provider must fail closed when it cannot implement a required policy.
 
 ### Filesystem tool policy is not shell policy
 
@@ -227,6 +242,8 @@ VMA does not currently bridge these protocols. Enabling upstream async subagents
 
 VMA validates MCP server/toolset references, matches session-vault credentials by normalized server URL, strips secrets from public run state, and can supply authorization headers to remote MCP clients. Missing credentials emit a session error rather than preventing resource creation.
 
+These MCP clients currently execute in the control-plane process, not through `AsyncE2BSandbox`. Consequently, an environment's `allow_mcp_servers` flag does not translate into an E2B outbound-network rule, and sandbox egress policy does not contain an MCP tool's own network authority.
+
 The following remain incomplete:
 
 - OAuth authorization/enrollment flow.
@@ -249,11 +266,15 @@ Production should supply a managed secret provider and never place provider keys
 
 ## Files, skills, and memory
 
-### File mounts depend on the sandbox provider
+### Public mount paths are portable; enforcement depends on the provider
 
-The control plane copies file bytes into session-scoped object-storage keys and prepares mount metadata. Exact absolute-path placement, read-only enforcement, persistence across turns, generated-file capture, and deletion from a live sandbox depend on the backend implementation.
+R2 or another S3-compatible object store supplies uploaded files and custom Skill archives when a Session is created. VMA materializes the fixed bundle into the one E2B sandbox exactly once. Read-only uploads default below `/mnt/session/uploads`, Skills live below `/skills/custom`, and memory seeds live below their `/mnt/memory` mount. Immutable inputs cannot overlap `/workspace` or a read-write memory root. Once the seal exists, Session-resource mutations are rejected and the control plane never performs per-turn upload, repair, deletion, or managed-file synchronization.
 
-The safe `StateBackend` and a remote filesystem do not have identical semantics. Production malware quarantine and content-disarm policy are also absent.
+The built-in E2B adapter rejects traversal, symlinks, aliases, and path collisions, then makes control-plane-owned immutable files root-owned and verifies their digest before each turn. This protects those files only. The required operator-owned hardened template must confine all other guest writes to `/workspace` and approved read-write memory roots; VMA checks the non-root/no-passwordless-sudo prerequisites but does not implement general Linux hardening.
+
+E2B Session creation currently rejects `github_repository` resources because VMA does not yet implement secure one-time checkout and credential handling. The response union remains available for compatibility on non-E2B control-plane resources, but it must not be interpreted as a completed E2B mount.
+
+Generated sandbox artifacts are not discovered or exported automatically. A file created only inside E2B can disappear when retention cleanup or Session deletion kills the sandbox. Production malware quarantine and content-disarm policy are also absent.
 
 ### Custom skills use Deep Agents semantics
 
@@ -262,7 +283,7 @@ VMA validates custom archives, versions them, and can materialize their top-leve
 Differences from Claude include:
 
 - Prompt wording and when a skill is disclosed to the model.
-- Cache behavior and reload behavior across checkpoints.
+- Skills are pinned and uploaded only when the Session is created; changing one requires a new Session.
 - Available interpreters, binaries, network access, and filesystem layout.
 - Security scanning beyond basic archive validation and local EICAR checks.
 - No guarantee that identical skill files produce identical model behavior.
@@ -277,19 +298,19 @@ A compatible response containing a system-skill reference therefore does not mea
 
 ### Memory runtime semantics differ
 
-The VMA memory-store API has path records, limits, optimistic content preconditions, immutable versions, deletion history, and filters. During a run, the current adapter loads a bounded subset—up to eight mounted stores, up to twenty records per store, and up to 1,000 characters per record—into a filesystem snapshot under each configured mount path. It creates an `AGENTS.md` source listing those files for Deep Agents memory guidance.
+The VMA Memory Store API has path records, limits, optimistic content preconditions, immutable versions, deletion history, and filters. When an E2B-backed Session is created, the adapter loads a bounded subset—up to eight mounted stores, up to twenty records per store, and up to 1,000 characters per record—into that sandbox once. It creates an `AGENTS.md` source listing those files for Deep Agents memory guidance.
 
 It does not currently provide:
 
-- A complete snapshot containing every memory path rather than the bounded selection.
-- Agent read/write/list/delete memory tools with access-mode enforcement.
+- A complete seed containing every memory path rather than the bounded selection.
+- Dedicated agent read/write/list/delete Memory Store tools and durable writeback. E2B protects `read_only` seeds, while `read_write` edits persist only inside that Session's sandbox.
 - Automatic persistence of model edits back into memory versions.
 - Actor/session attribution for writes produced by the graph.
 - Conflict resolution between concurrent sessions.
 - Semantic/vector retrieval.
 - Claude's exact memory instructions or dreaming/research-preview behavior.
 
-Deep Agents' `MemoryMiddleware` reads the generated `AGENTS.md`, while VMA's versioned memory-store API remains the durable source. Changes made to seeded files stay in the graph/sandbox backend and are not written back to database memory versions. The two layers must not be described as equivalent.
+Deep Agents' `MemoryMiddleware` reads the generated `AGENTS.md`. Changes made to read-write seeded files survive later turns through the same sandbox, but they are not written back to database Memory Store versions. The sandbox filesystem and managed Memory Store API must not be described as equivalent.
 
 ## Checkpoints, resumption, and state
 
@@ -297,10 +318,13 @@ Deep Agents' `MemoryMiddleware` reads the generated `AGENTS.md`, while VMA's ver
 
 VMA can select a durable Postgres checkpointer and uses an opaque thread ID stored on the session. A checkpoint contains LangGraph/Deep Agents state, not a Claude session export. It is not a public API contract and can change when dependency versions or graph topology change.
 
+For E2B Sessions, LangGraph state and the persistent E2B sandbox solve different problems. LangGraph restores the agent loop; reconnecting the exact stored external ID restores the existing runtime filesystem and process memory retained by full-memory pause. VMA has no sandbox generation, provider-snapshot, or automatic migration layer. Neither SDK object is persisted. Cleanup after the configured retention threshold can end sandbox resumability without deleting conversation history.
+
 An interrupted run must resume with:
 
 - The same workspace-scoped internal thread ID.
 - The same pinned agent revision.
+- The same E2B external ID, fixed create-time input identity, and immutable-file seal.
 - A compatible graph and middleware topology.
 - Decisions ordered against the saved interrupt action requests.
 

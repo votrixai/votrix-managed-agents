@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,26 @@ async def lifespan(app: FastAPI):
         sentry_dsn=settings.sentry_dsn,
         log_level=settings.log_level,
     )
-    yield
+    janitor_stop = asyncio.Event()
+    janitor_task: asyncio.Task | None = None
+    if str(settings.vma_sandbox_provider).strip().lower() == "e2b" and settings.e2b_api_key:
+        from app.runtime.sandbox_lifecycle import run_sandbox_janitor
+
+        janitor_task = asyncio.create_task(
+            run_sandbox_janitor(janitor_stop),
+            name="vma-e2b-janitor",
+        )
+    try:
+        yield
+    finally:
+        janitor_stop.set()
+        if janitor_task is not None:
+            try:
+                await asyncio.wait_for(janitor_task, timeout=5)
+            except TimeoutError:
+                janitor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await janitor_task
 
 
 def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:

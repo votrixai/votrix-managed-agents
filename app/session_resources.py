@@ -1,4 +1,5 @@
 import re
+from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
@@ -421,5 +422,12 @@ def _safe_mount_segment(value: str) -> str:
 
 
 def _validate_mount_path(value: str) -> None:
-    if not value.startswith("/"):
-        raise HTTPException(status_code=422, detail="mount_path must be absolute")
+    path = PurePosixPath(value)
+    if (
+        not value.startswith("/")
+        or value != str(path)
+        or value == "/"
+        or ".." in path.parts
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise HTTPException(status_code=422, detail="mount_path must be a normalized absolute path")

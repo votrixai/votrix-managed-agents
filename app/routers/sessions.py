@@ -36,6 +36,14 @@ from app.models.sessions import (
 )
 from app.models.resources import GenericBody
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
+from app.runtime.sandbox_lifecycle import (
+    SandboxLifecycleConfigurationError,
+    delete_session_sandbox,
+    pause_session_sandbox,
+    provision_session_sandbox,
+    session_has_managed_sandbox,
+)
+from app.runtime.sandbox_providers import SandboxProviderError
 from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
 from app.runtime.vma_preview_bus import vma_preview_bus
 from app.session_resources import (
@@ -110,6 +118,17 @@ async def create_session(
         event_type="session.status_idle",
         payload={"type": "session.status_idle", "status": "idle", "stop_reason": {"type": "end_turn"}},
     )
+    try:
+        await provision_session_sandbox(
+            db,
+            session=session,
+            agent_version=agent_version,
+            environment_config=environment.config,
+        )
+    except SandboxLifecycleConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SandboxProviderError as exc:
+        raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
     await db.commit()
     return await _session_response(db, session)
 
@@ -230,6 +249,13 @@ async def archive_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if blocks_mutation(session.status):
         raise HTTPException(status_code=409, detail=f"Cannot archive a {session.status} session")
+    try:
+        await pause_session_sandbox(
+            workspace_id=session.workspace_id,
+            session_id=session.id,
+        )
+    except SandboxProviderError as exc:
+        raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
     session = await sessions_q.archive_session(db, session)
     await db.commit()
     return await _session_response(db, session)
@@ -245,6 +271,13 @@ async def delete_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if blocks_mutation(session.status):
         raise HTTPException(status_code=409, detail=f"Cannot delete a {session.status} session")
+    try:
+        await delete_session_sandbox(
+            workspace_id=session.workspace_id,
+            session_id=session.id,
+        )
+    except SandboxProviderError as exc:
+        raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
     await sessions_q.delete_session(db, session)
     await events_q.append_event(
         db,
@@ -264,6 +297,13 @@ async def cancel_session(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        await pause_session_sandbox(
+            workspace_id=session.workspace_id,
+            session_id=session.id,
+        )
+    except SandboxProviderError as exc:
+        raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
     stop_reason = {"type": "cancelled"}
     await sessions_q.update_session(db, session, status=SESSION_TERMINATED, stop_reason=stop_reason)
     await events_q.append_event(
@@ -449,6 +489,7 @@ async def add_session_resource(
     db: AsyncSession = Depends(get_session),
 ):
     session = await _must_get_session(db, session_id)
+    await _ensure_session_inputs_mutable(db, session)
     data = body.model_dump(mode="json")
     resource = await create_session_resource(db, session, data, allowed_types={"file"})
     await db.commit()
@@ -497,7 +538,8 @@ async def update_session_resource(
     body: GenericBody,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
+    await _ensure_session_inputs_mutable(db, session)
     resource = await res_q.get_resource(
         db,
         resource_id=resource_id,
@@ -518,7 +560,8 @@ async def delete_session_resource(
     resource_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
+    await _ensure_session_inputs_mutable(db, session)
     resource = await res_q.get_resource(
         db,
         resource_id=resource_id,
@@ -962,6 +1005,18 @@ async def _must_get_session(db: AsyncSession, session_id: str):
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+async def _ensure_session_inputs_mutable(db: AsyncSession, session) -> None:
+    if await session_has_managed_sandbox(
+        db,
+        workspace_id=session.workspace_id,
+        session_id=session.id,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Session inputs are sealed; create a new Session to change resources",
+        )
 
 
 async def _stream_response(

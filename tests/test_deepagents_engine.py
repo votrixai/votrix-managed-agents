@@ -15,9 +15,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, PrivateAttr
 
 from app.runtime.contracts import EffectiveAgentVersion
-from app.runtime.deepagents_engine import _extract_skill_archive, _graph_input, execute_deep_agent
+from app.runtime.deepagents_engine import _graph_input, execute_deep_agent
 from app.runtime.providers import RuntimeProviderCapabilities, RuntimeProviderConfig
 from app.runtime.sandbox import BackendHandle, SandboxRuntimePlan
+from app.runtime.sandbox_inputs import sandbox_input_bundle
 
 
 class _ScriptedModel(BaseChatModel):
@@ -232,7 +233,17 @@ def test_skill_archive_rejects_path_traversal():
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("../SKILL.md", "unsafe")
     try:
-        _extract_skill_archive(buffer.getvalue())
+        sandbox_input_bundle(
+            {
+                "skill_archives": [
+                    {
+                        "skill_id": "skill_unsafe",
+                        "version": 1,
+                        "archive": buffer.getvalue(),
+                    }
+                ]
+            }
+        )
     except Exception as exc:
         assert "unsafe path" in str(exc)
     else:

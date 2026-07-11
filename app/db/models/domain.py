@@ -1,7 +1,21 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    JSON,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models._base import Base, TimestampMixin
@@ -92,6 +106,7 @@ class Environment(TimestampMixin, Base):
 class ManagedSession(TimestampMixin, Base):
     __tablename__ = "sessions"
     __table_args__ = (
+        UniqueConstraint("workspace_id", "id", name="uq_sessions_workspace_id"),
         UniqueConstraint("workspace_id", "runtime_thread_id", name="uq_sessions_workspace_runtime_thread"),
     )
 
@@ -112,6 +127,69 @@ class ManagedSession(TimestampMixin, Base):
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    sandbox: Mapped[SessionSandbox | None] = relationship(
+        back_populates="session",
+        lazy="raise",
+        passive_deletes=True,
+        uselist=False,
+    )
+
+
+class SessionSandbox(TimestampMixin, Base):
+    __tablename__ = "session_sandboxes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["workspace_id", "session_id"],
+            ["sessions.workspace_id", "sessions.id"],
+            name="fk_session_sandboxes_workspace_session",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "workspace_id",
+            "session_id",
+            name="uq_session_sandboxes_workspace_session",
+        ),
+        UniqueConstraint(
+            "provider",
+            "external_sandbox_id",
+            name="uq_session_sandboxes_provider_external",
+        ),
+        Index(
+            "ix_session_sandboxes_workspace_state_expires",
+            "workspace_id",
+            "state",
+            "expires_at",
+        ),
+        Index(
+            "ix_session_sandboxes_provider_state_expires",
+            "provider",
+            "state",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_sandbox_id: Mapped[str | None] = mapped_column(String(512))
+    state: Mapped[str] = mapped_column(String(64), nullable=False, default="provisioning")
+    template_id: Mapped[str | None] = mapped_column(String(512))
+    region: Mapped[str | None] = mapped_column(String(128))
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    session: Mapped[ManagedSession] = relationship(back_populates="sandbox")
 
 
 class SessionEvent(Base):

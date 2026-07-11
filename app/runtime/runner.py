@@ -641,6 +641,13 @@ async def _runtime_context_for_session(db, session, version: EffectiveAgentVersi
         "memory_stores": memory_stores,
         "provider_secrets": _provider_secrets_from_credentials(credentials),
         "mcp_auth": await _mcp_auth_context_for_session(db, session, version, credentials=credentials),
+        "session_resource_types": sorted(
+            {
+                str((resource.data or {}).get("type") or "")
+                for resource in session_resources
+                if (resource.data or {}).get("type")
+            }
+        ),
         "session_files": await _session_files_for_runtime(session_resources),
         "skill_archives": await _skill_archives_for_runtime(db, session, version),
         "subagents": await _subagents_for_runtime(db, session, version),

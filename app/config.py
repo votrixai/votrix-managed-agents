@@ -35,9 +35,23 @@ class Settings(BaseSettings):
     vma_default_deepseek_model: str = "deepseek-chat"
     vma_model_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)
     vma_checkpoint_database_url: str = ""
+    vma_sandbox_provider: str = "state"
     vma_sandbox_factory: str = ""
     vma_allow_unsafe_local_sandbox: bool = False
     vma_sandbox_root: str = "/workspace"
+    vma_sandbox_retention_seconds: int = 30 * 24 * 60 * 60
+    vma_sandbox_janitor_interval_seconds: int = 60
+    vma_sandbox_command_timeout_seconds: int = 900
+    vma_e2b_template: str = ""
+    vma_e2b_workdir: str = "/workspace"
+    vma_e2b_guest_user: str = "user"
+    vma_e2b_timeout_seconds: int = 900
+    vma_e2b_auto_pause: bool = True
+    vma_e2b_auto_resume: bool = False
+    vma_e2b_keep_memory: bool = True
+    vma_e2b_pause_on_exit: bool = True
+    vma_e2b_allow_public_traffic: bool = False
+    vma_e2b_template_resources: Annotated[dict[str, Any], NoDecode] = Field(default_factory=dict)
     vma_max_graph_steps: int = 250
     vma_run_timeout_seconds: int = 900
     vma_web_fetch_max_bytes: int = 1_000_000
@@ -52,6 +66,11 @@ class Settings(BaseSettings):
     vma_worker_token: str = ""
     vma_encryption_key: str = ""
     vma_allow_plaintext_secrets_local: bool = True
+
+    e2b_api_key: str = ""
+    e2b_domain: str = ""
+    e2b_api_url: str = ""
+    e2b_sandbox_url: str = ""
 
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""
@@ -85,6 +104,15 @@ class Settings(BaseSettings):
     @field_validator("vma_api_key_workspaces", mode="before")
     @classmethod
     def parse_api_key_workspaces(cls, value):
+        if value is None or value == "":
+            return {}
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @field_validator("vma_e2b_template_resources", mode="before")
+    @classmethod
+    def parse_e2b_template_resources(cls, value):
         if value is None or value == "":
             return {}
         if isinstance(value, str):

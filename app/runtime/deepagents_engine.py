@@ -8,11 +8,8 @@ and one run, then streamed into the Claude Managed Agents-shaped event protocol.
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import json
 import re
-import zipfile
 from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -41,6 +38,7 @@ from app.runtime.deepagent_tools import (
     web_search_tool,
 )
 from app.runtime.providers import build_chat_model, resolve_runtime_provider
+from app.runtime.sandbox_inputs import sandbox_input_bundle
 from app.runtime.sandbox import open_backend
 
 
@@ -113,12 +111,14 @@ async def execute_deep_agent(
 
     tool_events: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    input_bundle = sandbox_input_bundle(runtime_context)
     async with AsyncExitStack() as stack:
         backend_handle = await stack.enter_async_context(
             open_backend(
                 workspace_id=workspace_id,
                 session_id=session_id,
                 environment_config=environment_config,
+                input_bundle=input_bundle,
             )
         )
         saver = await stack.enter_async_context(checkpoint_saver())
@@ -152,8 +152,10 @@ async def execute_deep_agent(
             interrupt_on[name] = {"allowed_decisions": ["respond"]}
 
         virtual_files, state_files, skill_sources, memory_sources, read_only_paths = _virtual_files(runtime_context)
-        if backend_handle.plan.backend != "langgraph_state" and virtual_files:
+        if backend_handle.plan.backend not in {"langgraph_state", "e2b"} and virtual_files:
             await _upload_virtual_files(backend_handle.backend, virtual_files, warnings)
+            state_files = {}
+        elif backend_handle.plan.backend == "e2b":
             state_files = {}
 
         permissions = []
@@ -641,53 +643,22 @@ def _materialize_subagents(runtime_context: dict[str, Any], secrets: dict[str, s
 def _virtual_files(
     runtime_context: dict[str, Any],
 ) -> tuple[list[tuple[str, bytes]], dict[str, dict[str, Any]], list[str], list[str], list[str]]:
-    files: list[tuple[str, bytes]] = []
-    read_only: list[str] = []
-    for item in runtime_context.get("session_files") or []:
-        if not isinstance(item, dict) or not isinstance(item.get("content"), bytes):
-            continue
-        path = _safe_virtual_path(str(item.get("path") or ""))
-        files.append((path, item["content"]))
-        if item.get("read_only", True):
-            read_only.append(path)
-
-    skill_sources: list[str] = []
-    for archive in runtime_context.get("skill_archives") or []:
-        if not isinstance(archive, dict) or not isinstance(archive.get("archive"), bytes):
-            continue
-        extracted = _extract_skill_archive(archive["archive"])
-        for path, content in extracted:
-            files.append((f"/skills/custom/{path}", content))
-        if extracted:
-            skill_sources = ["/skills/custom/"]
-    if skill_sources:
-        read_only.extend(["/skills/custom", "/skills/custom/**"])
-
-    memory_sources: list[str] = []
-    for store in runtime_context.get("memory_stores") or []:
-        if not isinstance(store, dict):
-            continue
-        mount = _safe_virtual_path(str(store.get("mount_path") or f"/mnt/memory/{store.get('memory_store_id')}"))
-        memory_lines = []
-        if store.get("instructions"):
-            memory_lines.append(str(store["instructions"]))
-        for memory in store.get("memories") or []:
-            if not isinstance(memory, dict):
-                continue
-            rel = str(memory.get("path") or memory.get("path_key") or memory.get("memory_id") or "memory.md")
-            rel = rel.lstrip("/")
-            path = _safe_virtual_path(f"{mount}/{rel}")
-            content = str(memory.get("content") or "").encode()
-            files.append((path, content))
-            memory_lines.append(f"- {path}")
-        agents_path = _safe_virtual_path(f"{mount}/AGENTS.md")
-        files.append((agents_path, "\n".join(memory_lines).encode()))
-        memory_sources.append(agents_path)
-        if str(store.get("access") or "read_write") == "read_only":
-            read_only.extend([mount, f"{mount}/**"])
-
-    state_files = {path: _file_data(content) for path, content in files}
-    return files, state_files, skill_sources, memory_sources, read_only
+    bundle = sandbox_input_bundle(runtime_context)
+    read_only = [item.path for item in bundle.immutable_files]
+    for root in bundle.skill_sources:
+        read_only.extend([root.rstrip("/"), root.rstrip("/") + "/**"])
+    immutable_paths = {item.path for item in bundle.immutable_files}
+    for source in bundle.memory_sources:
+        if source in immutable_paths:
+            root = str(PurePosixPath(source).parent)
+            read_only.extend([root, root.rstrip("/") + "/**"])
+    return (
+        bundle.upload_pairs(),
+        bundle.state_files(),
+        list(bundle.skill_sources),
+        list(bundle.memory_sources),
+        read_only,
+    )
 
 
 async def _upload_virtual_files(backend, files: list[tuple[str, bytes]], warnings: list[dict[str, Any]]) -> None:
@@ -700,33 +671,6 @@ async def _upload_virtual_files(backend, files: list[tuple[str, bytes]], warning
         error = response.get("error") if isinstance(response, dict) else getattr(response, "error", None)
         if error:
             warnings.append({"type": "sandbox_upload_error", "message": str(error)})
-
-
-def _extract_skill_archive(content: bytes) -> list[tuple[str, bytes]]:
-    extracted: list[tuple[str, bytes]] = []
-    total = 0
-    with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        infos = [info for info in archive.infolist() if not info.is_dir()]
-        if len(infos) > 512:
-            raise DeepAgentsRuntimeError("Skill archive contains too many files")
-        for info in infos:
-            path = PurePosixPath(info.filename)
-            if path.is_absolute() or ".." in path.parts or not path.parts:
-                raise DeepAgentsRuntimeError("Skill archive contains an unsafe path")
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise DeepAgentsRuntimeError("Skill archive symlinks are not supported")
-            total += int(info.file_size)
-            if total > 100 * 1024 * 1024:
-                raise DeepAgentsRuntimeError("Skill archive expands beyond 100 MB")
-            extracted.append((str(path), archive.read(info)))
-    return extracted
-
-
-def _file_data(content: bytes) -> dict[str, Any]:
-    try:
-        return {"content": content.decode("utf-8"), "encoding": "utf-8"}
-    except UnicodeDecodeError:
-        return {"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"}
 
 
 def _graph_input(history: list[Any], previous_state: dict[str, Any]) -> tuple[dict[str, Any] | Command | None, int]:
@@ -863,13 +807,6 @@ def _merge_usage(total: dict[str, int], usage: Any) -> None:
     for key, value in usage.items():
         if isinstance(value, int):
             total[key] += value
-
-
-def _safe_virtual_path(value: str) -> str:
-    path = PurePosixPath(value)
-    if not value.startswith("/") or ".." in path.parts:
-        raise DeepAgentsRuntimeError(f"Unsafe virtual path: {value}")
-    return str(path)
 
 
 def _graph_name(name: str, identifier: str) -> str:

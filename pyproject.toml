@@ -39,6 +39,10 @@ dev = [
 contract = [
     "anthropic==0.116.0",
 ]
+sandbox-e2b = [
+    "langchain-e2b==0.0.5",
+    "e2b==2.31.0",
+]
 
 [build-system]
 requires = ["hatchling"]
