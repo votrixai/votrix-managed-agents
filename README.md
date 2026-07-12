@@ -79,7 +79,20 @@ Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
 Agent definitions choose a provider and model, but connection URLs and credentials remain server-controlled.
 
-Anthropic is the default:
+The maintained local and Cloud Run profile uses OpenRouter's native LangChain
+integration, pins `deepseek/deepseek-v4-pro` to Fireworks with Together as its
+only fallback, requires tool parameters, and denies data collection:
+
+```dotenv
+VMA_DEFAULT_MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=...
+VMA_MODEL_PROVIDERS={"openrouter":{"adapter":"openrouter","api_key_env":"OPENROUTER_API_KEY","base_url":"https://openrouter.ai/api/v1","default_model":"deepseek/deepseek-v4-pro","model_kwargs":{"openrouter_provider":{"order":["fireworks","together"],"only":["fireworks","together"],"allow_fallbacks":true,"require_parameters":true,"data_collection":"deny"}},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":false,"reasoning":true,"native_structured_output":false}}}
+```
+
+VMA constructs `langchain_openrouter.ChatOpenRouter`; it does not route this
+profile through the generic OpenAI-compatible adapter.
+
+Anthropic remains available as an explicit provider:
 
 ```dotenv
 VMA_DEFAULT_MODEL_PROVIDER=anthropic
@@ -112,14 +125,27 @@ For a durable deployment, configure at least:
 
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://user:password@host:5432/votrix_managed_agents
-VMA_CHECKPOINT_DATABASE_URL=postgresql://user:password@host:5432/votrix_managed_agents
 S3_ENDPOINT_URL=https://...
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
 S3_BUCKET_NAME=...
 ```
 
-Run migrations once per release. The reference [Docker Compose deployment](deploy/docker-compose/README.md) includes Postgres and MinIO; other targets are listed in [deployment platforms](docs/deployment-platforms.md).
+VMA derives the LangGraph checkpoint connection from `DATABASE_URL`. Set the
+optional `VMA_CHECKPOINT_DATABASE_URL` only when checkpoints intentionally use
+a different database.
+
+Run migrations once per release. Production must use a VMA-owned Postgres database or schema rather than sharing the `votrix-backend` schema. Google Cloud Run is the only maintained hosted deployment target; follow the [Cloud Run deployment guide](scripts/gcloud/README.md) and the [deployment topology notes](docs/deployment-platforms.md).
+
+## Deploy to Google Cloud Run
+
+The checked-in hosted configuration targets GCP Cloud Run exclusively. It provides production and staging service manifests, a Cloud Build pipeline, Artifact Registry setup, Secret Manager integration, and release scripts under [`scripts/gcloud`](scripts/gcloud/README.md). Other hosted platforms are not maintained.
+
+The current Cloud Run MVP deliberately runs one web process in at most one service instance. Live preview delivery and per-session execution ownership are still process-local, so increasing `WEB_CONCURRENCY` or Cloud Run `maxScale` would introduce correctness gaps until a distributed lock and preview broker exist. This is a production deployment shape for the current MVP, not an HA claim.
+
+Each release runs Alembic once through a dedicated Cloud Run migration Job before the new service revision receives traffic. The web service connects to durable Postgres and object storage; it must not rely on Cloud Run's ephemeral filesystem for control-plane state. When E2B is enabled, the sandboxes remain external E2B resources—Cloud Run hosts only the VMA control plane.
+
+The optional worker remains part of the product protocol for `self_hosted` environments. That environment type is independent of VMA's own hosted deployment platform and is not removed by the GCP-only decision. Scheduled Deployment resources and the idempotent scheduler tick also remain available, but the repository does not yet operate a production scheduler that invokes the tick.
 
 ## Sandbox configuration
 
@@ -198,6 +224,7 @@ Strict SDK parsing proves the covered response shapes are accepted by the pinned
 - [Sandbox runtime](docs/sandbox-runtime.md)
 - [Model providers](docs/openai-compatible-providers.md)
 - [Work queue](docs/work-queue.md)
+- [Google Cloud Run deployment](docs/deployment-platforms.md)
 - [Memory stores](docs/memory-stores.md)
 - [Deployments](docs/deployments.md)
 - [Webhooks](docs/webhooks.md)

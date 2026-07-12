@@ -21,7 +21,8 @@ def _clear_s3_env(monkeypatch):
         "S3_PUBLIC_URL",
         "S3_REGION",
     ):
-        monkeypatch.delenv(key, raising=False)
+        # An explicit empty value overrides credentials from a developer .env.
+        monkeypatch.setenv(key, "")
 
 
 def test_s3_object_storage_configuration(monkeypatch):

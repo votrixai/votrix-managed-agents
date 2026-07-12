@@ -460,13 +460,6 @@ async def _execute(
     emit_event: RuntimeEventEmitter | None = None,
     emit_preview: RuntimePreviewEmitter | None = None,
 ) -> RuntimeResult:
-    settings = get_settings()
-    backend = settings.vma_runtime_backend
-    if backend == "local":
-        return await _execute_local(version, history, environment_config, runtime_context=runtime_context)
-    if backend != "deepagents":
-        raise RuntimeError(f"Unsupported VMA runtime backend: {backend}")
-
     from app.runtime.deepagents_engine import execute_deep_agent
 
     return await execute_deep_agent(

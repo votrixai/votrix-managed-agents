@@ -140,7 +140,7 @@ The open core currently persists optionally encrypted credential material and la
 
 ## Process topology
 
-Local mode can execute inline in one web process. Production should separate responsibilities:
+Local mode can execute inline in one web process. The maintained Cloud Run MVP also uses a single web process and a single instance because preview delivery and run ownership are currently process-local. A future horizontally scalable production topology should separate responsibilities:
 
 ```text
 web/API -> Postgres work/event record -> worker -> model/MCP/remote sandbox
@@ -158,7 +158,7 @@ Required production services include:
 - A scheduler service for due deployments.
 - A webhook delivery service with retries and idempotency.
 
-The current process-local preview bus and session-run lock are development/preview mechanisms. They do not become distributed merely because Postgres is configured.
+The current process-local preview bus and session-run lock are development/preview mechanisms. They do not become distributed merely because Postgres is configured. Until the broker, distributed lock, and fencing exist, the production Cloud Run manifest must remain at `WEB_CONCURRENCY=1` and `maxScale=1`; this preserves the MVP's process assumptions but does not provide high availability.
 
 ## Data ownership
 
@@ -194,24 +194,24 @@ The same rule applies to code dependencies: hosted code may import VMA, but VMA 
 
 ## Deployment surface
 
-This repository may include production-quality self-hosting templates without coupling core logic to one platform:
+Google Cloud Run is the repository's only maintained hosted deployment target. Core provider and storage boundaries remain explicit, but VMA does not publish or test deployment templates for other platforms.
 
 ```text
 Dockerfile
+cloudbuild.yaml
+service.production.yaml
+service.staging.yaml
 scripts/start-web.sh
 scripts/start-worker.sh
 scripts/migrate.sh
-deploy/gcp
-deploy/render
-deploy/railway
-deploy/fly
-deploy/aws
-deploy/docker-compose
+scripts/gcloud/
 ```
 
-Platform templates may select managed Postgres, object storage, secrets, or queues. Core business logic must continue to use settings and provider boundaries. The optional worker supports queued/self-hosted execution; it is not itself a remote sandbox.
+Production and staging use separate VMA-owned Postgres databases or schemas and run migrations through a once-per-release Cloud Run Job before traffic moves. The control plane may use S3-compatible object storage and external providers even though its service runs on GCP. In particular, E2B sandboxes remain external sandbox resources rather than Cloud Run containers.
 
-See [deployment platforms](./deployment-platforms.md) and [work queue](./work-queue.md).
+The optional worker still supports queued `self_hosted` Environment execution; it is a product-level execution protocol, not another supported control-plane hosting target, and it is not itself a remote sandbox. Scheduled Deployments retain their importable idempotent tick, but the checked-in Cloud Run MVP does not yet include an operated production scheduler.
+
+See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations guide](../scripts/gcloud/README.md), and [work queue](./work-queue.md).
 
 ## Open-core invariants
 

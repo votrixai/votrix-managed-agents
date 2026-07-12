@@ -1,9 +1,9 @@
-from typing import Any
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import select, update
-from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.db.models import ManagedSession, SessionEvent
 from app.ids import new_id
@@ -68,7 +68,9 @@ async def list_events(
     return list(result.scalars().all())
 
 
-async def get_latest_event_seq(db: AsyncSession, *, session_id: str, workspace_id: str | None = None) -> int:
+async def get_latest_event_seq(
+    db: AsyncSession, *, session_id: str, workspace_id: str | None = None
+) -> int:
     result = await db.execute(
         select(SessionEvent.seq)
         .where(
@@ -85,7 +87,9 @@ def event_source(event_type: str) -> str:
     return event_type.split(".", 1)[0] if "." in event_type else "system"
 
 
-def _normalize_payload(event_type: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+def _normalize_payload(
+    event_type: str, payload: dict[str, Any] | None
+) -> dict[str, Any]:
     normalized = dict(payload or {})
     normalized.setdefault("type", event_type)
     normalized["processed_at"] = _default_processed_at(event_type)

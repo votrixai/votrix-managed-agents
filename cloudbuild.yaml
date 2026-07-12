@@ -1,0 +1,89 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:latest"
+      - .
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - push
+      - --all-tags
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        IMAGE="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+        MIGRATION_JOB="${_SERVICE_NAME}-migrate"
+        RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
+        DATABASE_SECRET="vma-database-url${_SECRET_SUFFIX}"
+
+        echo "Waiting for $$IMAGE to become available..."
+        for attempt in $$(seq 1 10); do
+          if gcloud artifacts docker images describe "$$IMAGE" \
+            --project="${PROJECT_ID}" --quiet >/dev/null 2>&1; then
+            break
+          fi
+          if [ "$$attempt" -eq 10 ]; then
+            echo "Image did not become available: $$IMAGE" >&2
+            exit 1
+          fi
+          sleep 10
+        done
+
+        echo "Deploying migration job $$MIGRATION_JOB..."
+        gcloud run jobs deploy "$$MIGRATION_JOB" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --image="$$IMAGE" \
+          --service-account="$$RUNTIME_SERVICE_ACCOUNT" \
+          --set-env-vars="APP_ENV=${_APP_ENV}" \
+          --set-secrets="DATABASE_URL=$$DATABASE_SECRET:latest" \
+          --command=sh \
+          --args=scripts/migrate.sh \
+          --tasks=1 \
+          --max-retries=0 \
+          --task-timeout=900s \
+          --cpu=1 \
+          --memory=512Mi \
+          --quiet
+
+        echo "Running migrations before changing the service revision..."
+        gcloud run jobs execute "$$MIGRATION_JOB" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --wait \
+          --quiet
+
+        echo "Deploying ${_SERVICE_NAME}..."
+        sed "s|IMAGE_URL|$$IMAGE|" "${_SERVICE_CONFIG}" | \
+          gcloud run services replace \
+            --project="${PROJECT_ID}" \
+            --region="${_REGION}" \
+            /dev/stdin \
+            --quiet
+
+substitutions:
+  _SERVICE_NAME: votrix-managed-agents
+  _SERVICE_CONFIG: service.production.yaml
+  _REPO: votrix
+  _REGION: us-central1
+  _APP_ENV: production
+  _SECRET_SUFFIX: ""
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:latest"

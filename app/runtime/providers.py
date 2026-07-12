@@ -140,6 +140,10 @@ def build_chat_model(config: RuntimeProviderConfig):
         from langchain_deepseek import ChatDeepSeek
 
         return ChatDeepSeek(model=config.model_id, **kwargs)
+    if config.adapter == "openrouter":
+        from langchain_openrouter import ChatOpenRouter
+
+        return ChatOpenRouter(model=config.model_id, **kwargs)
     if config.adapter == "anthropic":
         from langchain_anthropic import ChatAnthropic
 

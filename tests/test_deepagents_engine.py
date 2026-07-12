@@ -251,7 +251,6 @@ def test_skill_archive_rejects_path_traversal():
 
 
 async def test_runner_persists_engine_events_once_with_reserved_id(client, monkeypatch):
-    from app.config import get_settings
     from app.runtime.contracts import RuntimeResult
     from tests.conftest import TEST_HEADERS
 
@@ -281,8 +280,6 @@ async def test_runner_persists_engine_events_once_with_reserved_id(client, monke
             blocking_event_ids=[],
         )
 
-    monkeypatch.setenv("VMA_RUNTIME_BACKEND", "deepagents")
-    get_settings.cache_clear()
     monkeypatch.setattr("app.runtime.deepagents_engine.execute_deep_agent", fake_execute)
 
     agent_response = await client.post(

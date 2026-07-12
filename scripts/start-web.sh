@@ -1,7 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
-exec uvicorn votrix_managed_agents:create_app --factory \
-  --host 0.0.0.0 \
-  --port "${PORT:-8080}" \
-  --workers "${WEB_CONCURRENCY:-1}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+exec "${SCRIPT_DIR}/../entrypoint.sh"

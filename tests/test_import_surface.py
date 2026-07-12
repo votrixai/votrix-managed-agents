@@ -21,7 +21,6 @@ def test_asgi_entrypoint_exposes_app():
 def test_vma_settings_parse_tenant_and_provider_configuration(monkeypatch):
     from app.config import Settings
 
-    monkeypatch.delenv("VMA_RUNTIME_BACKEND", raising=False)
     monkeypatch.setenv("VMA_API_KEYS", "key-a,key-b")
     monkeypatch.setenv("VMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
     monkeypatch.setenv(
@@ -34,7 +33,6 @@ def test_vma_settings_parse_tenant_and_provider_configuration(monkeypatch):
 
     settings = Settings(_env_file=None)
 
-    assert settings.vma_runtime_backend == "deepagents"
     assert settings.vma_api_keys == ["key-a", "key-b"]
     assert settings.vma_api_key_workspaces == {"key-a": "ws_a", "key-b": "ws_b"}
     assert settings.vma_model_providers["gateway"]["adapter"] == "openai"

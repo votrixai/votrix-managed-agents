@@ -1,8 +1,32 @@
+# Secrets and local configuration never belong in an image or build context.
 .env
+.env.*
+
+# VCS, virtual environments, caches, and local state.
 .git
+.github
 .venv
 .pytest_cache
+.ruff_cache
+.mypy_cache
 __pycache__
-*.pyc
-votrix_managed_agents.db
+**/__pycache__
+*.py[cod]
+*.egg-info
+votrix_managed_agents.db*
+*.checkpoints.sqlite3
+
+# Test, documentation, package, and editor artifacts are not runtime inputs.
 tests
+docs
+dist
+build
+.DS_Store
+*.log
+
+# Deployment control files stay outside the runtime image.
+cloudbuild.yaml
+service.*.yaml
+deploy
+scripts/gcloud
+README.md

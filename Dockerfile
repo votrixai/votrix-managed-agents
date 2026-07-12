@@ -23,8 +23,9 @@ COPY --from=builder /app/votrix_managed_agents /app/votrix_managed_agents
 COPY --from=builder /app/alembic /app/alembic
 COPY --from=builder /app/alembic.ini /app/alembic.ini
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
+COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
 COPY --from=builder /app/scripts /app/scripts
 
 EXPOSE 8080
 
-CMD ["sh", "scripts/entrypoint.sh"]
+CMD ["./entrypoint.sh"]

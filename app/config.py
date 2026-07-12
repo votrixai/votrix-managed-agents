@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     vma_allow_anonymous_local: bool = True
     vma_require_beta_header: bool = True
     vma_require_anthropic_version_header: bool = True
-    vma_runtime_backend: str = "deepagents"
     vma_default_model_provider: str = "anthropic"
     vma_default_anthropic_model: str = "claude-sonnet-4-6"
     vma_default_openai_model: str = "gpt-5.5"

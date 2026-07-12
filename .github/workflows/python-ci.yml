@@ -30,5 +30,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --extra contract
 
+      - name: Validate shell entrypoints
+        run: |
+          sh -n entrypoint.sh scripts/*.sh scripts/gcloud/*.sh
+          bash -n run.sh
+
       - name: Run tests
         run: uv run pytest

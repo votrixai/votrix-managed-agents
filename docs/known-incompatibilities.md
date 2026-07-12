@@ -83,6 +83,14 @@ The current in-process `_running_sessions` lock prevents duplicate execution onl
 
 Two replicas can otherwise start work for one session, race checkpoint writes, duplicate provider cost, and emit conflicting events. Production needs a database advisory lock, Redis/etcd lease with fencing token, or equivalent ownership tied to the work item and checkpoint attempt.
 
+The reference Cloud Run manifests therefore pin the MVP to one Uvicorn worker and
+`maxScale=1`. Production also keeps one minimum instance with instance-based CPU so
+response-following work and the E2B janitor are less likely to be suspended. This is
+only a deployment guardrail: a revision rollout can briefly overlap old and new
+instances, and an instance crash still loses process-local previews and ownership.
+Do not raise the replica or worker count until distributed run fencing and a shared
+preview broker exist.
+
 ### Cancellation is not end-to-end
 
 Changing a public Session state or cancelling an async task does not prove that an in-flight MCP request or remote command has stopped. The current E2B path has no sandbox-operation lease, heartbeat, fencing token, or durable cancellation outbox. Turn exit attempts to pause the sandbox and Session deletion attempts to kill it, but production still needs cooperative command cancellation, hard termination, and distributed run ownership.

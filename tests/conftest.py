@@ -24,7 +24,8 @@ VOTRIX_MANAGED_AGENTS_HEADERS = {
 async def test_database(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setenv("VMA_RUNTIME_BACKEND", "local")
+    # Never let a developer's real .env provision E2B during the test suite.
+    monkeypatch.setenv("VMA_SANDBOX_PROVIDER", "state")
     monkeypatch.setenv("S3_ENDPOINT_URL", "https://storage.example.com")
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-key")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret")
@@ -89,6 +90,25 @@ async def test_database(tmp_path, monkeypatch):
     monkeypatch.setattr("app.routers.files.create_presigned_upload_url", fake_create_presigned_upload_url)
     monkeypatch.setattr("app.routers.skills.save_file_bytes", fake_save_file_bytes)
     monkeypatch.setattr("app.routers.skills.download_file_with_type", fake_download_file_with_type)
+
+    from app.runtime.runner import _execute_local
+
+    async def fake_deepagents_executor(
+        version,
+        history,
+        environment_config=None,
+        *,
+        runtime_context=None,
+        **_kwargs,
+    ):
+        return await _execute_local(
+            version,
+            history,
+            environment_config,
+            runtime_context=runtime_context,
+        )
+
+    monkeypatch.setattr("app.runtime.deepagents_engine.execute_deep_agent", fake_deepagents_executor)
     set_current_workspace(default_workspace())
     get_settings.cache_clear()
     await reset_engine_for_tests()

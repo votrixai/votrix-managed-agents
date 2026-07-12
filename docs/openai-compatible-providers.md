@@ -60,6 +60,25 @@ The runtime constructs `langchain_deepseek.ChatDeepSeek` through the native inte
 
 Use `deepseek-chat` with VMA's Deep Agents runtime. VMA explicitly marks `deepseek-reasoner` as `tool_calls=false`, and the runtime rejects every non-tool-calling model before graph compilation because the harness itself depends on tool calling. Reasoning models exposed through another provider still need their own tested capability record; a model name alone is not proof of tool support.
 
+### OpenRouter latency profile (deployment default)
+
+```dotenv
+VMA_DEFAULT_MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=...
+VMA_MODEL_PROVIDERS={"openrouter":{"adapter":"openrouter","api_key_env":"OPENROUTER_API_KEY","base_url":"https://openrouter.ai/api/v1","default_model":"deepseek/deepseek-v4-pro","model_kwargs":{"openrouter_provider":{"order":["fireworks","together"],"only":["fireworks","together"],"allow_fallbacks":true,"require_parameters":true,"data_collection":"deny"}},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":false,"reasoning":true,"native_structured_output":false}}}
+```
+
+The runtime constructs `langchain_openrouter.ChatOpenRouter`. The provider
+policy tries Fireworks first and Together second, permits fallback only between
+those two providers, rejects endpoints that cannot accept the request
+parameters, and requires providers whose data policy denies collection. It does
+not use Auto, Exacto, Nitro, or OpenRouter's default provider pool.
+
+This is the platform default, not a global model allowlist. An Agent that
+explicitly selects another server-approved provider or model retains that
+choice. Tenant runtime fields cannot override the OpenRouter API key, base URL,
+or provider-routing policy.
+
 ## Selecting a provider on an agent
 
 The public model object may include a provider:
@@ -98,29 +117,29 @@ Connection fields remain server-owned. Public fields such as Claude's model `spe
 
 ## Additional providers
 
-`VMA_MODEL_PROVIDERS` is a JSON object keyed by a server-approved provider name. An OpenAI-compatible example:
+`VMA_MODEL_PROVIDERS` is a JSON object keyed by a server-approved provider name. An additional OpenAI-compatible gateway example:
 
 ```dotenv
-VMA_MODEL_PROVIDERS={"openrouter":{"adapter":"openai","api_key_env":"OPENROUTER_API_KEY","base_url":"https://openrouter.ai/api/v1","default_model":"openai/gpt-4.1","model_kwargs":{"use_responses_api":false},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":true,"reasoning":true,"native_structured_output":false}}}
+VMA_MODEL_PROVIDERS={"gateway":{"adapter":"openai","api_key_env":"GATEWAY_API_KEY","base_url":"https://models.example/v1","default_model":"vendor-model","model_kwargs":{"use_responses_api":false},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":false,"reasoning":false,"native_structured_output":false}}}
 ```
 
 Readable JSON form:
 
 ```json
 {
-  "openrouter": {
+  "gateway": {
     "adapter": "openai",
-    "api_key_env": "OPENROUTER_API_KEY",
-    "base_url": "https://openrouter.ai/api/v1",
-    "default_model": "openai/gpt-4.1",
+    "api_key_env": "GATEWAY_API_KEY",
+    "base_url": "https://models.example/v1",
+    "default_model": "vendor-model",
     "model_kwargs": {
       "use_responses_api": false
     },
     "capabilities": {
       "streaming": true,
       "tool_calls": true,
-      "multimodal_input": true,
-      "reasoning": true,
+      "multimodal_input": false,
+      "reasoning": false,
       "native_structured_output": false
     }
   }
@@ -165,6 +184,7 @@ Built-in defaults:
 | `openai` | yes | yes | yes | yes | yes |
 | `deepseek` / `deepseek-chat` | yes | yes | no | yes | yes, as configured |
 | `deepseek` / `deepseek-reasoner` | yes | **no; rejected by VMA runtime** | no | yes | provider-dependent |
+| `openrouter` / DeepSeek V4 Pro profile | yes | yes | no | yes | no, as configured |
 | custom `openai` adapter | yes by default | yes by default | yes by adapter default | yes by adapter default | no unless declared |
 
 These are routing assertions, not certifications. Before enabling a model for tenants, contract-test:
