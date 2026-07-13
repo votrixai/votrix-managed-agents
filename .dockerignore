@@ -19,6 +19,7 @@ votrix_managed_agents.db*
 # Test, documentation, package, and editor artifacts are not runtime inputs.
 tests
 docs
+website
 dist
 build
 .DS_Store

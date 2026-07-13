@@ -211,7 +211,7 @@ Production and staging use separate VMA-owned Postgres databases or schemas and 
 
 The optional worker still supports queued `self_hosted` Environment execution; it is a product-level execution protocol, not another supported control-plane hosting target, and it is not itself a remote sandbox. Scheduled Deployments retain their importable idempotent tick, but the checked-in Cloud Run MVP does not yet include an operated production scheduler.
 
-See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations guide](../scripts/gcloud/README.md), and [work queue](./work-queue.md).
+See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations guide](https://github.com/votrixai/votrix-managed-agents/tree/main/scripts/gcloud), and [work queue](./work-queue.md).
 
 ## Votrix core invariants
 

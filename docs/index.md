@@ -1,0 +1,87 @@
+---
+title: Overview
+description: Understand what Votrix Managed Agents provides, where it is compatible, and how to start locally.
+slug: /
+sidebar_position: 1
+---
+
+Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control
+plane for long-running agents. It targets the public resource, lifecycle, and
+SDK shape of Claude Managed Agents while running agents with Deep Agents and
+LangGraph.
+
+:::caution Project maturity
+
+VMA is an early `0.1.0` project. It is not an Anthropic service and is not yet
+a drop-in behavioral replacement. Its REST surface is broader than its
+production execution surface.
+
+Start with the [compatibility matrix](./compatibility-matrix.md) and
+[known incompatibilities](./known-incompatibilities.md) before using it for
+production workloads.
+
+:::
+
+## Choose a starting point
+
+| Goal | Read |
+| --- | --- |
+| Evaluate SDK and API compatibility | [Compatibility matrix](./compatibility-matrix.md) |
+| Understand control-plane boundaries | [Votrix core architecture](./votrix-core-architecture.md) |
+| Configure model access | [Model providers](./openai-compatible-providers.md) |
+| Run isolated tenant code | [Sandbox runtime](./sandbox-runtime.md) |
+| Operate the current hosted topology | [Cloud Run deployment](./deployment-platforms.md) |
+
+## Run locally
+
+VMA requires Python 3.12 or newer and
+[`uv`](https://docs.astral.sh/uv/). From the repository root:
+
+```bash
+cp .env.example .env
+uv sync
+uv run alembic upgrade head
+./run.sh
+```
+
+Check the service:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/health/db
+```
+
+The local configuration permits anonymous requests when no API key is
+configured. Production must configure workspace authentication, durable
+Postgres, and object storage.
+
+## Documentation and API reference
+
+This site explains architecture, compatibility, runtime behavior, and
+operations. The interactive [Scalar API
+reference](https://managed-agents.votrix.ai/docs) is generated from the live
+FastAPI OpenAPI schema and remains the best place to inspect request and
+response fields.
+
+## System shape
+
+```text
+Anthropic SDK or HTTP client
+            |
+            v
+FastAPI compatibility and control plane
+  |         |             |
+  |         |             +-- S3-compatible object storage
+  |         +---------------- Postgres resources, events, and work
+  +-------------------------- durable session and revision lookup
+            |
+            v
+Deep Agents + LangGraph checkpoints
+  |                 |                 |
+  v                 v                 v
+model provider   remote MCP       sandbox backend
+```
+
+The control plane owns public IDs, workspace isolation, immutable revisions,
+session state, durable events, and compatibility translation. The sandbox—not
+the model or middleware—is the security boundary for tenant code.

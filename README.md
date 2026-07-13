@@ -69,11 +69,11 @@ The local configuration permits anonymous requests when no API key is configured
 Check the service:
 
 ```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/health/db
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/health/db
 ```
 
-Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+Interactive API documentation is available at `http://127.0.0.1:8080/docs`.
 
 ## Configure a model provider
 

@@ -12,7 +12,7 @@ service.staging.yaml
 scripts/gcloud/
 ```
 
-The operational walkthrough, one-time GCP setup, secret loading, manual deploys, CI/CD triggers, and status commands live in [`scripts/gcloud/README.md`](../scripts/gcloud/README.md).
+The operational walkthrough, one-time GCP setup, secret loading, manual deploys, CI/CD triggers, and status commands live in the [GCP operations guide](https://github.com/votrixai/votrix-managed-agents/tree/main/scripts/gcloud).
 
 ## Cloud Run MVP topology
 
