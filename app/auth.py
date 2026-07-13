@@ -89,12 +89,24 @@ async def require_api_access(
     request: Request,
     x_api_key: Annotated[str | None, Header(alias="x-api-key")] = None,
     authorization: Annotated[str | None, Header(alias="authorization")] = None,
-    anthropic_beta: Annotated[str | None, Header(alias="anthropic-beta")] = None,
+    anthropic_beta: Annotated[
+        str | None,
+        Header(alias="anthropic-beta", include_in_schema=False),
+    ] = None,
     votrix_managed_agents_beta: Annotated[
         str | None,
-        Header(alias="votrix-managed-agents-beta"),
+        Header(
+            alias="votrix-managed-agents-beta",
+            description=(
+                "Votrix Managed Agents preview selector. "
+                f"Use `{VOTRIX_MANAGED_AGENTS_BETA}`."
+            ),
+        ),
     ] = None,
-    anthropic_version: Annotated[str | None, Header(alias="anthropic-version")] = None,
+    anthropic_version: Annotated[
+        str | None,
+        Header(alias="anthropic-version", include_in_schema=False),
+    ] = None,
 ):
     settings = get_settings()
 

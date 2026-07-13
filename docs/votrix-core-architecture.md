@@ -1,6 +1,6 @@
-# Open-Core Architecture
+# Votrix Core Architecture
 
-VMA is the self-hosted, workspace-scoped open core of a managed-agents platform. It exposes a Claude Managed Agents-shaped control plane and uses Deep Agents 0.6.12 as the execution kernel. A private hosted product should compose this package with enterprise identity, policy, infrastructure, and commercial services rather than fork the core.
+VMA is the self-hosted, workspace-scoped Votrix core of a managed-agents platform. It exposes a Claude Managed Agents-shaped control plane and uses Deep Agents 0.6.12 as the execution kernel. A private hosted product should compose this package with enterprise identity, policy, infrastructure, and commercial services rather than fork the core.
 
 The boundary is architectural, not a claim that the current core already provides Claude-equivalent managed infrastructure. See the [compatibility matrix](./compatibility-matrix.md) and [known incompatibilities](./known-incompatibilities.md).
 
@@ -12,7 +12,7 @@ Hosted/private product
   hosted model gateway, secret manager, sandbox fleet, broker, scheduler
                               |
                               v
-VMA open core
+Votrix Managed Agents core
   workspace auth -> FastAPI compatibility routes -> durable resources/events
                               |
                               v
@@ -24,7 +24,7 @@ Deep Agents is below the public service boundary. Public callers should never ne
 
 ## Core responsibilities
 
-The open core owns:
+The Votrix core owns:
 
 - FastAPI paths and models for the covered `/v1` Managed Agents-shaped resources.
 - Beta/version-header validation and official-SDK contract tests.
@@ -57,7 +57,7 @@ A hosted or enterprise layer owns:
 - Production queues, dead-letter handling, scheduler operation, webhook delivery, and retry SLOs.
 - Compliance controls, data residency, deletion verification, incident response, and customer support tooling.
 
-These concerns should not become required foreign keys or imports in the open-core data model.
+These concerns should not become required foreign keys or imports in the Votrix core data model.
 
 ## Tenant model
 
@@ -136,7 +136,7 @@ Cross-thread memory, files, and artifacts should use explicitly tenant-namespace
 
 Agent versions contain MCP names and URLs, not secrets. Sessions mount vault IDs. Runtime code matches credentials to server URLs and passes authorization only to the MCP client.
 
-The open core currently persists optionally encrypted credential material and lacks full OAuth refresh. A hosted product should inject a KMS-backed secret manager and short-lived token service, keeping secret values out of public responses, checkpoints, previews, logs, and model prompts.
+The Votrix core currently persists optionally encrypted credential material and lacks full OAuth refresh. A hosted product should inject a KMS-backed secret manager and short-lived token service, keeping secret values out of public responses, checkpoints, previews, logs, and model prompts.
 
 ## Process topology
 
@@ -213,7 +213,7 @@ The optional worker still supports queued `self_hosted` Environment execution; i
 
 See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations guide](../scripts/gcloud/README.md), and [work queue](./work-queue.md).
 
-## Open-core invariants
+## Votrix core invariants
 
 - Every persistent core resource is workspace-scoped.
 - Every public lookup resolves the current workspace before returning or mutating data.

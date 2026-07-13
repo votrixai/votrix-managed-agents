@@ -38,11 +38,12 @@ VMA_SANDBOX_PROVIDER=e2b
 E2B_API_KEY=...
 VMA_E2B_TEMPLATE=vma-hardened
 VMA_E2B_GUEST_USER=user
+VMA_E2B_TEMPLATE_RESOURCES={"cpu":2,"memory_mb":2048}
 ```
 
 The extra pins `langchain-e2b==0.0.5` and `e2b==2.31.0`. `E2B_API_KEY` belongs to the control plane and is never copied into a tenant sandbox or returned by the public API. `VMA_E2B_TEMPLATE` is required and must select an operator-owned hardened template.
 
-VMA deliberately performs only two template privilege checks: the default execution user must match `VMA_E2B_GUEST_USER` and must be non-root, and `sudo -n true` must fail. These checks run during bootstrap and before every turn. The template remains the trusted computing base for all other Linux filesystem, capability, package, and process hardening.
+VMA deliberately performs a narrow set of template privilege checks: the default execution user must match `VMA_E2B_GUEST_USER` and be non-root, passwordless `/usr/bin/sudo` must fail, trusted `/usr/bin/python3` must exist, and the guest must not be able to modify `/usr/bin` or `/usr/lib`. These checks run during bootstrap and before every turn. Root bootstrap and verification run with an empty environment through `/usr/bin/python3 -I -S`, so E2B's guest-writable `/usr/local` tree cannot shadow the control path. The template remains the trusted computing base for all other Linux filesystem, capability, package, and process hardening.
 
 ## One Session, one sealed sandbox
 
@@ -101,7 +102,7 @@ R2 or another S3-compatible store remains the durable source used to resolve fil
 
 The current bootstrap protects control-plane-owned immutable files with root ownership, non-writable permissions, protected parent directories, and digest verification before every turn. This is a narrow guarantee: it does not prove that the guest can write only to `/workspace` and approved read-write memory roots, and it does not turn all other template files into immutable mounts.
 
-The required hardened E2B template must guarantee that tenant code cannot write outside approved mutable roots. It should remove unnecessary capabilities and privilege-escalation paths, harden every non-mutable directory, and enforce process and filesystem limits independently of VMA's manifest. VMA checks only the configured non-root default user and absence of passwordless sudo; it does not scan or harden the template's whole Linux filesystem. The current seal protects VMA-owned immutable inputs, not the entire guest filesystem.
+The hardened E2B template removes unnecessary privilege-escalation paths and protects VMA's trusted roots, but E2B recreates provider-managed guest-writable paths such as `/usr/local`, `/code`, and `/home/user` when a sandbox starts. `/tmp` and `/var/tmp` also remain writable sticky scratch directories. These paths are Session-local and explicitly untrusted: VMA never executes root control code from them, and durable Agent work belongs under `/workspace` or an approved read-write memory root. VMA validates the trusted system interpreter and directories and fails closed; it does not scan or harden the whole Linux filesystem. The current seal protects VMA-owned immutable inputs, not the entire guest filesystem.
 
 ## Network, packages, and resources
 

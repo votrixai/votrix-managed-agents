@@ -109,7 +109,7 @@ The E2B path provisions exactly one isolated sandbox while creating a Session. I
 
 Provider auto-resume is disabled so every reconnect passes through VMA authorization. Secure access is enabled and public traffic is disabled. Archive preserves the sandbox, deletion kills it, and best-effort retention cleanup defaults to 30 days. E2B remains an external dependency unless the operator deploys [E2B BYOC](https://e2b.dev/docs/byoc), and VMA makes no guarantee that its performance, failure behavior, isolation implementation, or lifecycle is behaviorally equal to [Claude Managed Agents sessions](https://platform.claude.com/docs/en/managed-agents/sessions). See [sandbox runtime](./sandbox-runtime.md).
 
-The hardened template is the trusted computing base for guest filesystem confinement. VMA verifies only that the template's default execution user matches the configured non-root guest and that passwordless sudo is unavailable; it does not scan or harden the whole Linux image. E2B may expose its own sandbox/team/template identifiers inside the guest runtime even though VMA omits the external sandbox ID from control-plane API responses.
+The hardened template is the trusted computing base for guest filesystem confinement. VMA verifies the configured non-root guest, absence of passwordless system sudo, a trusted system Python, and non-writable `/usr/bin` and `/usr/lib`; root bootstrap uses isolated `/usr/bin/python3 -I -S`. It does not scan or harden the whole Linux image. E2B recreates guest-writable `/usr/local`, `/code`, and `/home/user` paths at runtime, while `/tmp` and `/var/tmp` remain writable sticky scratch. They are untrusted Session-local paths rather than durable VMA storage. E2B may also expose its own sandbox/team/template identifiers inside the guest runtime even though VMA omits the external sandbox ID from control-plane API responses.
 
 ### Sandbox lifecycle has no recovery protocol
 
@@ -278,7 +278,7 @@ Production should supply a managed secret provider and never place provider keys
 
 R2 or another S3-compatible object store supplies uploaded files and custom Skill archives when a Session is created. VMA materializes the fixed bundle into the one E2B sandbox exactly once. Read-only uploads default below `/mnt/session/uploads`, Skills live below `/skills/custom`, and memory seeds live below their `/mnt/memory` mount. Immutable inputs cannot overlap `/workspace` or a read-write memory root. Once the seal exists, Session-resource mutations are rejected and the control plane never performs per-turn upload, repair, deletion, or managed-file synchronization.
 
-The built-in E2B adapter rejects traversal, symlinks, aliases, and path collisions, then makes control-plane-owned immutable files root-owned and verifies their digest before each turn. This protects those files only. The required operator-owned hardened template must confine all other guest writes to `/workspace` and approved read-write memory roots; VMA checks the non-root/no-passwordless-sudo prerequisites but does not implement general Linux hardening.
+The built-in E2B adapter rejects traversal, symlinks, aliases, and path collisions, then makes control-plane-owned immutable files root-owned and verifies their digest before each turn. This protects those files only. Durable Agent data belongs in `/workspace` or approved read-write memory roots, but E2B also supplies untrusted Session-local writable scratch and package paths. The required operator-owned template must protect the system roots used by VMA; VMA checks the non-root/no-passwordless-sudo boundary plus its trusted system interpreter and directories, without implementing general Linux hardening.
 
 E2B Session creation currently rejects `github_repository` resources because VMA does not yet implement secure one-time checkout and credential handling. The response union remains available for compatibility on non-E2B control-plane resources, but it must not be interpreted as a completed E2B mount.
 
@@ -350,7 +350,7 @@ Deep Agents uses model-aware summarization and compact message state. Its token 
 
 ### Deployment scheduling is not operated automatically
 
-VMA persists deployment resources, validates cron/timezone data, computes upcoming timestamps, creates manual runs, and provides an idempotent due-schedule function. No always-on scheduler invokes that function in the open core.
+VMA persists deployment resources, validates cron/timezone data, computes upcoming timestamps, creates manual runs, and provides an idempotent due-schedule function. No always-on scheduler invokes that function in the Votrix core.
 
 A production service still needs:
 
@@ -382,7 +382,7 @@ Applications must poll or stream session events until a webhook delivery service
 
 ### Authentication is workspace-level only
 
-The open core supports configured or database-backed API keys that resolve to a workspace. It does not include users, organizations, memberships, invitations, service accounts, roles, SSO, SCIM, support access, or policy evaluation.
+The Votrix core supports configured or database-backed API keys that resolve to a workspace. It does not include users, organizations, memberships, invitations, service accounts, roles, SSO, SCIM, support access, or policy evaluation.
 
 Every key mapped to a workspace effectively has broad core API authority unless an injected hosted layer adds finer policy.
 

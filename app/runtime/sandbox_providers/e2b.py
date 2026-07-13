@@ -46,9 +46,14 @@ _SEAL_PATH = "/var/lib/vma/session-inputs.json"
 
 _GUEST_ATTEST_COMMAND = """
 set -eu
-test "$(id -un)" = "$VMA_EXPECTED_GUEST"
-test "$(id -u)" -ne 0
-if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+PATH=/usr/bin:/bin
+export PATH
+test "$(/usr/bin/id -un)" = "$VMA_EXPECTED_GUEST"
+test "$(/usr/bin/id -u)" -ne 0
+test -x /usr/bin/python3
+test ! -w /usr/bin
+test ! -w /usr/lib
+if test -x /usr/bin/sudo && /usr/bin/sudo -n true >/dev/null 2>&1; then
     exit 41
 fi
 """.strip()
@@ -585,8 +590,12 @@ class E2BSandboxProvider:
         run = getattr(commands, "run", None)
         if not callable(run):
             raise SandboxDependencyError("E2B sandbox does not expose async commands.run")
-        command = "python3 -c " + shlex.quote(script) + " " + shlex.quote(
-            json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        command = (
+            "/usr/bin/env -i PATH=/usr/bin:/bin "
+            "/usr/bin/python3 -I -S -c "
+            + shlex.quote(script)
+            + " "
+            + shlex.quote(json.dumps(payload, sort_keys=True, separators=(",", ":")))
         )
         try:
             result = run(

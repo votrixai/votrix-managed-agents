@@ -132,6 +132,17 @@ def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
         assert all("api_key" not in config for config in registry.values())
 
 
+def test_cloud_e2b_template_resources_match_the_built_profile() -> None:
+    for environment in ("production", "staging"):
+        manifest = _read(f"service.{environment}.yaml")
+        match = re.search(
+            r"- name: VMA_E2B_TEMPLATE_RESOURCES\s+value: '([^']+)'",
+            manifest,
+        )
+        assert match is not None
+        assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
+
+
 def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
     cloudbuild = _flatten(_read("cloudbuild.yaml"))
     migration_deploy = cloudbuild.find("gcloud run jobs deploy")
@@ -206,6 +217,11 @@ def test_web_entrypoint_never_runs_migrations() -> None:
     assert "--factory" in entrypoint
     assert '${PORT:-8080}' in entrypoint
     assert '${WEB_CONCURRENCY:-1}' in entrypoint
+
+
+def test_local_startup_keeps_e2b_runtime_dependencies_installed() -> None:
+    run_script = _read("run.sh")
+    assert "uv sync --extra sandbox-e2b" in run_script
 
 
 def test_container_build_is_frozen_and_includes_e2b() -> None:

@@ -573,11 +573,29 @@ async def test_missing_beta_header_is_rejected(client):
     assert response.json()["error"]["type"] == "invalid_request_error"
 
 
+async def test_openapi_presents_votrix_headers_without_compatibility_headers(client):
+    response = await client.get("/openapi.json")
+    assert response.status_code == 200, response.text
+
+    spec = response.json()
+    operation = spec["paths"]["/v1/agents"]["post"]
+    header_names = {
+        parameter["name"]
+        for parameter in operation["parameters"]
+        if parameter["in"] == "header"
+    }
+
+    assert "votrix-managed-agents-beta" in header_names
+    assert "anthropic-beta" not in header_names
+    assert "anthropic-version" not in header_names
+    assert "open-managed-agents" not in str(spec).lower()
+
+
 async def test_votrix_managed_agents_beta_alias_is_accepted(client):
     response = await client.post(
         "/v1/agents",
         headers=VOTRIX_MANAGED_AGENTS_HEADERS,
-        json={"name": "Open Beta", "model": {"id": "gpt-5.5"}},
+        json={"name": "Votrix Beta", "model": {"id": "gpt-5.5"}},
     )
     assert response.status_code == 201, response.text
 
@@ -587,7 +605,7 @@ async def test_votrix_managed_agents_beta_alias_is_accepted(client):
             "anthropic-version": "2023-06-01",
             "anthropic-beta": "votrix-managed-agents-2026-04-01",
         },
-        json={"name": "Open Beta Anthropic Header", "model": {"id": "gpt-5.5"}},
+        json={"name": "Votrix Beta Compatibility Header", "model": {"id": "gpt-5.5"}},
     )
     assert response.status_code == 201, response.text
 

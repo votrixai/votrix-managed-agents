@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-uv sync
+uv sync --extra sandbox-e2b
 source .venv/bin/activate
 
 if [[ "$RUN_MIGRATIONS" == true ]]; then

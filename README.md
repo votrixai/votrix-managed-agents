@@ -6,7 +6,7 @@ VMA is not an Anthropic service and is not yet a drop-in behavioral replacement.
 
 ## What is here
 
-Implemented in the open core:
+Implemented in the Votrix core:
 
 - FastAPI routes under `/v1` for agents, immutable agent versions, environments, sessions, events, files, skills, vaults, credentials, memory stores, deployments, deployment runs, and user profiles.
 - Workspace-scoped API-key authentication and database queries.
@@ -46,7 +46,7 @@ model provider   remote MCP       sandbox backend
 
 The control plane owns public IDs, workspace isolation, immutable revisions, session state, durable events, and compatibility translation. Deep Agents owns the in-process agent loop, model/tool middleware, compaction, checkpoint integration, and synchronous delegation. The sandbox—not the model or middleware—is the security boundary for tenant code.
 
-See [Claude alignment](docs/claude-managed-agents-alignment.md), [sandbox runtime](docs/sandbox-runtime.md), and [open-core architecture](docs/open-core-architecture.md) for the full contracts.
+See [Claude alignment](docs/claude-managed-agents-alignment.md), [sandbox runtime](docs/sandbox-runtime.md), and [Votrix core architecture](docs/votrix-core-architecture.md) for the full contracts.
 
 ## Quick start
 
@@ -162,13 +162,14 @@ VMA_SANDBOX_PROVIDER=e2b
 E2B_API_KEY=...
 VMA_E2B_TEMPLATE=vma-hardened
 VMA_E2B_GUEST_USER=user
+VMA_E2B_TEMPLATE_RESOURCES={"cpu":2,"memory_mb":2048}
 ```
 
 The extra pins `langchain-e2b==0.0.5` and `e2b==2.31.0`. Creating a Session immediately provisions exactly one E2B sandbox, uploads its fixed Skills, read-only inputs, and initial memory seed once, seals the immutable files, and pauses the sandbox. Every turn reconnects the same private `external_sandbox_id`, verifies the seal and input digest, and gives Deep Agents an `AsyncE2BSandbox`; the control plane never re-uploads or synchronizes Session files on resume. Changing a Skill, initial input, initial memory source, configured template, or Session resource after the seal is rejected and requires a new Session.
 
-`VMA_E2B_TEMPLATE` is required and must name an operator-owned hardened template. At bootstrap and before every turn, VMA checks that the template's default execution user matches `VMA_E2B_GUEST_USER`, is not root, and cannot complete `sudo -n true`; all remaining Linux filesystem and privilege hardening belongs to that trusted template.
+`VMA_E2B_TEMPLATE` is required and must name an operator-owned hardened template. At bootstrap and before every turn, VMA checks that the template's default execution user matches `VMA_E2B_GUEST_USER`, is not root, cannot complete `sudo -n true`, and cannot modify the trusted `/usr/bin` and `/usr/lib` roots used by VMA. Root bootstrap and seal verification use isolated `/usr/bin/python3 -I -S`, never the E2B guest-writable `/usr/local` tree. All remaining Linux filesystem and privilege hardening belongs to the trusted template.
 
-`/workspace` and read-write memory remain mutable and persist with that sandbox, but edits are not written back to VMA Memory Store versions and generated artifacts are not automatically exported. Read-only uploads default below `/mnt/session/uploads` and cannot overlap mutable workspace or memory roots. The seal protects VMA-owned immutable files; the hardened template is responsible for confining other guest writes.
+`/workspace` and read-write memory remain mutable and persist with that sandbox, but edits are not written back to VMA Memory Store versions and generated artifacts are not automatically exported. Read-only uploads default below `/mnt/session/uploads` and cannot overlap mutable workspace or memory roots. The seal protects VMA-owned immutable files. `/tmp`, `/var/tmp`, and E2B provider-managed paths such as `/usr/local`, `/code`, and `/home/user` are untrusted Session-local storage rather than VMA trust roots; durable Agent work belongs under `/workspace` or read-write memory.
 
 Provider auto-resume is disabled, secure access is enabled, public traffic is disabled, and turn exit uses full-memory pause. Archive preserves the sandbox, deletion kills it, and the in-process janitor provides best-effort cleanup after 30 days by default. Limited networking is passed through E2B's `allow_out` setting without a separate deny-all rule. Packages and CPU/memory/disk sizing must be built into and match the operator-owned template. VMA has no sandbox generations, provider snapshots, Daytona migration, operation leases/heartbeats, durable lifecycle outbox, orphan recovery, or managed-file sync. VMA does not return the external sandbox ID in its public API, although E2B may expose runtime identifiers inside the sandbox itself. See the detailed [sandbox runtime](docs/sandbox-runtime.md) and [E2B persistence](https://e2b.dev/docs/sandbox/persistence).
 
@@ -228,9 +229,9 @@ Strict SDK parsing proves the covered response shapes are accepted by the pinned
 - [Memory stores](docs/memory-stores.md)
 - [Deployments](docs/deployments.md)
 - [Webhooks](docs/webhooks.md)
-- [Open-core architecture](docs/open-core-architecture.md)
+- [Votrix core architecture](docs/votrix-core-architecture.md)
 
-## Open-core embedding
+## Votrix core embedding
 
 Hosted or enterprise code can compose the application in-process:
 
@@ -240,7 +241,7 @@ from votrix_managed_agents import create_app
 app = create_app(auth_provider=HostedAuthProvider())
 ```
 
-The open core intentionally stops at workspace-scoped resources. Organization membership, SSO, RBAC, billing, quotas, metering, audit retention, managed sandbox fleets, and hosted secret policy belong in an injected private layer. See [open-core architecture](docs/open-core-architecture.md).
+The Votrix core intentionally stops at workspace-scoped resources. Organization membership, SSO, RBAC, billing, quotas, metering, audit retention, managed sandbox fleets, and hosted secret policy belong in an injected private layer. See [Votrix core architecture](docs/votrix-core-architecture.md).
 
 ## Security and maturity
 

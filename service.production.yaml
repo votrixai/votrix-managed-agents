@@ -50,6 +50,8 @@ spec:
               value: "e2b"
             - name: VMA_E2B_TEMPLATE
               value: "vma-hardened"
+            - name: VMA_E2B_TEMPLATE_RESOURCES
+              value: '{"cpu":2,"memory_mb":2048}'
             - name: VMA_E2B_WORKDIR
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER

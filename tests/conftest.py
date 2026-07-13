@@ -16,7 +16,6 @@ TEST_HEADERS = {
 
 VOTRIX_MANAGED_AGENTS_HEADERS = {
     "votrix-managed-agents-beta": "votrix-managed-agents-2026-04-01",
-    "anthropic-version": "2023-06-01",
 }
 
 

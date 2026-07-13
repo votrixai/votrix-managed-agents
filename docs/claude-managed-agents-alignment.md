@@ -175,9 +175,9 @@ VMA therefore treats multiagent execution and thread streaming as partial even w
 
 Deep Agents also adds a general-purpose subagent by default when `task` is enabled. Exact declared-roster behavior requires an adapter-level exclusion or a process-stable harness profile; per-tenant profile mutation is unsafe.
 
-## Open-core and hosted boundary
+## Votrix core and hosted boundary
 
-The open core stops at workspace-scoped resources and injectable providers. A hosted layer may import:
+The Votrix core stops at workspace-scoped resources and injectable providers. A hosted layer may import:
 
 ```python
 from votrix_managed_agents import create_app
@@ -185,7 +185,7 @@ from votrix_managed_agents import create_app
 app = create_app(auth_provider=HostedAuthProvider())
 ```
 
-The hosted layer owns organizations, membership, RBAC, SSO, billing, quotas, usage accounting, audit policy, managed secrets, sandbox fleets, and support/admin functions. Core tables must remain usable without hosted tables. See [open-core architecture](./open-core-architecture.md).
+The hosted layer owns organizations, membership, RBAC, SSO, billing, quotas, usage accounting, audit policy, managed secrets, sandbox fleets, and support/admin functions. Core tables must remain usable without hosted tables. See [Votrix core architecture](./votrix-core-architecture.md).
 
 ## Compatibility priorities
 

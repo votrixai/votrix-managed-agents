@@ -406,6 +406,14 @@ async def test_bootstrap_uploads_once_as_root_and_verifies_seal():
     assert len(guest_attestations) == 2
     assert len(root_operations) == 3
     assert all(call["envs"] == {"VMA_EXPECTED_GUEST": "user"} for call in guest_attestations)
+    assert all("PATH=/usr/bin:/bin" in call["command"] for call in guest_attestations)
+    assert all("/usr/bin/id" in call["command"] for call in guest_attestations)
+    assert all(
+        call["command"].startswith(
+            "/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/python3 -I -S -c "
+        )
+        for call in root_operations
+    )
     assert all(call["timeout"] == 300 for call in native.root_commands)
 
 
