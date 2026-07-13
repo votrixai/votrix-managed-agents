@@ -7,7 +7,7 @@ from typing import Any
 
 from deepagents.backends import StateBackend
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
-from langchain_core.messages import AIMessage, ToolCall
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolCall, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
@@ -15,7 +15,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, PrivateAttr
 
 from app.runtime.contracts import EffectiveAgentVersion
-from app.runtime.deepagents_engine import _graph_input, execute_deep_agent
+from app.runtime.deepagents_engine import _completed_tool_calls, _graph_input, _stream_graph, execute_deep_agent
 from app.runtime.providers import RuntimeProviderCapabilities, RuntimeProviderConfig
 from app.runtime.sandbox import BackendHandle, SandboxRuntimePlan
 from app.runtime.sandbox_inputs import sandbox_input_bundle
@@ -46,6 +46,15 @@ class _ScriptedModel(BaseChatModel):
         return self
 
 
+class _StreamGraph:
+    def __init__(self, messages):
+        self.messages = messages
+
+    async def astream(self, *_args, **_kwargs):
+        for message in self.messages:
+            yield (), "messages", (message, {})
+
+
 def _version(*, tools=None) -> EffectiveAgentVersion:
     return EffectiveAgentVersion(
         id="agtv_test",
@@ -66,6 +75,154 @@ def _version(*, tools=None) -> EffectiveAgentVersion:
 
 def _event(seq: int, event_type: str, **payload):
     return SimpleNamespace(seq=seq, type=event_type, payload={"type": event_type, **payload})
+
+
+def _tool_chunk(*, call_id=None, name=None, args="", index=0):
+    return SimpleNamespace(
+        tool_calls=[],
+        tool_call_chunks=[{"id": call_id, "name": name, "args": args, "index": index}],
+    )
+
+
+def test_streamed_tool_calls_wait_for_complete_args_and_reset_reused_index():
+    accumulator = {}
+
+    assert _completed_tool_calls(
+        _tool_chunk(call_id="call_read", name="read_file"), (), accumulator
+    ) == []
+    assert _completed_tool_calls(
+        _tool_chunk(args='{"file_path":"/skills/example/SKILL.md"}'), (), accumulator
+    ) == [
+        {
+            "id": "call_read",
+            "name": "read_file",
+            "args": {"file_path": "/skills/example/SKILL.md"},
+        }
+    ]
+
+    assert _completed_tool_calls(
+        _tool_chunk(call_id="call_pwd", name="execute"), (), accumulator
+    ) == []
+    assert _completed_tool_calls(
+        _tool_chunk(args='{"command":"pwd"}'), (), accumulator
+    ) == [
+        {"id": "call_pwd", "name": "execute", "args": {"command": "pwd"}}
+    ]
+
+    assert _completed_tool_calls(
+        _tool_chunk(call_id="call_marker", name="execute", args='{"command":"cat marker"}'),
+        (),
+        accumulator,
+    ) == [
+        {
+            "id": "call_marker",
+            "name": "execute",
+            "args": {"command": "cat marker"},
+        }
+    ]
+
+
+async def test_stream_graph_keeps_tool_names_inputs_and_ids_aligned():
+    graph = _StreamGraph(
+        [
+            AIMessageChunk(
+                content="",
+                id="response_read",
+                tool_call_chunks=[{"id": "call_read", "name": "read_file", "args": "", "index": 0}],
+            ),
+            AIMessageChunk(
+                content="",
+                id="response_read",
+                tool_call_chunks=[
+                    {
+                        "id": None,
+                        "name": None,
+                        "args": '{"file_path":"/skills/example/SKILL.md"}',
+                        "index": 0,
+                    }
+                ],
+                chunk_position="last",
+            ),
+            ToolMessage(
+                content="skill content",
+                name="read_file",
+                tool_call_id="call_read",
+            ),
+            AIMessageChunk(
+                content="",
+                id="response_pwd",
+                tool_call_chunks=[{"id": "call_pwd", "name": "execute", "args": "", "index": 0}],
+            ),
+            AIMessageChunk(
+                content="",
+                id="response_pwd",
+                tool_call_chunks=[
+                    {"id": None, "name": None, "args": '{"command":"pwd"}', "index": 0}
+                ],
+                chunk_position="last",
+            ),
+            ToolMessage(content="/workspace", name="execute", tool_call_id="call_pwd"),
+            AIMessageChunk(
+                content="",
+                id="response_marker",
+                tool_call_chunks=[
+                    {
+                        "id": "call_marker",
+                        "name": "execute",
+                        "args": '{"command":"cat /workspace/vma-e2e-marker.txt"}',
+                        "index": 0,
+                    }
+                ],
+                chunk_position="last",
+            ),
+            ToolMessage(
+                content="VMA_E2E_PERSISTED",
+                name="execute",
+                tool_call_id="call_marker",
+            ),
+            AIMessageChunk(content="done", id="response_final", chunk_position="last"),
+        ]
+    )
+    durable = []
+
+    async def emit_event(payload):
+        durable.append(dict(payload))
+        return payload["_event_id"]
+
+    result = await _stream_graph(
+        graph,
+        {"messages": []},
+        config={},
+        context=SimpleNamespace(),
+        emit_event=emit_event,
+        emit_preview=None,
+        tool_events=[],
+        custom_names=set(),
+        custom_specs={},
+        mcp_tool_names=set(),
+        interrupt_on={},
+    )
+
+    uses = [event for event in durable if event["type"] == "agent.tool_use"]
+    assert [
+        (event["name"], event["tool_use_id"], event["input"])
+        for event in uses
+    ] == [
+        ("read", "call_read", {"file_path": "/skills/example/SKILL.md"}),
+        ("bash", "call_pwd", {"command": "pwd"}),
+        (
+            "bash",
+            "call_marker",
+            {"command": "cat /workspace/vma-e2e-marker.txt"},
+        ),
+    ]
+    results = [event for event in durable if event["type"] == "agent.tool_result"]
+    assert [event["tool_use_id"] for event in results] == [
+        "call_read",
+        "call_pwd",
+        "call_marker",
+    ]
+    assert result["final_text"] == "done"
 
 
 def _patch_runtime(monkeypatch, model: _ScriptedModel, saver: InMemorySaver):

@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -43,6 +44,10 @@ async def lifespan(app: FastAPI):
 
 
 def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
+    # The packaged factory is also the local run.sh entrypoint. Load .env here
+    # so dynamically configured provider credentials are available via their
+    # api_key_env names; process-level Cloud Run variables still take priority.
+    load_dotenv()
     app = FastAPI(title="Votrix Managed Agents", lifespan=lifespan, docs_url=None)
     app.state.auth_provider = auth_provider or EnvApiKeyAuthProvider()
     install_error_handlers(app)

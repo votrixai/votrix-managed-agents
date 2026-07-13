@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -240,7 +241,9 @@ class ManagedResource(TimestampMixin, Base):
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     resource_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_id: Mapped[str | None] = mapped_column(String(64), index=True)
-    version: Mapped[int | None] = mapped_column(Integer)
+    # Skill versions are epoch-microsecond identifiers for Anthropic SDK
+    # compatibility, so PostgreSQL's 32-bit INTEGER is not large enough.
+    version: Mapped[int | None] = mapped_column(BigInteger)
     name: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="active")
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

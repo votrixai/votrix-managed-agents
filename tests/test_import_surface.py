@@ -12,6 +12,17 @@ def test_votrix_managed_agents_exports_app_factory():
     assert CurrentWorkspace(id="ws_test").id == "ws_test"
 
 
+def test_app_factory_loads_local_dotenv(monkeypatch):
+    from app import factory
+
+    calls = []
+    monkeypatch.setattr(factory, "load_dotenv", lambda: calls.append(True))
+
+    factory.create_app(auth_provider=_HostedAuthProvider())
+
+    assert calls == [True]
+
+
 def test_asgi_entrypoint_exposes_app():
     from app.main import app
 

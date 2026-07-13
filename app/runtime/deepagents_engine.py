@@ -251,7 +251,7 @@ async def _stream_graph(
 ) -> dict[str, Any]:
     text_parts: list[str] = []
     message_event_id: str | None = None
-    tool_accumulator: dict[tuple[tuple[str, ...], int], dict[str, Any]] = {}
+    tool_accumulator: dict[tuple[tuple[str, ...], str, int], dict[str, Any]] = {}
     emitted_calls: dict[str, _EmittedToolCall] = {}
     pending_interrupts: list[Any] = []
     usage: dict[str, int] = defaultdict(int)
@@ -748,25 +748,42 @@ def _resume_command(history: list[Any], pending: list[dict[str, Any]]) -> tuple[
 def _completed_tool_calls(
     message: Any,
     namespace: tuple[str, ...],
-    accumulator: dict[tuple[tuple[str, ...], int], dict[str, Any]],
+    accumulator: dict[tuple[tuple[str, ...], str, int], dict[str, Any]],
 ) -> list[dict[str, Any]]:
     completed: dict[str, dict[str, Any]] = {}
-    for call in getattr(message, "tool_calls", None) or []:
-        if not isinstance(call, dict) or not call.get("name"):
-            continue
-        call_id = str(call.get("id") or new_id("tool"))
-        args = call.get("args") if isinstance(call.get("args"), dict) else {}
-        completed[call_id] = {"id": call_id, "name": str(call["name"]), "args": args}
+    is_stream_chunk = isinstance(message, AIMessageChunk)
+    # AIMessageChunk.tool_calls is derived with a partial-JSON parser. An
+    # id/name-only chunk therefore looks like a complete call with args={},
+    # even though the real arguments arrive in later tool_call_chunks.
+    if not is_stream_chunk:
+        for call in getattr(message, "tool_calls", None) or []:
+            if not isinstance(call, dict) or not call.get("name"):
+                continue
+            call_id = str(call.get("id") or new_id("tool"))
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            completed[call_id] = {"id": call_id, "name": str(call["name"]), "args": args}
+
+    response_id = str(getattr(message, "id", "") or "")
+    response_scope = response_id or "__anonymous__"
     for chunk in getattr(message, "tool_call_chunks", None) or []:
         if not isinstance(chunk, dict):
             continue
         index = int(chunk.get("index") or 0)
-        key = (namespace, index)
-        item = accumulator.setdefault(key, {"id": "", "name": "", "args": ""})
-        if chunk.get("id"):
-            item["id"] = str(chunk["id"])
-        if chunk.get("name"):
-            item["name"] = str(chunk["name"])
+        key = (namespace, response_scope, index)
+        incoming_id = str(chunk.get("id") or "")
+        incoming_name = str(chunk.get("name") or "")
+        item = accumulator.get(key)
+        if item is None or (
+            incoming_id
+            and item.get("id") != incoming_id
+            and any(item.get(field) for field in ("id", "name", "args"))
+        ):
+            item = {"id": "", "name": "", "args": ""}
+            accumulator[key] = item
+        if incoming_id:
+            item["id"] = incoming_id
+        if incoming_name:
+            item["name"] = incoming_name
         raw_args = chunk.get("args")
         if isinstance(raw_args, str):
             item["args"] += raw_args
@@ -774,12 +791,29 @@ def _completed_tool_calls(
             item["args"] = json.dumps(raw_args)
         if not item["id"] or not item["name"]:
             continue
+        if not item["args"] and getattr(message, "chunk_position", None) != "last":
+            continue
         try:
             args = json.loads(item["args"] or "{}")
         except json.JSONDecodeError:
             continue
         if isinstance(args, dict):
             completed[item["id"]] = {"id": item["id"], "name": item["name"], "args": args}
+            accumulator.pop(key, None)
+
+    if is_stream_chunk and getattr(message, "chunk_position", None) == "last":
+        for key, item in list(accumulator.items()):
+            if key[:2] != (namespace, response_scope):
+                continue
+            accumulator.pop(key, None)
+            if not item["id"] or not item["name"]:
+                continue
+            try:
+                args = json.loads(item["args"] or "{}")
+            except json.JSONDecodeError:
+                continue
+            if isinstance(args, dict):
+                completed[item["id"]] = {"id": item["id"], "name": item["name"], "args": args}
     return list(completed.values())
 
 

@@ -31,4 +31,5 @@ else
   echo "Skipping Alembic migrations. Run with --migrate or -m to apply them."
 fi
 
+echo "Scalar API docs: http://127.0.0.1:${PORT}/docs"
 uvicorn votrix_managed_agents:create_app --factory --host 0.0.0.0 --port "$PORT" --reload
