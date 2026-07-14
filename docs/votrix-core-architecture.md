@@ -1,4 +1,7 @@
-# Votrix Core Architecture
+---
+title: Votrix Core Architecture
+description: Ownership boundaries across the public API, durable control plane, and agent runtime.
+---
 
 VMA is the self-hosted, workspace-scoped Votrix core of a managed-agents platform. It exposes a Claude Managed Agents-shaped control plane and uses Deep Agents 0.6.12 as the execution kernel. A private hosted product should compose this package with enterprise identity, policy, infrastructure, and commercial services rather than fork the core.
 

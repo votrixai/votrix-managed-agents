@@ -1,8 +1,6 @@
 ---
 title: Overview
 description: Understand what Votrix Managed Agents provides, where it is compatible, and how to start locally.
-slug: /
-sidebar_position: 1
 ---
 
 Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control
@@ -10,7 +8,7 @@ plane for long-running agents. It targets the public resource, lifecycle, and
 SDK shape of Claude Managed Agents while running agents with Deep Agents and
 LangGraph.
 
-:::caution Project maturity
+<Callout title="Project maturity" type="warn">
 
 VMA is an early `0.1.0` project. It is not an Anthropic service and is not yet
 a drop-in behavioral replacement. Its REST surface is broader than its
@@ -20,7 +18,7 @@ Start with the [compatibility matrix](./compatibility-matrix.md) and
 [known incompatibilities](./known-incompatibilities.md) before using it for
 production workloads.
 
-:::
+</Callout>
 
 ## Choose a starting point
 
@@ -58,10 +56,9 @@ Postgres, and object storage.
 ## Documentation and API reference
 
 This site explains architecture, compatibility, runtime behavior, and
-operations. The interactive [Scalar API
-reference](https://managed-agents.votrix.ai/docs) is generated from the live
-FastAPI OpenAPI schema and remains the best place to inspect request and
-response fields.
+operations. The interactive [API reference](/docs/api)
+is generated from the FastAPI OpenAPI schema and includes request examples,
+authentication, schemas, and a browser-based request explorer.
 
 ## System shape
 

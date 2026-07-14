@@ -1,4 +1,7 @@
-# Anthropic SDK Contract Tests
+---
+title: Anthropic SDK Contract Tests
+description: Executable wire-contract coverage against the official Anthropic Python SDK.
+---
 
 These tests use the official `anthropic` Python SDK against the local ASGI app with strict response validation enabled. They are meant to prevent API-shape guessing.
 

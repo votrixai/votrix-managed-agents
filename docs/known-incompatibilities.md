@@ -1,4 +1,7 @@
-# Known Incompatibilities
+---
+title: Known Incompatibilities
+description: Important behavioral and infrastructure differences from Claude Managed Agents.
+---
 
 Snapshot: 2026-07-11
 Runtime kernel: Deep Agents 0.6.12

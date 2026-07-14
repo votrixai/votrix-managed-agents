@@ -2,46 +2,48 @@
   "name": "@votrix/managed-agents-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation site for Votrix Managed Agents",
+  "description": "Fumadocs documentation site for Votrix Managed Agents",
   "license": "MIT",
   "scripts": {
-    "docusaurus": "docusaurus",
-    "start": "docusaurus start",
-    "build": "docusaurus build",
-    "clear": "docusaurus clear",
-    "serve": "docusaurus serve",
-    "typecheck": "tsc"
+    "dev": "next dev --webpack",
+    "start": "serve out",
+    "build": "next build --webpack",
+    "lint": "eslint",
+    "typecheck": "fumadocs-mdx && next typegen && tsc --noEmit",
+    "postinstall": "fumadocs-mdx && patch-package",
+    "openapi:export": "cd .. && uv run python scripts/export_openapi.py",
+    "openapi:sync": "npm run openapi:export"
   },
   "dependencies": {
-    "@docusaurus/core": "3.10.2",
-    "@docusaurus/faster": "3.10.2",
-    "@docusaurus/preset-classic": "3.10.2",
-    "@mdx-js/react": "^3.0.0",
-    "clsx": "^2.0.0",
-    "prism-react-renderer": "^2.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@fontsource/dm-sans": "^5.2.8",
+    "@orama/orama": "^3.1.18",
+    "cnfast": "^0.0.8",
+    "fumadocs-core": "16.11.4",
+    "fumadocs-mdx": "15.1.1",
+    "fumadocs-openapi": "11.2.0",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.11.4",
+    "geist": "^1.7.2",
+    "lucide-react": "^1.24.0",
+    "next": "16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "shiki": "4.3.1"
   },
   "devDependencies": {
-    "@docusaurus/module-type-aliases": "3.10.2",
-    "@docusaurus/tsconfig": "3.10.2",
-    "@docusaurus/types": "3.10.2",
-    "@types/react": "^19.0.0",
-    "typescript": "~6.0.2"
-  },
-  "browserslist": {
-    "production": [
-      ">0.5%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 3 chrome version",
-      "last 3 firefox version",
-      "last 5 safari version"
-    ]
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.2.10",
+    "patch-package": "8.0.1",
+    "postcss": "^8.5.19",
+    "serve": "^14.2.6",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^6.0.3"
   },
   "engines": {
-    "node": ">=20.0"
+    "node": ">=22.0"
   }
 }

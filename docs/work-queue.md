@@ -1,4 +1,7 @@
-# Work Queue
+---
+title: Work Queue
+description: Durable environment work, leases, heartbeats, retries, and worker operation.
+---
 
 Session execution now writes a durable `environment_work` resource before execution.
 

@@ -1,4 +1,7 @@
-# Model Providers
+---
+title: Model Providers
+description: Configure Anthropic, OpenAI-compatible, DeepSeek, and approved model providers.
+---
 
 VMA uses Deep Agents 0.6.12 with LangChain chat-model integrations. Anthropic, OpenAI, and DeepSeek are first-class adapters; operators can register additional server-approved providers.
 

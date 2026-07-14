@@ -1,4 +1,7 @@
-# Claude Managed Agents Alignment
+---
+title: Claude Managed Agents Alignment
+description: How VMA maps the public Claude Managed Agents model onto its self-hosted architecture.
+---
 
 Last checked: 2026-07-10
 Runtime kernel: Deep Agents 0.6.12

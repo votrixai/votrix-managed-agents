@@ -1,0 +1,6 @@
+{
+  "title": "API Reference",
+  "description": "Votrix Managed Agents HTTP API",
+  "root": true,
+  "pages": ["index", "...(generated)"]
+}

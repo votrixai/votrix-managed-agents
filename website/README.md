@@ -1,42 +1,57 @@
 # Votrix documentation site
 
-The Docusaurus application lives in this directory. Documentation content stays
-in the repository-level `docs/` directory, so product changes and their
-documentation remain in the same pull request.
+This directory contains the Fumadocs application for Votrix Managed Agents.
+Narrative content remains in the repository-level `docs/` directory so product
+changes and documentation can ship in the same pull request. API pages are
+generated at build time from `public/openapi/vma.json`.
 
 ## Local development
 
-Use Node.js 24 (Docusaurus requires Node.js 20 or newer), then install and start
-the site:
+Use Node.js 22 or newer:
 
 ```bash
 cd website
 npm install
-npm run start
+npm run openapi:sync
+npm run dev
 ```
 
-The development server watches both `website/` and `../docs/`.
+Open `http://localhost:3000`. Narrative docs live under `/docs`; the interactive
+API reference lives under `/docs/api`.
 
 ## Validation
 
 ```bash
 cd website
+npm run openapi:sync
 npm run typecheck
+npm run lint
 npm run build
 ```
 
-The production output is written to `website/build/` and can be served by any
-static hosting provider. Update `url` in `docusaurus.config.ts` to match the
-canonical documentation domain before publishing.
+`openapi:sync` exports the documentation schema from FastAPI. Set
+`VMA_OPENAPI_SERVER_URL` to the final, directly reachable API origin before
+building. The value becomes the server used by the browser-based playground.
+
+`npm install` also applies the pinned `patches/fumadocs-openapi+11.2.0.patch`.
+It avoids an upstream `structuredClone` failure on complex JSON request forms;
+keep the patch version aligned when upgrading `fumadocs-openapi`.
+
+## Deployment
+
+`npm run build` writes a fully static site to `website/out/`. Deploy that
+directory to any static host or CDN; a Node.js service is not required.
+
+The playground calls the API directly from the browser. The API must allow the
+documentation origin through CORS. VMA currently enables cross-origin methods
+and headers in `app/factory.py`, so no Fumadocs proxy route is used.
 
 ## Structure
 
-- `docusaurus.config.ts`: site metadata, navigation, and theme configuration.
-- `sidebars.ts`: explicit documentation information architecture.
-- `src/pages/`: the public landing page.
-- `src/css/`: global visual theme.
-- `../docs/`: canonical Markdown documentation.
-
-Scalar remains the interactive OpenAPI reference exposed by the running FastAPI
-service. Docusaurus owns the guides, concepts, compatibility notes, and
-operations documentation.
+- `app/`: Next.js routes, including the homepage and docs renderer.
+- `components/api-page.tsx`: Fumadocs OpenAPI playground renderer.
+- `lib/source.ts`: combined Markdown and virtual OpenAPI content source.
+- `patches/`: pinned dependency fixes applied after installation.
+- `source.config.ts`: Fumadocs MDX collection configuration.
+- `public/openapi/vma.json`: generated OpenAPI document and public download.
+- `../docs/`: canonical narrative content and navigation metadata.

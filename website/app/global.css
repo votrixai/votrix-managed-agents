@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-openapi/css/preset.css';
+
+:root {
+  --fd-layout-width: 1600px;
+  --votrix-brand: #2d6a4f;
+  --votrix-brand-light: #e8f5ee;
+  --votrix-accent: var(--votrix-brand);
+  --votrix-accent-soft: var(--votrix-brand-light);
+  --color-fd-background: #faf9f7;
+  --color-fd-foreground: #1a1917;
+  --color-fd-muted: #f0efec;
+  --color-fd-muted-foreground: #6b6960;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #1a1917;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #1a1917;
+  --color-fd-border: #e8e6e1;
+  --color-fd-primary: #1a1917;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f0efec;
+  --color-fd-secondary-foreground: #1a1917;
+  --color-fd-accent: #f0efec;
+  --color-fd-accent-foreground: #1a1917;
+  --color-fd-ring: #1a1917;
+  --color-fd-overlay: rgba(26, 25, 23, 0.2);
+  --font-sans:
+    "DM Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+  font-family: var(--font-sans);
+  scrollbar-gutter: stable;
+}
+
+.dark {
+  --votrix-brand: #83b69b;
+  --votrix-brand-light: rgba(45, 106, 79, 0.28);
+  --color-fd-background: #141311;
+  --color-fd-foreground: #f7f5f0;
+  --color-fd-muted: #24231f;
+  --color-fd-muted-foreground: #aaa79f;
+  --color-fd-popover: #201f1c;
+  --color-fd-popover-foreground: #f7f5f0;
+  --color-fd-card: #1a1917;
+  --color-fd-card-foreground: #f7f5f0;
+  --color-fd-border: #35332e;
+  --color-fd-primary: #f7f5f0;
+  --color-fd-primary-foreground: #1a1917;
+  --color-fd-secondary: #25241f;
+  --color-fd-secondary-foreground: #f7f5f0;
+  --color-fd-accent: #2a2925;
+  --color-fd-accent-foreground: #f7f5f0;
+  --color-fd-ring: #83b69b;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0 !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+.votrix-mark {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(26, 25, 23, 0.08);
+}
+
+.votrix-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+#nd-sidebar {
+  --color-fd-muted: #f0efec;
+  --color-fd-secondary: #f0efec;
+  --color-fd-muted-foreground: #6b6960;
+  background-color: var(--color-fd-card);
+}
+
+#nd-sidebar a[data-active="true"] {
+  background-color: var(--votrix-brand-light);
+  color: var(--votrix-brand);
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: #24231f;
+  --color-fd-secondary: #25241f;
+  --color-fd-muted-foreground: #aaa79f;
+}
+
+.home-grid {
+  background-image:
+    linear-gradient(to right, rgba(107, 105, 96, 0.11) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(107, 105, 96, 0.11) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 85%);
+}
+
+.hero-glow {
+  background: radial-gradient(
+    circle,
+    rgba(45, 106, 79, 0.18) 0%,
+    rgba(45, 106, 79, 0.07) 32%,
+    transparent 70%
+  );
+  filter: blur(10px);
+}
+
+.terminal-window {
+  box-shadow:
+    0 32px 90px rgba(26, 25, 23, 0.16),
+    0 3px 12px rgba(26, 25, 23, 0.08);
+}
+
+.docs-prose table {
+  display: table;
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .docs-prose table {
+    display: block;
+  }
+}

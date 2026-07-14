@@ -222,6 +222,11 @@ def test_web_entrypoint_never_runs_migrations() -> None:
 def test_local_startup_keeps_e2b_runtime_dependencies_installed() -> None:
     run_script = _read("run.sh")
     assert "uv sync --extra sandbox-e2b" in run_script
+    assert "--extra dev" in run_script
+    assert 'DOCS_PORT="${DOCS_PORT:-4180}"' in run_script
+    assert 'node_modules/.bin/next' in run_script
+    assert 'Local documentation:' in run_script
+    assert '/docs/api/agents/list_agents_v1_agents_get/' in run_script
 
 
 def test_container_build_is_frozen_and_includes_e2b() -> None:

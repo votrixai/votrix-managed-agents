@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager, suppress
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 
 from app.auth import AuthProvider, EnvApiKeyAuthProvider
 from app.config import get_settings
@@ -48,7 +47,16 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     # so dynamically configured provider credentials are available via their
     # api_key_env names; process-level Cloud Run variables still take priority.
     load_dotenv()
-    app = FastAPI(title="Votrix Managed Agents", lifespan=lifespan, docs_url=None)
+    app = FastAPI(
+        title="Votrix Managed Agents",
+        description=(
+            "Self-hosted, multi-tenant control plane for long-running agents."
+        ),
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url="/openapi.json",
+    )
     app.state.auth_provider = auth_provider or EnvApiKeyAuthProvider()
     install_error_handlers(app)
 
@@ -57,6 +65,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
     )
 
     app.include_router(agents.router)
@@ -66,11 +75,11 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(skills.router)
     app.include_router(generic_resources.router)
 
-    @app.get("/health")
+    @app.get("/health", tags=["health"])
     async def health():
         return {"status": "ok"}
 
-    @app.get("/health/db")
+    @app.get("/health/db", tags=["health"])
     async def health_db():
         from sqlalchemy import text
 
@@ -79,20 +88,5 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
         async with session_scope() as db:
             await db.execute(text("SELECT 1"))
         return {"status": "ok", "db": "ok"}
-
-    @app.get("/docs", include_in_schema=False)
-    async def scalar_docs():
-        return HTMLResponse(
-            """
-<!doctype html>
-<html>
-<head><title>Votrix Managed Agents API</title><meta charset="utf-8"/></head>
-<body>
-<script id="api-reference" data-url="/openapi.json"></script>
-<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
-</body>
-</html>
-"""
-        )
 
     return app

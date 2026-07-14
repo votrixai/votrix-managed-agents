@@ -1,4 +1,7 @@
-# Google Cloud Run Deployment
+---
+title: Google Cloud Run Deployment
+description: Supported Cloud Run topology, deployment workflow, and production constraints.
+---
 
 Google Cloud Run is the only maintained hosted deployment target for VMA. The repository does not ship or maintain Render, Railway, Fly.io, AWS ECS/Fargate, Kubernetes, or VPS deployment templates.
 

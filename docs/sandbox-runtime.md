@@ -1,4 +1,7 @@
-# Sandbox Runtime
+---
+title: Sandbox Runtime
+description: Isolation boundaries, lifecycle, providers, and production sandbox requirements.
+---
 
 VMA maps a Claude Managed Agents `Environment` onto a Deep Agents backend. The sandbox is the security boundary for model-controlled code. Tool approval, filesystem middleware, a working directory, and model instructions are not substitutes for process isolation.
 

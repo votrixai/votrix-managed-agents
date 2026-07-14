@@ -54,6 +54,7 @@ Requirements:
 
 - Python 3.12 or newer
 - [uv](https://docs.astral.sh/uv/)
+- Node.js 22 or newer with npm, for the local documentation site
 
 Set up a local SQLite instance:
 
@@ -62,6 +63,14 @@ cp .env.example .env
 uv sync
 uv run alembic upgrade head
 uv run uvicorn votrix_managed_agents:create_app --factory --reload
+```
+
+Alternatively, start the API and Fumadocs site together. The script installs
+missing documentation dependencies, chooses an available docs port starting at
+`4180`, and prints the home, guide, and API Playground links:
+
+```bash
+bash run.sh --migrate
 ```
 
 The local configuration permits anonymous requests when no API key is configured. Production should set `APP_ENV=production`, configure `VMA_API_KEY` or an injected auth provider, and use Postgres. Production vault credentials also require `VMA_ENCRYPTION_KEY` unless an injected secret provider replaces database-backed secrets.
@@ -73,7 +82,9 @@ curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/health/db
 ```
 
-Interactive API documentation is available at `http://127.0.0.1:8080/docs`.
+The machine-readable OpenAPI schema is available at
+`http://127.0.0.1:8080/openapi.json`. The statically exported Fumadocs
+application under `website/` combines the guides and interactive API reference.
 
 ## Configure a model provider
 

@@ -1,4 +1,7 @@
-# Deployments
+---
+title: Scheduled Deployments
+description: Deployment definitions, schedules, runs, and operational lifecycle behavior.
+---
 
 Deployments are stored in Postgres as managed resources.
 

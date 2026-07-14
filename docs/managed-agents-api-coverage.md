@@ -1,4 +1,7 @@
-# Managed Agents API Coverage
+---
+title: Managed Agents API Coverage
+description: Route-by-route coverage of the Managed Agents-compatible HTTP API.
+---
 
 Source basis:
 

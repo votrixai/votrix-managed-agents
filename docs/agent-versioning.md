@@ -1,4 +1,7 @@
-# Agent Versioning Contract
+---
+title: Agent Versioning Contract
+description: Versioning, update, archive, and pinning semantics for Agent resources.
+---
 
 This project follows the Claude Managed Agents versioning shape for Agent resources.
 

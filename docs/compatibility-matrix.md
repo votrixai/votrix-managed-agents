@@ -1,4 +1,7 @@
-# Compatibility Matrix
+---
+title: Compatibility Matrix
+description: Current implementation status and material gaps across the VMA public surface.
+---
 
 Snapshot: 2026-07-11
 Runtime kernel: Deep Agents 0.6.12

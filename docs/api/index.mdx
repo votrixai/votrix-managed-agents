@@ -1,0 +1,28 @@
+---
+title: API Reference
+description: Explore and call every Votrix Managed Agents endpoint.
+---
+
+The Votrix Managed Agents API is a workspace-scoped REST API for defining agents,
+creating durable sessions, managing execution environments, and operating the
+resources that long-running agents need.
+
+<Callout title="Authentication">
+  Every `/v1` request requires the current `votrix-managed-agents-beta` header plus
+  either an `x-api-key` header or the same key as a Bearer token. Authentication
+  values entered in the playground stay in your browser.
+</Callout>
+
+## Base URL
+
+```text
+https://managed-agents.votrixai.com
+```
+
+Choose an endpoint from the sidebar to inspect its request schema, copy a code
+sample, or send a real HTTP request from the interactive playground.
+
+## OpenAPI document
+
+The reference is generated at build time from the same FastAPI application that
+serves production traffic. You can also [download the complete OpenAPI schema](/openapi/vma.json).
