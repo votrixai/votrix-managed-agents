@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
@@ -11,10 +11,12 @@ from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import environments as env_q
 from app.db.queries import resources as res_q
+from app.db.queries.api_keys import WORKER_SCOPE
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse
 from app.models.environments import (
     EnvironmentCreateRequest,
+    EnvironmentDeletedResponse,
     EnvironmentResponse,
     EnvironmentUpdateRequest,
     environment_config_with_scope,
@@ -140,7 +142,7 @@ async def archive_environment(
     return environment_to_response(environment)
 
 
-@router.delete("/{environment_id}")
+@router.delete("/{environment_id}", response_model=EnvironmentDeletedResponse)
 async def delete_environment(
     environment_id: str,
     db: AsyncSession = Depends(get_session),
@@ -153,7 +155,19 @@ async def delete_environment(
     return {"id": environment.id, "type": "environment_deleted", "deleted": True}
 
 
-async def require_worker_access(x_worker_token: str | None = Header(default=None, alias="x-worker-token")) -> None:
+async def require_worker_access(
+    request: Request,
+    x_worker_token: str | None = Header(default=None, alias="x-worker-token"),
+) -> None:
+    workspace = getattr(request.state, "current_workspace", None)
+    if workspace is None or WORKER_SCOPE not in workspace.scopes:
+        raise HTTPException(status_code=403, detail="API key is missing required scope: worker")
+
+    # Database API keys carry a tenant-bound worker scope and are sufficient on
+    # their own. Keep the legacy process-wide token only for local/env-key
+    # deployments while they migrate to scoped keys.
+    if workspace.source == "database_api_key":
+        return None
     expected = get_settings().vma_worker_token
     if not expected:
         return None
@@ -280,14 +294,23 @@ async def ack_environment_work(
     environment_id: str,
     work_id: str,
     worker_id: str | None = Query(default=None),
+    lease_id: str | None = Query(default=None),
     anthropic_worker_id: str | None = Header(default=None, alias="Anthropic-Worker-ID"),
     _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
-    work = await _must_get_work(db, environment_id, work_id)
+    # The generated Anthropic SDK ack method cannot carry our lease_id extension.
+    # Lock the current row and let ack_work validate the worker owner; callers that
+    # do supply a lease_id still receive generation fencing for stale leases.
+    work = await _must_get_work(db, environment_id, work_id, for_update=True)
     try:
-        await ack_work(db, work, worker_id=_worker_id_for_work(work, worker_id, anthropic_worker_id))
+        await ack_work(
+            db,
+            work,
+            worker_id=_worker_id_for_work(work, worker_id, anthropic_worker_id),
+            lease_id=lease_id,
+        )
     except WorkLeaseError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
@@ -300,6 +323,7 @@ async def heartbeat_environment_work(
     work_id: str,
     body: GenericBody | None = None,
     worker_id: str | None = Query(default=None),
+    lease_id: str | None = Query(default=None),
     lease_seconds: int = Query(default=60, ge=5, le=3600),
     desired_ttl_seconds: int | None = Query(default=None, ge=1, le=3600),
     expected_last_heartbeat: str | None = None,
@@ -308,7 +332,7 @@ async def heartbeat_environment_work(
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
-    work = await _must_get_work(db, environment_id, work_id)
+    work = await _must_get_work(db, environment_id, work_id, for_update=True)
     _check_heartbeat_precondition(work, expected_last_heartbeat)
     ttl_seconds = desired_ttl_seconds or lease_seconds
     try:
@@ -316,6 +340,7 @@ async def heartbeat_environment_work(
             db,
             work,
             worker_id=_worker_id_for_work(work, worker_id, anthropic_worker_id),
+            lease_id=lease_id,
             lease_seconds=ttl_seconds,
             payload=body.model_dump(mode="json") if body is not None else {},
         )
@@ -497,12 +522,19 @@ async def _must_get_environment(db: AsyncSession, environment_id: str):
     return environment
 
 
-async def _must_get_work(db: AsyncSession, environment_id: str, work_id: str):
+async def _must_get_work(
+    db: AsyncSession,
+    environment_id: str,
+    work_id: str,
+    *,
+    for_update: bool = False,
+):
     work = await res_q.get_resource(
         db,
         resource_id=work_id,
         resource_type="environment_work",
         parent_id=environment_id,
+        for_update=for_update,
     )
     if work is None:
         raise HTTPException(status_code=404, detail="Environment work item not found")

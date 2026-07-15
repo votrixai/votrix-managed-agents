@@ -1,0 +1,92 @@
+name: Publish Votrix Python SDK
+
+on:
+  push:
+    tags:
+      - "sdk-python-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify tag matches package version
+        env:
+          SDK_TAG: ${{ github.ref_name }}
+        run: |
+          package_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "${SDK_TAG#sdk-python-v}" = "$package_version"
+
+      - name: Install SDK dependencies
+        run: uv sync --extra dev
+
+      - name: Run SDK tests
+        run: uv run pytest
+
+      - name: Type-check the public package
+        run: uv run pyright
+
+      - name: Run the native SDK server contract
+        working-directory: ${{ github.workspace }}
+        run: |
+          uv sync --extra dev
+          uv run pytest tests/contract/test_votrix_sdk_contract.py
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Validate distributions
+        run: uv run --with twine twine check dist/*
+
+      - name: Install and import only the built wheel
+        run: |
+          uv venv --python 3.12 .wheel-smoke
+          uv pip install --python .wheel-smoke/bin/python dist/*.whl
+          .wheel-smoke/bin/python -c "import asyncio; from importlib.resources import files; from votrix import AsyncVotrix, Votrix; a=AsyncVotrix(api_key='vma_smoke', base_url='https://example.com'); s=Votrix(api_key='vma_smoke', base_url='https://example.com'); assert files('votrix').joinpath('py.typed').is_file(); assert hasattr(a, 'api_keys') and hasattr(s, 'api_keys'); assert not hasattr(a, 'memory_stores') and not hasattr(a.vaults, 'credentials'); asyncio.run(a.close()); s.close()"
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: sdks/python/dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/votrix/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: dist
+
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1

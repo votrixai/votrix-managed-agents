@@ -21,6 +21,16 @@ export const metadata: Metadata = {
   },
   description:
     'Open-source infrastructure and API reference for long-running managed agents.',
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: {
+      index: false,
+      follow: false,
+      noarchive: true,
+      nosnippet: true,
+    },
+  },
   keywords: [
     'Votrix',
     'managed agents',

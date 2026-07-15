@@ -15,6 +15,21 @@ def test_deepseek_reasoner_is_rejected_for_tool_harness(monkeypatch):
     assert provider.capabilities.tool_calls is False
 
 
+def test_public_session_model_provider_overrides_legacy_agent_runtime_provider(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-secret")
+    get_settings.cache_clear()
+
+    provider = resolve_runtime_provider(
+        {"id": "deepseek:deepseek-chat"},
+        runtime={"model": {"provider": "openrouter"}},
+    )
+
+    assert provider.provider == "deepseek"
+    assert provider.adapter == "deepseek"
+    assert provider.model_id == "deepseek-chat"
+    assert provider.api_key == "deepseek-secret"
+
+
 def test_server_approved_openai_compatible_provider_uses_chat_completions(monkeypatch):
     monkeypatch.setenv("GATEWAY_TOKEN", "gateway-secret")
     monkeypatch.setenv(

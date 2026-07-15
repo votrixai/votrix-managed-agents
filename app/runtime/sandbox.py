@@ -30,6 +30,7 @@ class SandboxRuntimePlan:
 class BackendHandle:
     backend: Any
     plan: SandboxRuntimePlan
+    connection: Any | None = None
 
 
 def sandbox_plan_from_environment(
@@ -161,6 +162,7 @@ async def open_backend(
             yield BackendHandle(
                 backend=connection.backend,
                 plan=connected_plan,
+                connection=connection,
             )
         return
 

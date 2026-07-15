@@ -1,8 +1,9 @@
-"""Deterministic, session-initial sandbox inputs.
+"""Deterministic sandbox inputs for one persistent managed Session.
 
-The control plane materializes this bundle exactly once when an E2B-backed
-session is created. Later turns recompute its create-time identity, verify the
-immutable subset, and do not upload the files again.
+The control plane materializes Skills, memory seeds, and create-time files
+when an E2B-backed Session is created. Later file resources may extend the
+immutable upload manifest through the lifecycle's append-only CAS; existing
+entries are never replaced or removed.
 """
 
 from __future__ import annotations
@@ -16,6 +17,11 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
+
+
+SESSION_ROOT = "/mnt/session"
+SESSION_UPLOAD_ROOT = f"{SESSION_ROOT}/uploads"
+SESSION_OUTPUT_ROOT = f"{SESSION_ROOT}/outputs"
 
 
 class SandboxInputError(RuntimeError):
@@ -85,6 +91,17 @@ class SandboxInputBundle:
 
     def state_files(self) -> dict[str, dict[str, Any]]:
         return {item.path: _file_data(item.content) for item in self.files}
+
+    def with_appended_file(self, item: SandboxInputFile) -> SandboxInputBundle:
+        """Return the same identity sources with one collision-checked file added."""
+        by_path = {current.path: current for current in self.files}
+        _add_file(by_path, item)
+        return SandboxInputBundle(
+            files=tuple(by_path[path] for path in sorted(by_path)),
+            skill_sources=self.skill_sources,
+            memory_sources=self.memory_sources,
+            mutable_roots=self.mutable_roots,
+        )
 
 
 def sandbox_input_bundle(
@@ -259,6 +276,9 @@ def _file_data(content: bytes) -> dict[str, Any]:
 
 
 __all__ = [
+    "SESSION_OUTPUT_ROOT",
+    "SESSION_ROOT",
+    "SESSION_UPLOAD_ROOT",
     "SandboxInputBundle",
     "SandboxInputError",
     "SandboxInputFile",

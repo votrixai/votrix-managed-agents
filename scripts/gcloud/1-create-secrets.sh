@@ -91,7 +91,6 @@ while IFS='|' read -r variable_name base_secret_name; do
     --quiet >/dev/null
 done <<'SECRETS'
 DATABASE_URL|vma-database-url
-VMA_API_KEY|vma-api-key
 VMA_ENCRYPTION_KEY|vma-encryption-key
 OPENROUTER_API_KEY|vma-openrouter-api-key
 E2B_API_KEY|vma-e2b-api-key
@@ -99,8 +98,6 @@ S3_ENDPOINT_URL|vma-s3-endpoint-url
 S3_ACCESS_KEY_ID|vma-s3-access-key-id
 S3_SECRET_ACCESS_KEY|vma-s3-secret-access-key
 S3_BUCKET_NAME|vma-s3-bucket-name
-S3_PUBLIC_URL|vma-s3-public-url
-VMA_PUBLIC_BASE_URL|vma-public-base-url
 SECRETS
 
 echo "Done. Only the allowlisted VMA secrets were imported."

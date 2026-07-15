@@ -1,10 +1,14 @@
 import json
-from urllib.parse import parse_qs, urlparse
+from datetime import datetime, timezone
+
+import pytest
 
 from app.db.engine import session_scope
+from app.db.models import ManagedResource
 from app.db.queries import resources as res_q
 from tests.conftest import TEST_HEADERS
 from app.config import get_settings
+from app.workspace import DEFAULT_WORKSPACE_ID
 
 
 async def test_post_update_alias_matches_official_sdk_shape(client):
@@ -41,10 +45,77 @@ async def test_files_upload_download_delete(client):
     response = await client.get(f"/v1/files/{file['id']}/content", headers=TEST_HEADERS)
     assert response.status_code == 200
     assert response.content == b"hello world"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
 
     response = await client.delete(f"/v1/files/{file['id']}", headers=TEST_HEADERS)
     assert response.status_code == 200
     assert response.json()["deleted"] is True
+
+
+async def test_mounted_session_file_copy_cannot_be_deleted_directly(client):
+    agent = (
+        await client.post(
+            "/v1/agents",
+            headers=TEST_HEADERS,
+            json={"name": "Mounted File Guard", "model": {"id": "gpt-5.5"}},
+        )
+    ).json()
+    environment = (
+        await client.post(
+            "/v1/environments",
+            headers=TEST_HEADERS,
+            json={"name": "Mounted File Guard", "config": {"type": "cloud"}},
+        )
+    ).json()
+    uploaded = (
+        await client.post(
+            "/v1/files",
+            headers=TEST_HEADERS,
+            files={"file": ("sealed.txt", b"sealed bytes", "text/plain")},
+        )
+    ).json()
+    session = (
+        await client.post(
+            "/v1/sessions",
+            headers=TEST_HEADERS,
+            json={"agent": agent["id"], "environment_id": environment["id"]},
+        )
+    ).json()
+    mounted = await client.post(
+        f"/v1/sessions/{session['id']}/resources",
+        headers=TEST_HEADERS,
+        json={
+            "type": "file",
+            "file_id": uploaded["id"],
+            "mount_path": "/mnt/session/uploads/sealed.txt",
+        },
+    )
+    assert mounted.status_code == 201, mounted.text
+    scoped_file_id = mounted.json()["file_id"]
+
+    deletion = await client.delete(
+        f"/v1/files/{scoped_file_id}",
+        headers=TEST_HEADERS,
+    )
+    assert deletion.status_code == 409, deletion.text
+    assert "mounted by an active Session resource" in deletion.text
+    download = await client.get(
+        f"/v1/files/{scoped_file_id}/content",
+        headers=TEST_HEADERS,
+    )
+    assert download.content == b"sealed bytes"
+
+    session_deletion = await client.delete(
+        f"/v1/sessions/{session['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert session_deletion.status_code == 200, session_deletion.text
+    deletion = await client.delete(
+        f"/v1/files/{scoped_file_id}",
+        headers=TEST_HEADERS,
+    )
+    assert deletion.status_code == 200, deletion.text
 
 
 async def test_duplicate_file_uploads_share_object_until_last_reference_is_deleted(client):
@@ -65,7 +136,8 @@ async def test_duplicate_file_uploads_share_object_until_last_reference_is_delet
     second = response.json()
 
     assert second["deduplicated_from_file_id"] == first["id"]
-    assert second["storage"]["key"] == first["storage"]["key"]
+    assert "storage" not in first
+    assert "storage" not in second
 
     response = await client.delete(f"/v1/files/{first['id']}", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
@@ -142,6 +214,41 @@ async def test_file_complete_requires_current_workspace_staged_key(client):
     completed = response.json()
     assert completed["type"] == "file"
     assert completed["filename"] == "staged.txt"
+
+
+async def test_file_complete_enforces_actual_staged_object_size(client, monkeypatch):
+    import app.routers.files as files_router
+
+    response = await client.post(
+        "/v1/files/presign",
+        headers=TEST_HEADERS,
+        json={"filename": "claimed-small.txt", "mime_type": "text/plain"},
+    )
+    assert response.status_code == 200, response.text
+    key = response.json()["key"]
+
+    async def false_head(_key):
+        return {"ContentLength": 1, "ContentType": "text/plain"}
+
+    async def actual_download(_key):
+        return b"five!", "text/plain"
+
+    monkeypatch.setattr(files_router, "get_file_info", false_head)
+    monkeypatch.setattr(files_router, "download_file_with_type", actual_download)
+    monkeypatch.setenv("VMA_MAX_FILE_UPLOAD_BYTES", "4")
+    get_settings.cache_clear()
+
+    response = await client.post(
+        "/v1/files/complete",
+        headers=TEST_HEADERS,
+        json={
+            "key": key,
+            "filename": "claimed-small.txt",
+            "size_bytes": 1,
+        },
+    )
+    assert response.status_code == 413, response.text
+    assert "maximum size" in response.text
 
 
 async def test_skill_create_version_and_download(client):
@@ -437,6 +544,380 @@ async def test_vault_credential_auth_validation_and_redaction(client):
     assert "env-secret" not in str(updated)
 
 
+async def test_vault_credential_keys_are_unique_required_and_immutable(client):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": "Credential Constraints"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "Missing value",
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "OPENROUTER_API_KEY",
+                "networking": {"type": "unrestricted"},
+            },
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "secret_value" in response.json()["error"]["message"]
+
+    payload = {
+        "display_name": "OpenRouter",
+        "auth": {
+            "type": "environment_variable",
+            "secret_name": "OPENROUTER_API_KEY",
+            "secret_value": "first-key",
+            "networking": {"type": "unrestricted"},
+        },
+    }
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json=payload,
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={**payload, "display_name": "Duplicate", "auth": {**payload["auth"], "secret_value": "second-key"}},
+    )
+    assert response.status_code == 409, response.text
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "DEEPSEEK_API_KEY",
+                "secret_value": "rotated-key",
+            }
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "immutable" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}/archive",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={**payload, "display_name": "Replacement"},
+    )
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.parametrize(
+    "auth,expected_field",
+    [
+        (
+            {
+                "type": "environment_variable",
+                "secret_name": "OPENROUTER_API_KEY",
+                "secret_value": "   ",
+                "networking": {"type": "unrestricted"},
+            },
+            "secret_value",
+        ),
+        (
+            {
+                "type": "static_bearer",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "token": "\t",
+            },
+            "token",
+        ),
+        (
+            {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "access_token": "\n",
+            },
+            "access_token",
+        ),
+    ],
+)
+async def test_vault_credential_create_rejects_blank_required_secrets(client, auth, expected_field):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": f"Blank {expected_field}"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={"display_name": "Blank secret", "auth": auth},
+    )
+    assert response.status_code == 422, response.text
+    assert expected_field in response.json()["error"]["message"]
+
+
+async def test_vault_credential_create_requires_explicit_nonempty_secret(client):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": "Strict secret Vault"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={"display_name": "Legacy missing auth", "api_key": "ignored-legacy-secret"},
+    )
+    assert response.status_code == 422, response.text
+    assert "access_token" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("auth_type", ["client_secret_basic", "client_secret_post"])
+async def test_vault_oauth_client_secret_modes_require_client_secret(client, auth_type):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": f"OAuth {auth_type}"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "OAuth missing client secret",
+            "auth": {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "access_token": "access-secret",
+                "refresh": {
+                    "client_id": "client-1",
+                    "refresh_token": "refresh-secret",
+                    "token_endpoint": "https://auth.example.invalid/token",
+                    "token_endpoint_auth": {"type": auth_type},
+                },
+            },
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "client_secret" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "OAuth blank client secret",
+            "auth": {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://blank-mcp.example.invalid",
+                "access_token": "access-secret",
+                "refresh": {
+                    "client_id": "client-1",
+                    "refresh_token": "refresh-secret",
+                    "token_endpoint": "https://auth.example.invalid/token",
+                    "token_endpoint_auth": {"type": auth_type, "client_secret": "  "},
+                },
+            },
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "client_secret" in response.json()["error"]["message"]
+
+
+async def test_vault_supports_at_most_twenty_active_credentials(client):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": "Capacity Vault"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    for index in range(20):
+        response = await client.post(
+            f"/v1/vaults/{vault['id']}/credentials",
+            headers=TEST_HEADERS,
+            json={
+                "display_name": f"Key {index}",
+                "auth": {
+                    "type": "environment_variable",
+                    "secret_name": f"PROVIDER_KEY_{index}",
+                    "secret_value": f"secret-{index}",
+                    "networking": {"type": "unrestricted"},
+                },
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "Overflow",
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "PROVIDER_KEY_OVERFLOW",
+                "secret_value": "overflow-secret",
+                "networking": {"type": "unrestricted"},
+            },
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert "20" in response.json()["error"]["message"]
+
+
+async def test_credential_mutations_lock_parent_before_credential(client, monkeypatch):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": "Lock order Vault"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "Lock order Credential",
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "LOCK_ORDER_KEY",
+                "secret_value": "secret",
+                "networking": {"type": "unrestricted"},
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+
+    original_get_resource = res_q.get_resource
+    lock_calls: list[tuple[str | None, str]] = []
+
+    async def recording_get_resource(*args, **kwargs):
+        if kwargs.get("for_update"):
+            lock_calls.append((kwargs.get("resource_type"), kwargs["resource_id"]))
+        return await original_get_resource(*args, **kwargs)
+
+    monkeypatch.setattr(res_q, "get_resource", recording_get_resource)
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "Delete lock order Credential",
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "DELETE_LOCK_ORDER_KEY",
+                "secret_value": "secret",
+                "networking": {"type": "unrestricted"},
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    deletable_credential = response.json()
+    assert lock_calls == [("vault", vault["id"])]
+
+    lock_calls.clear()
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}",
+        headers=TEST_HEADERS,
+        json={"display_name": "Updated"},
+    )
+    assert response.status_code == 200, response.text
+    assert lock_calls == [("vault", vault["id"]), ("credential", credential["id"])]
+
+    lock_calls.clear()
+    response = await client.delete(
+        f"/v1/vaults/{vault['id']}/credentials/{deletable_credential['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert lock_calls == [("vault", vault["id"]), ("credential", deletable_credential["id"])]
+
+    lock_calls.clear()
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}/mcp_oauth_validate",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert lock_calls == [("vault", vault["id"]), ("credential", credential["id"])]
+
+    lock_calls.clear()
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}/archive",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert lock_calls == [("vault", vault["id"]), ("credential", credential["id"])]
+
+
+async def test_vault_delete_cascades_more_than_one_thousand_credentials(client):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": "Unbounded cascade Vault"},
+    )
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    archived_at = datetime.now(timezone.utc)
+    credential_count = 1005
+    async with session_scope() as db:
+        db.add_all(
+            [
+                ManagedResource(
+                    id=f"cred_unbounded_{index:04d}",
+                    workspace_id=DEFAULT_WORKSPACE_ID,
+                    resource_type="credential",
+                    parent_id=vault["id"],
+                    name=f"Archived {index}",
+                    status="archived",
+                    archived_at=archived_at,
+                    data={
+                        "auth": {
+                            "type": "environment_variable",
+                            "secret_name": f"ARCHIVED_KEY_{index}",
+                            "secret_value": f"secret-{index}",
+                            "networking": {"type": "unrestricted"},
+                        }
+                    },
+                )
+                for index in range(credential_count)
+            ]
+        )
+        await db.commit()
+
+    response = await client.delete(f"/v1/vaults/{vault['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    async with session_scope() as db:
+        credentials = await res_q.list_resources(
+            db,
+            resource_type="credential",
+            parent_id=vault["id"],
+            limit=credential_count + 1,
+            include_archived=True,
+            include_deleted=True,
+        )
+    assert len(credentials) == credential_count
+    assert all(credential.deleted_at is not None for credential in credentials)
+    assert all(credential.data["auth"]["secret_value"] is None for credential in credentials)
+
+
 async def test_vault_credential_validation_is_persisted_in_metadata(client):
     response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "MCP Vault"})
     assert response.status_code == 201, response.text
@@ -486,41 +967,6 @@ async def test_vault_credential_validation_is_persisted_in_metadata(client):
     assert last_validation["status"] == "unknown"
     assert last_validation["has_refresh_token"] is True
     assert "secret" not in str(last_validation)
-
-
-async def test_user_profile_enrollment_url_persists_hashed_token(client):
-    response = await client.post(
-        "/v1/user_profiles",
-        headers=TEST_HEADERS,
-        json={"relationship": "external", "external_id": "user-enroll"},
-    )
-    assert response.status_code == 201, response.text
-    profile = response.json()
-
-    response = await client.post(f"/v1/user_profiles/{profile['id']}/enrollment_url", headers=TEST_HEADERS)
-
-    assert response.status_code == 200, response.text
-    enrollment = response.json()
-    assert enrollment["type"] == "enrollment_url"
-    parsed = urlparse(enrollment["url"])
-    token = parse_qs(parsed.query)["token"][0]
-    assert parsed.path == f"/managed-agents/user-profiles/{profile['id']}/enroll"
-    assert token
-    assert enrollment["expires_at"]
-
-    async with session_scope() as db:
-        resources = await res_q.list_resources(
-            db,
-            resource_type="user_profile_enrollment",
-            parent_id=profile["id"],
-            limit=10,
-        )
-
-    assert len(resources) == 1
-    stored = resources[0].data
-    assert stored["user_profile_id"] == profile["id"]
-    assert stored["token_hash"]
-    assert token not in str(stored)
 
 
 async def test_user_profile_relationship_validation(client):

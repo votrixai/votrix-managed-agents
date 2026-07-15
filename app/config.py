@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -51,6 +52,9 @@ class Settings(BaseSettings):
     vma_e2b_pause_on_exit: bool = True
     vma_e2b_allow_public_traffic: bool = False
     vma_e2b_template_resources: Annotated[dict[str, Any], NoDecode] = Field(default_factory=dict)
+    vma_e2b_cost_estimation_enabled: bool = True
+    vma_e2b_vcpu_second_usd: Decimal = Field(default=Decimal("0.000014"), ge=0)
+    vma_e2b_gib_second_usd: Decimal = Field(default=Decimal("0.0000045"), ge=0)
     vma_max_graph_steps: int = 250
     vma_run_timeout_seconds: int = 900
     vma_web_fetch_max_bytes: int = 1_000_000
@@ -60,9 +64,20 @@ class Settings(BaseSettings):
     vma_api_key_workspaces: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
     vma_event_poll_interval_seconds: float = 0.5
     vma_max_file_upload_bytes: int = 50 * 1024 * 1024
+    vma_max_session_input_bytes: int = 512 * 1024 * 1024
     vma_max_skill_archive_bytes: int = 25 * 1024 * 1024
-    vma_public_base_url: str = "https://example.invalid"
     vma_worker_token: str = ""
+    vma_embedded_worker_enabled: bool = False
+    vma_worker_concurrency: int = 1
+    vma_worker_poll_interval_seconds: float = 0.5
+    vma_worker_lease_seconds: int = 120
+    vma_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    vma_public_ga_only: bool = False
+    vma_governance_enabled: bool = True
+    vma_requests_per_minute: int = Field(default=120, ge=0)
+    vma_max_active_work: int = Field(default=5, ge=0)
+    vma_daily_model_tokens: int = Field(default=1_000_000, ge=0)
+    vma_workspace_storage_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=0)
     vma_encryption_key: str = ""
     vma_allow_plaintext_secrets_local: bool = True
 
@@ -75,7 +90,6 @@ class Settings(BaseSettings):
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
     s3_bucket_name: str = ""
-    s3_public_url: str = ""
     s3_region: str = "auto"
 
     app_env: str = "local"
@@ -85,6 +99,15 @@ class Settings(BaseSettings):
     @field_validator("vma_api_keys", mode="before")
     @classmethod
     def parse_api_keys(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+    @field_validator("vma_cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value):
         if value is None or value == "":
             return []
         if isinstance(value, str):

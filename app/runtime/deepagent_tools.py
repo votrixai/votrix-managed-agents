@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import ipaddress
 import json
-import socket
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
@@ -11,6 +9,7 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.tools import StructuredTool
 
 from app.config import get_settings
+from app.network_security import create_restricted_http_client, validate_public_https_url
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -127,22 +126,26 @@ def web_fetch_tool() -> StructuredTool:
         max_bytes = int(getattr(settings, "vma_web_fetch_max_bytes", 1_000_000))
         allow_private = bool(getattr(settings, "vma_web_allow_private_networks", False))
         current = url
-        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        async with _outbound_http_client(allow_private=allow_private) as client:
             for _ in range(6):
                 await _validate_public_url(current, allow_private=allow_private)
-                response = await client.get(current, headers={"user-agent": "Votrix-Managed-Agents/1.0"})
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        return "Fetch failed: redirect without location."
-                    current = urljoin(current, location)
-                    continue
-                response.raise_for_status()
-                body = response.content[:max_bytes]
-                text = body.decode(response.encoding or "utf-8", errors="replace")
-                if len(response.content) > max_bytes:
-                    text += "\n\n[Response truncated by VMA_WEB_FETCH_MAX_BYTES]"
-                return text
+                async with client.stream(
+                    "GET",
+                    current,
+                    headers={"user-agent": "Votrix-Managed-Agents/1.0"},
+                ) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        if not location:
+                            return "Fetch failed: redirect without location."
+                        current = urljoin(current, location)
+                        continue
+                    response.raise_for_status()
+                    body, truncated = await _read_bounded_body(response, max_bytes=max_bytes)
+                    text = body.decode(response.encoding or "utf-8", errors="replace")
+                    if truncated:
+                        text += "\n\n[Response truncated by VMA_WEB_FETCH_MAX_BYTES]"
+                    return text
         return "Fetch failed: too many redirects."
 
     return StructuredTool.from_function(coroutine=web_fetch, name="web_fetch", description=web_fetch.__doc__ or "Fetch a URL.")
@@ -159,10 +162,19 @@ def web_search_tool() -> StructuredTool:
             allow_private=bool(getattr(get_settings(), "vma_web_allow_private_networks", False)),
         )
         limit = max(1, min(int(max_results), 10))
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(endpoint, params={"q": query, "format": "json"})
-            response.raise_for_status()
-            payload = response.json()
+        max_bytes = int(getattr(get_settings(), "vma_web_fetch_max_bytes", 1_000_000))
+        allow_private = bool(getattr(get_settings(), "vma_web_allow_private_networks", False))
+        async with _outbound_http_client(allow_private=allow_private) as client:
+            async with client.stream(
+                "GET",
+                endpoint,
+                params={"q": query, "format": "json"},
+            ) as response:
+                response.raise_for_status()
+                body, truncated = await _read_bounded_body(response, max_bytes=max_bytes)
+                if truncated:
+                    raise ValueError("Web search response exceeds VMA_WEB_FETCH_MAX_BYTES")
+                payload = json.loads(body)
         results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(results, list):
             return json.dumps(payload, ensure_ascii=False)[:20_000]
@@ -199,10 +211,40 @@ async def _validate_public_url(value: str, *, allow_private: bool) -> None:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Only absolute http and https URLs are supported")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URLs must not contain embedded credentials")
     if allow_private:
         return
-    infos = await __import__("asyncio").to_thread(socket.getaddrinfo, parsed.hostname, parsed.port or 443)
-    for info in infos:
-        address = ipaddress.ip_address(info[4][0])
-        if not address.is_global:
-            raise ValueError("URL resolves to a private or non-global address")
+    await validate_public_https_url(value)
+
+
+def _outbound_http_client(*, allow_private: bool) -> httpx.AsyncClient:
+    timeout = httpx.Timeout(30.0)
+    if not allow_private:
+        return create_restricted_http_client(timeout=timeout)
+    return httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        trust_env=False,
+    )
+
+
+async def _read_bounded_body(
+    response: httpx.Response,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, bool]:
+    limit = max(1, max_bytes)
+    content = bytearray()
+    truncated = False
+    async for chunk in response.aiter_bytes():
+        remaining = limit + 1 - len(content)
+        if remaining <= 0:
+            truncated = True
+            break
+        content.extend(chunk[:remaining])
+        if len(content) > limit:
+            truncated = True
+            del content[limit:]
+            break
+    return bytes(content), truncated

@@ -11,6 +11,11 @@ class GenericBody(FlexibleApiModel):
 
 def resource_to_response(resource: ManagedResource, *, public_type: str | None = None) -> dict[str, Any]:
     data = _redacted_resource_data(resource)
+    if resource.storage_backend is not None:
+        # Object-store coordinates are internal capabilities. Downloads are
+        # served by authenticated API routes, never by exposing bucket URLs or
+        # permanent object keys in public resource metadata.
+        data.pop("storage", None)
     data.update(
         {
             "id": resource.id,
@@ -38,15 +43,6 @@ def resource_to_response(resource: ManagedResource, *, public_type: str | None =
         data.setdefault("size_bytes", len(resource.content))
     if resource.sha256 is not None:
         data.setdefault("sha256", resource.sha256)
-    if resource.storage_backend is not None:
-        data.setdefault(
-            "storage",
-            {
-                "backend": resource.storage_backend,
-                "key": resource.storage_key,
-                "url": resource.storage_url,
-            },
-        )
     return data
 
 

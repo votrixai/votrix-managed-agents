@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models._base import Base, TimestampMixin
@@ -36,15 +38,230 @@ class Workspace(TimestampMixin, Base):
 
 class ApiKey(TimestampMixin, Base):
     __tablename__ = "api_keys"
+    __table_args__ = (
+        UniqueConstraint("key_hash", name="uq_api_keys_key_hash"),
+        Index("ix_api_keys_workspace_revoked", "workspace_id", "revoked_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     prefix: Mapped[str] = mapped_column(String(32), nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(String(128))
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(String(128))
+    revocation_reason: Mapped[str | None] = mapped_column(Text)
+    replaced_by_key_id: Mapped[str | None] = mapped_column(String(64))
+    replaces_key_id: Mapped[str | None] = mapped_column(String(64))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WorkspaceQuota(TimestampMixin, Base):
+    __tablename__ = "workspace_quotas"
+    __table_args__ = (
+        CheckConstraint(
+            "requests_per_minute IS NULL OR requests_per_minute >= 0",
+            name="ck_workspace_quotas_requests_nonnegative",
+        ),
+        CheckConstraint(
+            "max_active_work IS NULL OR max_active_work >= 0",
+            name="ck_workspace_quotas_active_work_nonnegative",
+        ),
+        CheckConstraint(
+            "daily_model_tokens IS NULL OR daily_model_tokens >= 0",
+            name="ck_workspace_quotas_model_tokens_nonnegative",
+        ),
+        CheckConstraint(
+            "storage_bytes IS NULL OR storage_bytes >= 0",
+            name="ck_workspace_quotas_storage_nonnegative",
+        ),
+    )
+
+    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    requests_per_minute: Mapped[int | None] = mapped_column(Integer)
+    max_active_work: Mapped[int | None] = mapped_column(Integer)
+    daily_model_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    storage_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class WorkspaceQuotaCounter(TimestampMixin, Base):
+    __tablename__ = "workspace_quota_counters"
+    __table_args__ = (
+        CheckConstraint("value >= 0", name="ck_workspace_quota_counters_value_nonnegative"),
+        CheckConstraint(
+            "window_seconds >= 0",
+            name="ck_workspace_quota_counters_window_nonnegative",
+        ),
+        Index(
+            "ix_workspace_quota_counters_metric_window",
+            "metric",
+            "window_start",
+        ),
+    )
+
+    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    metric: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    window_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class WorkspaceQuotaReservation(TimestampMixin, Base):
+    __tablename__ = "workspace_quota_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "quota_name",
+            "reference_id",
+            name="uq_workspace_quota_reservations_reference",
+        ),
+        CheckConstraint("amount > 0", name="ck_workspace_quota_reservations_amount_positive"),
+        CheckConstraint(
+            "state IN ('active', 'released')",
+            name="ck_workspace_quota_reservations_state",
+        ),
+        Index(
+            "ix_workspace_quota_reservations_workspace_state",
+            "workspace_id",
+            "quota_name",
+            "state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    quota_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    reference_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class AuditLedgerEntry(Base):
+    __tablename__ = "audit_ledger"
+    __table_args__ = (
+        Index("ix_audit_ledger_workspace_occurred", "workspace_id", "occurred_at"),
+        Index("ix_audit_ledger_workspace_action_occurred", "workspace_id", "action", "occurred_at"),
+        Index("ix_audit_ledger_request_id", "request_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_type: Mapped[str | None] = mapped_column(String(64))
+    resource_id: Mapped[str | None] = mapped_column(String(255))
+    request_id: Mapped[str | None] = mapped_column(String(128))
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class UsageLedgerEntry(Base):
+    __tablename__ = "usage_ledger"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "idempotency_key",
+            name="uq_usage_ledger_workspace_idempotency",
+        ),
+        CheckConstraint("quantity >= 0", name="ck_usage_ledger_quantity_nonnegative"),
+        Index(
+            "ix_usage_ledger_workspace_metric_occurred",
+            "workspace_id",
+            "metric",
+            "occurred_at",
+        ),
+        Index(
+            "ix_usage_ledger_workspace_source",
+            "workspace_id",
+            "source_type",
+            "source_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    metric: Mapped[str] = mapped_column(String(64), nullable=False)
+    quantity: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(128))
+    model: Mapped[str | None] = mapped_column(String(255))
+    source_type: Mapped[str | None] = mapped_column(String(64))
+    source_id: Mapped[str | None] = mapped_column(String(255))
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
+    dimensions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class TenantIdempotencyRecord(TimestampMixin, Base):
+    __tablename__ = "tenant_idempotency"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "operation",
+            "key_hash",
+            name="uq_tenant_idempotency_workspace_operation_key",
+        ),
+        CheckConstraint(
+            "state IN ('in_progress', 'completed')",
+            name="ck_tenant_idempotency_state",
+        ),
+        CheckConstraint(
+            "state = 'in_progress' OR response_status IS NOT NULL",
+            name="ck_tenant_idempotency_completed_response",
+        ),
+        Index(
+            "ix_tenant_idempotency_workspace_created",
+            "workspace_id",
+            "created_at",
+        ),
+        Index(
+            "ix_tenant_idempotency_state_updated",
+            "state",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(128), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="in_progress")
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    response_body: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class AppendOnlyLedgerError(RuntimeError):
+    pass
+
+
+def _reject_ledger_mutation(_mapper, _connection, target) -> None:
+    raise AppendOnlyLedgerError(f"{target.__tablename__} is append-only")
+
+
+for _ledger_model in (AuditLedgerEntry, UsageLedgerEntry):
+    event.listen(_ledger_model, "before_update", _reject_ledger_mutation)
+    event.listen(_ledger_model, "before_delete", _reject_ledger_mutation)
 
 
 class Agent(TimestampMixin, Base):
@@ -109,6 +326,8 @@ class ManagedSession(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "id", name="uq_sessions_workspace_id"),
         UniqueConstraint("workspace_id", "runtime_thread_id", name="uq_sessions_workspace_runtime_thread"),
+        Index("ix_sessions_environment_status", "environment_id", "status"),
+        Index("ix_sessions_agent_status", "agent_id", "status"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -195,7 +414,10 @@ class SessionSandbox(TimestampMixin, Base):
 
 class SessionEvent(Base):
     __tablename__ = "session_events"
-    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_session_events_session_seq"),)
+    __table_args__ = (
+        UniqueConstraint("session_id", "seq", name="uq_session_events_session_seq"),
+        Index("ix_session_events_session_type", "session_id", "type"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
@@ -209,6 +431,39 @@ class SessionEvent(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+
+class SessionEventIdempotency(TimestampMixin, Base):
+    __tablename__ = "session_event_idempotency"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["workspace_id", "session_id"],
+            ["sessions.workspace_id", "sessions.id"],
+            name="fk_session_event_idempotency_workspace_session",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "workspace_id",
+            "session_id",
+            "key_hash",
+            name="uq_session_event_idempotency_workspace_session_key",
+        ),
+        Index(
+            "ix_session_event_idempotency_workspace_session_created",
+            "workspace_id",
+            "session_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    work_id: Mapped[str | None] = mapped_column(String(64))
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
 class ManagedResource(TimestampMixin, Base):
@@ -235,6 +490,26 @@ class ManagedResource(TimestampMixin, Base):
             "deleted_at",
             "name",
         ),
+        Index(
+            "ix_managed_resources_type_parent_status",
+            "resource_type",
+            "parent_id",
+            "status",
+        ),
+        Index(
+            "ix_managed_resources_type_status_created",
+            "resource_type",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_managed_resources_type_parent_name",
+            "resource_type",
+            "parent_id",
+            "name",
+        ),
+        Index("ix_managed_resources_storage_backend", "storage_backend"),
+        Index("ix_managed_resources_sha256", "sha256"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

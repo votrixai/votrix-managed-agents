@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
 import pytest
 from deepagents.backends import StateBackend
 
@@ -14,10 +17,13 @@ from app.runtime.sandbox import open_backend
 from app.runtime.sandbox_lifecycle import (
     SandboxInputMismatchError,
     SandboxLifecycleConfigurationError,
+    delete_session_sandbox,
     open_e2b_session_backend,
+    pause_session_sandbox,
     provision_session_sandbox,
     sandbox_policy_from_environment,
 )
+from app.runtime.e2b_cost_estimation import session_sandbox_cost_summary
 from app.runtime.sandbox_providers import (
     SandboxConnection,
     SandboxOwner,
@@ -47,8 +53,12 @@ class FakeLifecycleProvider:
         self.pause_count = 0
         self.delete_count = 0
         self.verify_count = 0
+        self.append_count = 0
         self.uploads: list[list[tuple[str, bytes]]] = []
+        self.mutable_roots: tuple[str, ...] = ()
         self.sealed_digest = ""
+        self.sealed_manifest: dict[str, str] = {}
+        self.sealed_revision = 0
 
     def _connection(
         self,
@@ -95,17 +105,59 @@ class FakeLifecycleProvider:
     ):
         self.bootstrap_count += 1
         self.uploads.append(list(files))
+        self.mutable_roots = tuple(mutable_roots)
         self.sealed_digest = digest
+        import hashlib
+
+        read_only = set(read_only_paths)
+        self.sealed_manifest = {
+            path: hashlib.sha256(content).hexdigest()
+            for path, content in files
+            if path in read_only
+        }
+        self.sealed_revision = 0
 
     async def connect(self, reference, owner, policy):
         self.connect_count += 1
         assert reference.external_id == self.external_id
         return self._connection(owner, policy, state="running")
 
-    async def verify_bootstrap(self, connection, *, digest, immutable_manifest):
+    async def verify_bootstrap(self, connection, *, digest, immutable_manifest, revision=0):
         self.verify_count += 1
         assert digest == self.sealed_digest
-        assert isinstance(immutable_manifest, dict)
+        assert immutable_manifest == self.sealed_manifest
+        assert revision == self.sealed_revision
+
+    async def append_immutable_files(
+        self,
+        connection,
+        *,
+        files,
+        previous_digest,
+        previous_manifest,
+        next_digest,
+        next_manifest,
+        previous_revision,
+        next_revision,
+    ):
+        self.append_count += 1
+        assert next_revision == previous_revision + 1
+        self.uploads.append(list(files))
+        predecessor = (
+            previous_digest == self.sealed_digest
+            and previous_manifest == self.sealed_manifest
+            and previous_revision == self.sealed_revision
+        )
+        already_applied = (
+            next_digest == self.sealed_digest
+            and next_manifest == self.sealed_manifest
+            and next_revision == self.sealed_revision
+        )
+        assert predecessor or already_applied
+        if predecessor:
+            self.sealed_digest = next_digest
+            self.sealed_manifest = dict(next_manifest)
+            self.sealed_revision = next_revision
 
     async def pause(self, reference, owner):
         self.pause_count += 1
@@ -144,6 +196,8 @@ def _configure(monkeypatch) -> None:
     monkeypatch.setenv("E2B_API_KEY", "test-key")
     monkeypatch.setenv("VMA_E2B_WORKDIR", "/workspace")
     monkeypatch.setenv("VMA_E2B_TEMPLATE", "base")
+    monkeypatch.setenv("VMA_E2B_TEMPLATE_RESOURCES", '{"cpu":2,"memory_mb":1024}')
+    monkeypatch.setenv("VMA_E2B_COST_ESTIMATION_ENABLED", "true")
     monkeypatch.setenv("VMA_E2B_PAUSE_ON_EXIT", "true")
     get_settings.cache_clear()
 
@@ -262,6 +316,99 @@ async def test_one_session_provisions_once_and_turns_only_reconnect(monkeypatch)
         assert record.state == "paused"
 
 
+async def test_e2b_lifecycle_accumulates_local_cost_without_double_counting(monkeypatch):
+    import app.runtime.sandbox_lifecycle as lifecycle
+
+    class Clock:
+        def __init__(self) -> None:
+            self.current = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+        def advance(self, seconds: int) -> None:
+            self.current += timedelta(seconds=seconds)
+
+    class TimedLifecycleProvider(FakeLifecycleProvider):
+        async def provision(self, owner, policy, *, template=None):
+            connection = await super().provision(owner, policy, template=template)
+            clock.advance(1)
+            return connection
+
+        async def bootstrap(self, connection, **kwargs):
+            await super().bootstrap(connection, **kwargs)
+            clock.advance(1)
+
+        async def connect(self, reference, owner, policy):
+            connection = await super().connect(reference, owner, policy)
+            clock.advance(1)
+            return connection
+
+        async def pause(self, reference, owner):
+            await super().pause(reference, owner)
+            clock.advance(1)
+
+    _configure(monkeypatch)
+    clock = Clock()
+    provider = TimedLifecycleProvider()
+    monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
+    monkeypatch.setattr(lifecycle, "_now", lambda: clock.current)
+    workspace_id = "wrkspc_e2b_cost"
+    session_id, config, version = await _managed_session(workspace_id=workspace_id)
+
+    async with session_scope() as db:
+        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+        assert session is not None
+        await provision_session_sandbox(
+            db,
+            session=session,
+            agent_version=version,
+            environment_config=config,
+        )
+        await db.commit()
+
+    empty_bundle = SandboxInputBundle(
+        files=(),
+        skill_sources=(),
+        memory_sources=(),
+        mutable_roots=(),
+    )
+    async with open_e2b_session_backend(
+        workspace_id=workspace_id,
+        session_id=session_id,
+        environment_config=config,
+        input_bundle=empty_bundle,
+    ):
+        clock.advance(2)
+
+    assert await pause_session_sandbox(
+        workspace_id=workspace_id,
+        session_id=session_id,
+    )
+    assert await delete_session_sandbox(
+        workspace_id=workspace_id,
+        session_id=session_id,
+    )
+    assert not await delete_session_sandbox(
+        workspace_id=workspace_id,
+        session_id=session_id,
+    )
+
+    async with session_scope() as db:
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session_id,
+            workspace_id=workspace_id,
+        )
+        assert record is not None
+        summary = session_sandbox_cost_summary(record, at=clock.current)
+
+    assert summary is not None
+    assert summary.runtime_ms == 7000
+    assert summary.estimated_usd == Decimal("0.0002275")
+    assert summary.running is False
+    assert record.state == "deleted"
+    assert provider.pause_count == 2
+    assert provider.delete_count == 1
+
+
 async def test_changed_immutable_inputs_require_a_new_session(monkeypatch):
     import app.runtime.sandbox_lifecycle as lifecycle
 
@@ -349,7 +496,7 @@ async def test_persisted_e2b_binding_cannot_silently_downgrade(monkeypatch):
     assert provider.bootstrap_count == 1
 
 
-async def test_session_api_provisions_at_create_and_seals_resource_mutations(
+async def test_session_api_appends_files_to_the_same_sandbox_and_keeps_them_sealed(
     client,
     monkeypatch,
 ):
@@ -388,14 +535,68 @@ async def test_session_api_provisions_at_create_and_seals_resource_mutations(
     assert "external_sandbox_id" not in session["sandbox_state"]
     assert provider.provision_count == 1
     assert provider.bootstrap_count == 1
+    assert "/mnt/session/outputs" in provider.mutable_roots
+
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={"file": ("new.txt", b"new immutable input", "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+    uploaded = response.json()
 
     response = await client.post(
         f"/v1/sessions/{session['id']}/resources",
         headers=TEST_HEADERS,
-        json={"type": "file", "file_id": "file_new"},
+        json={
+            "type": "file",
+            "file_id": uploaded["id"],
+            "mount_path": "/mnt/session/uploads/new.txt",
+        },
     )
-    assert response.status_code == 409
-    assert "sealed" in response.json()["error"]["message"]
+    assert response.status_code == 201, response.text
+    mounted = response.json()
+    assert provider.provision_count == 1
+    assert provider.bootstrap_count == 1
+    assert provider.connect_count == 1
+    assert provider.append_count == 1
+    assert provider.sealed_revision == 1
+
+    retry = await client.post(
+        f"/v1/sessions/{session['id']}/resources",
+        headers=TEST_HEADERS,
+        json={
+            "type": "file",
+            "file_id": uploaded["id"],
+            "mount_path": "/mnt/session/uploads/new.txt",
+        },
+    )
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["id"] == mounted["id"]
+    assert provider.append_count == 1
+
+    update = await client.post(
+        f"/v1/sessions/{session['id']}/resources/{mounted['id']}",
+        headers=TEST_HEADERS,
+        json={"mount_path": "/mnt/session/uploads/changed.txt"},
+    )
+    assert update.status_code == 409
+    delete_resource = await client.delete(
+        f"/v1/sessions/{session['id']}/resources/{mounted['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert delete_resource.status_code == 409
+
+    async with session_scope() as db:
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session["id"],
+            workspace_id="wrkspc_default",
+        )
+        assert record is not None
+        assert record.external_sandbox_id == provider.external_id
+        assert record.config["immutable_manifest_revision"] == 1
+        assert record.config["create_input_digest"] != record.config["input_digest"]
 
     response = await client.delete(
         f"/v1/sessions/{session['id']}",

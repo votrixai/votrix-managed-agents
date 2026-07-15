@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ManagedResource
+from app.db.models import ManagedResource, ManagedSession
 from app.ids import new_id
 from app.workspace import workspace_id_or_default
 
@@ -21,7 +21,6 @@ PREFIXES = {
     "deployment": "deploy",
     "deployment_run": "deprun",
     "user_profile": "uprof",
-    "user_profile_enrollment": "upenroll",
     "session_resource": "sesrsc",
     "session_thread": "thread",
     "environment_work": "work",
@@ -78,6 +77,7 @@ async def get_resource(
     parent_id: str | None = None,
     include_deleted: bool = False,
     workspace_id: str | None = None,
+    for_update: bool = False,
 ) -> ManagedResource | None:
     stmt = select(ManagedResource).where(
         ManagedResource.id == resource_id,
@@ -89,6 +89,8 @@ async def get_resource(
         stmt = stmt.where(ManagedResource.parent_id == parent_id)
     if not include_deleted:
         stmt = stmt.where(ManagedResource.deleted_at.is_(None))
+    if for_update:
+        stmt = stmt.with_for_update()
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -238,6 +240,96 @@ async def list_resources(
     if not include_archived:
         stmt = stmt.where(ManagedResource.archived_at.is_(None))
     result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_child_resources_for_update(
+    db: AsyncSession,
+    *,
+    resource_type: str,
+    parent_id: str,
+    include_archived: bool = True,
+    include_deleted: bool = False,
+    workspace_id: str | None = None,
+) -> list[ManagedResource]:
+    """Lock every matching child row in a stable order, without pagination.
+
+    Callers must lock the parent row before using this helper.  The parent-first
+    contract serializes child mutations with parent cascades, while the stable
+    child order prevents deadlocks if a cascade has more than one child.
+    """
+
+    stmt = (
+        select(ManagedResource)
+        .where(
+            ManagedResource.resource_type == resource_type,
+            ManagedResource.parent_id == parent_id,
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+        )
+        .order_by(ManagedResource.id.asc())
+        .with_for_update()
+    )
+    if not include_deleted:
+        stmt = stmt.where(ManagedResource.deleted_at.is_(None))
+    if not include_archived:
+        stmt = stmt.where(ManagedResource.archived_at.is_(None))
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def find_session_resource_referencing_file(
+    db: AsyncSession,
+    *,
+    file_id: str,
+    workspace_id: str | None = None,
+) -> ManagedResource | None:
+    """Find an active Session resource whose mounted copy is ``file_id``."""
+    result = await db.execute(
+        select(ManagedResource)
+        .join(
+            ManagedSession,
+            and_(
+                ManagedSession.id == ManagedResource.parent_id,
+                ManagedSession.workspace_id == ManagedResource.workspace_id,
+            ),
+        )
+        .where(
+            ManagedResource.resource_type == "session_resource",
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.deleted_at.is_(None),
+            ManagedResource.data["type"].as_string() == "file",
+            ManagedResource.data["file_id"].as_string() == file_id,
+            ManagedSession.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_files_for_session_scope(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    referenced_file_ids: set[str],
+    limit: int = 1000,
+    workspace_id: str | None = None,
+) -> list[ManagedResource]:
+    """List files belonging to one Session without a workspace-wide pre-limit."""
+    ownership = [ManagedResource.parent_id == session_id]
+    if referenced_file_ids:
+        ownership.append(ManagedResource.id.in_(referenced_file_ids))
+    ownership.append(ManagedResource.data["scope"]["id"].as_string() == session_id)
+    result = await db.execute(
+        select(ManagedResource)
+        .where(
+            ManagedResource.resource_type == "file",
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.deleted_at.is_(None),
+            or_(*ownership),
+        )
+        .order_by(ManagedResource.created_at.desc(), ManagedResource.id.desc())
+        .limit(max(1, limit))
+    )
     return list(result.scalars().all())
 
 

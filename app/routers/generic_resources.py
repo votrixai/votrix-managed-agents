@@ -1,6 +1,5 @@
 import hashlib
 import json
-import secrets
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Any
@@ -10,7 +9,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
-from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
@@ -27,14 +25,34 @@ from app.models.memory_stores import (
     MemoryStoreUpdateRequest,
     MemoryUpdateRequest,
 )
+from app.models.model_providers import (
+    ModelCredentialCreateRequest,
+    ModelCredentialDeletedResponse,
+    ModelCredentialResponse,
+    ModelCredentialRotateRequest,
+)
 from app.models.resources import GenericBody, deleted_response, resource_to_response
+from app.models.vaults import (
+    VaultCreateRequest,
+    VaultDeletedResponse,
+    VaultResponse,
+    VaultUpdateRequest,
+)
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.runtime.sandbox_lifecycle import (
     SandboxLifecycleConfigurationError,
     provision_session_sandbox,
 )
+from app.runtime.agent_resolution import resolve_session_agent_config
+from app.runtime.providers import (
+    registered_runtime_provider_api_key_env,
+    retrieve_runtime_provider_catalog_entry,
+)
 from app.runtime.sandbox_providers import SandboxProviderError
-from app.session_resources import create_session_resource
+from app.session_resources import (
+    create_session_resource,
+    validate_user_message_file_references,
+)
 
 router = APIRouter(tags=["managed resources"], dependencies=[Depends(require_api_access)])
 
@@ -59,16 +77,25 @@ MAX_DISPLAY_NAME_CHARS = 255
 MAX_MEMORY_STORE_DESCRIPTION_CHARS = 1024
 MAX_DEPLOYMENT_RESOURCES = 500
 MAX_DEPLOYMENT_VAULT_IDS = 50
+MAX_CREDENTIALS_PER_VAULT = 20
 CREDENTIAL_AUTH_TYPES = {"environment_variable", "mcp_oauth", "static_bearer"}
 CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES = {"client_secret_basic", "client_secret_post", "none"}
+MODEL_CREDENTIAL_KIND = "model_provider_api_key"
 
 
-@router.post("/v1/vaults", status_code=201)
-async def create_vault(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "vault", body.model_dump(mode="json"))
+@router.post("/v1/vaults", response_model=VaultResponse, status_code=201)
+async def create_vault(
+    body: VaultCreateRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    return await _create_top_level(
+        db,
+        "vault",
+        body.model_dump(mode="json", exclude_unset=True),
+    )
 
 
-@router.get("/v1/vaults")
+@router.get("/v1/vaults", response_model=ListResponse[VaultResponse])
 async def list_vaults(
     limit: int = 50,
     page: str | None = None,
@@ -78,30 +105,274 @@ async def list_vaults(
     return await _list_top_level(db, "vault", limit, page=page, include_archived=include_archived, max_limit=100)
 
 
-@router.get("/v1/vaults/{vault_id}")
+@router.get("/v1/vaults/{vault_id}", response_model=VaultResponse)
 async def retrieve_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
     return await _retrieve(db, vault_id, "vault")
 
 
-@router.post("/v1/vaults/{vault_id}")
-async def update_vault(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _update(db, vault_id, "vault", body.model_dump(mode="json"))
+@router.post("/v1/vaults/{vault_id}", response_model=VaultResponse)
+async def update_vault(
+    vault_id: str,
+    body: VaultUpdateRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    return await _update(
+        db,
+        vault_id,
+        "vault",
+        body.model_dump(mode="json", exclude_unset=True),
+    )
 
 
-@router.delete("/v1/vaults/{vault_id}")
+@router.delete("/v1/vaults/{vault_id}", response_model=VaultDeletedResponse)
 async def delete_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
     return await _delete(db, vault_id, "vault", "vault_deleted")
 
 
-@router.post("/v1/vaults/{vault_id}/archive")
+@router.post("/v1/vaults/{vault_id}/archive", response_model=VaultResponse)
 async def archive_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
     return await _archive(db, vault_id, "vault")
 
 
 @router.post("/v1/vaults/{vault_id}/credentials", status_code=201)
 async def create_credential(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    await _must_exist(db, vault_id, "vault")
-    return await _create_child(db, "credential", vault_id, body.model_dump(mode="json"))
+    resource = await _create_credential_resource(
+        db,
+        vault_id=vault_id,
+        raw_data=body.model_dump(mode="json"),
+    )
+    return _credential_response(resource)
+
+
+@router.post(
+    "/v1/vaults/{vault_id}/model_credentials",
+    response_model=ModelCredentialResponse,
+    status_code=201,
+)
+async def create_model_credential(
+    vault_id: str,
+    body: ModelCredentialCreateRequest,
+    db: AsyncSession = Depends(get_session),
+) -> ModelCredentialResponse:
+    """Create provider BYOK without exposing its internal secret-name mapping."""
+
+    provider = retrieve_runtime_provider_catalog_entry(body.provider)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Model provider not found")
+    secret_name = registered_runtime_provider_api_key_env(provider.id)
+    if provider.credential_type != "api_key" or secret_name is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Model provider {provider.id} does not accept API-key credentials",
+        )
+
+    resource = await _create_credential_resource(
+        db,
+        vault_id=vault_id,
+        duplicate_detail=(
+            f"An active model credential already exists for {provider.id}"
+        ),
+        raw_data={
+            "display_name": body.display_name or f"{provider.display_name} API key",
+            "metadata": body.metadata,
+            "model_provider": provider.id,
+            "credential_kind": MODEL_CREDENTIAL_KIND,
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": secret_name,
+                "secret_value": body.api_key.get_secret_value(),
+                "networking": {"type": "unrestricted"},
+            },
+        },
+    )
+    return _model_credential_response(resource)
+
+
+@router.get(
+    "/v1/vaults/{vault_id}/model_credentials",
+    response_model=ListResponse[ModelCredentialResponse],
+)
+async def list_model_credentials(
+    vault_id: str,
+    limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    db: AsyncSession = Depends(get_session),
+) -> ListResponse[ModelCredentialResponse]:
+    """List only native provider BYOK Credentials in a Vault."""
+
+    vault = await _must_exist(db, vault_id, "vault")
+    credentials = await res_q.list_resources(
+        db,
+        resource_type="credential",
+        parent_id=vault_id,
+        limit=MAX_CREDENTIALS_PER_VAULT + 1,
+        include_archived=include_archived,
+        workspace_id=vault.workspace_id,
+    )
+    model_credentials = [
+        credential
+        for credential in credentials
+        if _model_credential_provider_id(credential) is not None
+    ]
+    model_credentials = sort_by_created_at(model_credentials, order="desc")
+    return paginate(
+        [_model_credential_response(credential) for credential in model_credentials],
+        limit=limit,
+        page=page,
+        max_limit=MAX_CREDENTIALS_PER_VAULT,
+    )
+
+
+@router.get(
+    "/v1/vaults/{vault_id}/model_credentials/{credential_id}",
+    response_model=ModelCredentialResponse,
+)
+async def retrieve_model_credential(
+    vault_id: str,
+    credential_id: str,
+    db: AsyncSession = Depends(get_session),
+) -> ModelCredentialResponse:
+    credential = await _must_exist(
+        db,
+        credential_id,
+        "credential",
+        parent_id=vault_id,
+    )
+    return _model_credential_response(credential)
+
+
+@router.post(
+    "/v1/vaults/{vault_id}/model_credentials/{credential_id}",
+    response_model=ModelCredentialResponse,
+)
+async def rotate_model_credential(
+    vault_id: str,
+    credential_id: str,
+    body: ModelCredentialRotateRequest,
+    db: AsyncSession = Depends(get_session),
+) -> ModelCredentialResponse:
+    """Rotate provider BYOK without exposing its internal credential shape."""
+
+    vault, credential = await _lock_vault_and_credential(db, vault_id, credential_id)
+    provider_id = _model_credential_provider_id(credential)
+    if provider_id is None:
+        raise HTTPException(status_code=404, detail="Model credential not found")
+    provider = retrieve_runtime_provider_catalog_entry(provider_id)
+    expected_secret_name = registered_runtime_provider_api_key_env(provider_id)
+    auth = (credential.data or {}).get("auth") or {}
+    if (
+        provider is None
+        or provider.credential_type != "api_key"
+        or expected_secret_name is None
+        or auth.get("type") != "environment_variable"
+        or auth.get("secret_name") != expected_secret_name
+    ):
+        raise HTTPException(status_code=404, detail="Model credential not found")
+    if vault.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Vault is archived")
+    if credential.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Model credential is archived")
+
+    await _update_resource(
+        db,
+        credential,
+        "credential",
+        {
+            "auth": {
+                "type": "environment_variable",
+                "secret_value": body.api_key.get_secret_value(),
+            }
+        },
+    )
+    return _model_credential_response(credential)
+
+
+@router.post(
+    "/v1/vaults/{vault_id}/model_credentials/{credential_id}/archive",
+    response_model=ModelCredentialResponse,
+)
+async def archive_model_credential(
+    vault_id: str,
+    credential_id: str,
+    db: AsyncSession = Depends(get_session),
+) -> ModelCredentialResponse:
+    _, credential = await _lock_vault_and_credential(db, vault_id, credential_id)
+    if _model_credential_provider_id(credential) is None:
+        raise HTTPException(status_code=404, detail="Model credential not found")
+    await res_q.update_resource(
+        db,
+        credential,
+        data=_purge_credential_secret_data(credential.data),
+    )
+    await res_q.archive_resource(db, credential)
+    await db.commit()
+    return _model_credential_response(credential)
+
+
+@router.delete(
+    "/v1/vaults/{vault_id}/model_credentials/{credential_id}",
+    response_model=ModelCredentialDeletedResponse,
+)
+async def delete_model_credential(
+    vault_id: str,
+    credential_id: str,
+    db: AsyncSession = Depends(get_session),
+) -> ModelCredentialDeletedResponse:
+    _, credential = await _lock_vault_and_credential(db, vault_id, credential_id)
+    if _model_credential_provider_id(credential) is None:
+        raise HTTPException(status_code=404, detail="Model credential not found")
+    await res_q.update_resource(
+        db,
+        credential,
+        data=_purge_credential_secret_data(credential.data),
+    )
+    await res_q.delete_resource(db, credential)
+    await db.commit()
+    return ModelCredentialDeletedResponse(id=credential.id)
+
+
+async def _create_credential_resource(
+    db: AsyncSession,
+    *,
+    vault_id: str,
+    raw_data: dict[str, Any],
+    duplicate_detail: str | None = None,
+):
+    vault = await _must_exist(db, vault_id, "vault", for_update=True)
+    if vault.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Vault is archived")
+
+    data = _normalize_credential_data(raw_data)
+    _require_credential_create_secret(data["auth"])
+    credentials = await res_q.list_resources(
+        db,
+        resource_type="credential",
+        parent_id=vault_id,
+        limit=MAX_CREDENTIALS_PER_VAULT + 1,
+        include_archived=False,
+        workspace_id=vault.workspace_id,
+    )
+    if len(credentials) >= MAX_CREDENTIALS_PER_VAULT:
+        raise HTTPException(status_code=400, detail="A vault supports at most 20 active credentials")
+    key = _credential_unique_key(data["auth"])
+    if any(_credential_unique_key((credential.data or {}).get("auth") or {}) == key for credential in credentials):
+        raise HTTPException(
+            status_code=409,
+            detail=duplicate_detail
+            or f"An active credential already exists for {key[1]}",
+        )
+
+    resource = await res_q.create_resource(
+        db,
+        resource_type="credential",
+        parent_id=vault_id,
+        name=data.get("name") or data.get("display_name"),
+        data=data,
+        workspace_id=vault.workspace_id,
+    )
+    await db.commit()
+    return resource
 
 
 @router.get("/v1/vaults/{vault_id}/credentials")
@@ -112,13 +383,34 @@ async def list_credentials(
     include_archived: bool = False,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_exist(db, vault_id, "vault")
-    return await _list_child(db, "credential", vault_id, limit, page=page, include_archived=include_archived)
+    vault = await _must_exist(db, vault_id, "vault")
+    credentials = await res_q.list_resources(
+        db,
+        resource_type="credential",
+        parent_id=vault_id,
+        limit=MAX_CREDENTIALS_PER_VAULT + 1,
+        include_archived=include_archived,
+        workspace_id=vault.workspace_id,
+    )
+    generic_credentials = [
+        credential
+        for credential in credentials
+        if _model_credential_provider_id(credential) is None
+    ]
+    generic_credentials = sort_by_created_at(generic_credentials, order="desc")
+    return paginate(
+        [_credential_response(credential) for credential in generic_credentials],
+        limit=limit,
+        page=page,
+        max_limit=MAX_CREDENTIALS_PER_VAULT,
+    )
 
 
 @router.get("/v1/vaults/{vault_id}/credentials/{credential_id}")
 async def retrieve_credential(vault_id: str, credential_id: str, db: AsyncSession = Depends(get_session)):
-    return await _retrieve(db, credential_id, "credential", parent_id=vault_id)
+    credential = await _must_exist(db, credential_id, "credential", parent_id=vault_id)
+    _require_generic_credential(credential)
+    return _credential_response(credential)
 
 
 @router.post("/v1/vaults/{vault_id}/credentials/{credential_id}")
@@ -128,12 +420,17 @@ async def update_credential(
     body: GenericBody,
     db: AsyncSession = Depends(get_session),
 ):
-    return await _update(
+    vault, credential = await _lock_vault_and_credential(db, vault_id, credential_id)
+    _require_generic_credential(credential)
+    if vault.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Vault is archived")
+    if credential.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Credential is archived")
+    return await _update_resource(
         db,
-        credential_id,
+        credential,
         "credential",
         body.model_dump(mode="json"),
-        parent_id=vault_id,
     )
 
 
@@ -149,7 +446,12 @@ async def archive_credential(vault_id: str, credential_id: str, db: AsyncSession
 
 @router.post("/v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate")
 async def validate_credential(vault_id: str, credential_id: str, db: AsyncSession = Depends(get_session)):
-    credential = await _must_exist(db, credential_id, "credential", parent_id=vault_id)
+    vault, credential = await _lock_vault_and_credential(db, vault_id, credential_id)
+    _require_generic_credential(credential)
+    if vault.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Vault is archived")
+    if credential.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Credential is archived")
     validation = _credential_validation_payload(credential, vault_id=vault_id)
     data = dict(credential.data or {})
     metadata = dict(data.get("metadata") or {})
@@ -793,34 +1095,6 @@ async def update_user_profile(user_profile_id: str, body: GenericBody, db: Async
     )
 
 
-@router.post("/v1/user_profiles/{user_profile_id}/enrollment_url")
-async def create_user_profile_enrollment_url(user_profile_id: str, db: AsyncSession = Depends(get_session)):
-    profile = await _must_exist(db, user_profile_id, "user_profile")
-    token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    expires_at = utcnow() + timedelta(hours=1)
-    base_url = get_settings().vma_public_base_url.rstrip("/")
-    await res_q.create_resource(
-        db,
-        resource_type="user_profile_enrollment",
-        parent_id=profile.id,
-        name=token_hash[:16],
-        status="active",
-        data={
-            "user_profile_id": profile.id,
-            "token_hash": token_hash,
-            "expires_at": expires_at.isoformat(),
-            "url_base": base_url,
-        },
-    )
-    await db.commit()
-    return {
-        "type": "enrollment_url",
-        "url": f"{base_url}/managed-agents/user-profiles/{profile.id}/enroll?token={token}",
-        "expires_at": expires_at,
-    }
-
-
 async def _create_top_level(
     db: AsyncSession,
     resource_type: str,
@@ -955,6 +1229,15 @@ async def _update(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
+    return await _update_resource(db, resource, resource_type, data)
+
+
+async def _update_resource(
+    db: AsyncSession,
+    resource,
+    resource_type: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
     data = _normalize_resource_data(resource_type, _merge_resource_update(resource_type, resource.data, data))
     await res_q.update_resource(
         db,
@@ -973,9 +1256,23 @@ async def _archive(
     *,
     parent_id: str | None = None,
 ) -> dict[str, Any]:
-    resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
+    if resource_type == "credential":
+        if parent_id is None:
+            raise RuntimeError("Credential mutations require a parent Vault")
+        _, resource = await _lock_vault_and_credential(db, parent_id, resource_id)
+        _require_generic_credential(resource)
+    else:
+        resource = await _must_exist(
+            db,
+            resource_id,
+            resource_type,
+            parent_id=parent_id,
+            for_update=resource_type == "vault",
+        )
     if resource_type == "credential":
         await res_q.update_resource(db, resource, data=_purge_credential_secret_data(resource.data))
+    elif resource_type == "vault":
+        await _revoke_vault_credentials(db, resource, delete=False)
     await res_q.archive_resource(db, resource)
     await db.commit()
     return _resource_response(resource)
@@ -989,12 +1286,60 @@ async def _delete(
     *,
     parent_id: str | None = None,
 ) -> dict[str, Any]:
-    resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
+    if resource_type == "credential":
+        if parent_id is None:
+            raise RuntimeError("Credential mutations require a parent Vault")
+        _, resource = await _lock_vault_and_credential(db, parent_id, resource_id)
+        _require_generic_credential(resource)
+    else:
+        resource = await _must_exist(
+            db,
+            resource_id,
+            resource_type,
+            parent_id=parent_id,
+            for_update=resource_type == "vault",
+        )
     if resource_type == "credential":
         await res_q.update_resource(db, resource, data=_purge_credential_secret_data(resource.data))
+    elif resource_type == "vault":
+        await _revoke_vault_credentials(db, resource, delete=True)
     await res_q.delete_resource(db, resource)
     await db.commit()
     return deleted_response(resource, public_type=public_type)
+
+
+async def _revoke_vault_credentials(db: AsyncSession, vault, *, delete: bool) -> None:
+    credentials = await res_q.list_child_resources_for_update(
+        db,
+        resource_type="credential",
+        parent_id=vault.id,
+        include_archived=True,
+        workspace_id=vault.workspace_id,
+    )
+    for credential in credentials:
+        await res_q.update_resource(
+            db,
+            credential,
+            data=_purge_credential_secret_data(credential.data),
+        )
+        if delete:
+            await res_q.delete_resource(db, credential)
+        elif credential.archived_at is None:
+            await res_q.archive_resource(db, credential)
+
+
+async def _lock_vault_and_credential(db: AsyncSession, vault_id: str, credential_id: str):
+    """Acquire the canonical lock order for every Credential mutation."""
+
+    vault = await _must_exist(db, vault_id, "vault", for_update=True)
+    credential = await _must_exist(
+        db,
+        credential_id,
+        "credential",
+        parent_id=vault_id,
+        for_update=True,
+    )
+    return vault, credential
 
 
 async def _must_exist(
@@ -1003,12 +1348,14 @@ async def _must_exist(
     resource_type: str,
     *,
     parent_id: str | None = None,
+    for_update: bool = False,
 ):
     resource = await res_q.get_resource(
         db,
         resource_id=resource_id,
         resource_type=resource_type,
         parent_id=parent_id,
+        for_update=for_update,
     )
     if resource is None:
         raise HTTPException(status_code=404, detail=f"{resource_type} not found")
@@ -1105,6 +1452,27 @@ def _normalize_credential_data(data: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _require_credential_create_secret(auth: dict[str, Any]) -> None:
+    secret_field = {
+        "environment_variable": "secret_value",
+        "static_bearer": "token",
+        "mcp_oauth": "access_token",
+    }[_credential_auth_type(auth)]
+    value = auth.get(secret_field)
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=f"{auth['type']}.{secret_field} is required",
+        )
+
+
+def _credential_unique_key(auth: dict[str, Any]) -> tuple[str, str]:
+    auth_type = _credential_auth_type(auth)
+    if auth_type == "environment_variable":
+        return "secret_name", str(auth.get("secret_name") or "")
+    return "mcp_server_url", str(auth.get("mcp_server_url") or "")
+
+
 def _display_name_from_data(data: dict[str, Any], *, resource_name: str, required: bool) -> str | None:
     display_name = data.get("display_name") or data.get("name")
     if display_name is None:
@@ -1126,6 +1494,21 @@ def _merge_credential_auth(existing: Any, patch: dict[str, Any]) -> dict[str, An
     existing_type = existing_auth.get("type")
     if existing_type and existing_type != auth_type:
         raise HTTPException(status_code=422, detail="credential auth type is immutable")
+    immutable_field = "secret_name" if auth_type == "environment_variable" else "mcp_server_url"
+    if immutable_field in patch:
+        raise HTTPException(status_code=422, detail=f"credential {immutable_field} is immutable")
+    refresh_patch = patch.get("refresh")
+    if isinstance(refresh_patch, dict):
+        immutable_refresh = {"client_id", "token_endpoint", "resource"}.intersection(refresh_patch)
+        if immutable_refresh:
+            fields = ", ".join(sorted(immutable_refresh))
+            raise HTTPException(status_code=422, detail=f"credential refresh fields are immutable: {fields}")
+        token_auth_patch = refresh_patch.get("token_endpoint_auth")
+        existing_token_auth = (existing_auth.get("refresh") or {}).get("token_endpoint_auth")
+        if isinstance(token_auth_patch, dict) and "type" in token_auth_patch:
+            existing_token_type = existing_token_auth.get("type") if isinstance(existing_token_auth, dict) else None
+            if existing_token_type and token_auth_patch["type"] != existing_token_type:
+                raise HTTPException(status_code=422, detail="credential token endpoint auth type is immutable")
     merged = dict(existing_auth)
     for key, value in patch.items():
         if key == "refresh" and isinstance(value, dict) and isinstance(merged.get("refresh"), dict):
@@ -1205,6 +1588,8 @@ def _require_credential_string(data: dict[str, Any], field: str, auth_type: str)
 def _string_credential_value(value: Any, field: str) -> str:
     if not isinstance(value, str):
         raise HTTPException(status_code=422, detail=f"{field} must be a string")
+    if not value.strip():
+        raise HTTPException(status_code=422, detail=f"{field} must not be blank")
     return value
 
 
@@ -1245,10 +1630,11 @@ def _normalize_oauth_refresh(value: Any) -> dict[str, Any]:
             detail="mcp_oauth.refresh.token_endpoint_auth.type must be client_secret_basic, client_secret_post, or none",
         )
     normalized_auth = {"type": token_endpoint_auth_type}
-    if token_endpoint_auth_type != "none" and token_endpoint_auth.get("client_secret") is not None:
-        normalized_auth["client_secret"] = _string_credential_value(
-            token_endpoint_auth["client_secret"],
-            "mcp_oauth.refresh.token_endpoint_auth.client_secret",
+    if token_endpoint_auth_type != "none":
+        normalized_auth["client_secret"] = _require_credential_string(
+            token_endpoint_auth,
+            "client_secret",
+            "mcp_oauth.refresh.token_endpoint_auth",
         )
     refresh["token_endpoint_auth"] = normalized_auth
     for optional in ("resource", "scope"):
@@ -1287,6 +1673,46 @@ def _credential_response(resource) -> dict[str, Any]:
     response["metadata"] = dict(response.get("metadata") or {})
     response["auth"] = _credential_auth_response((resource.data or {}).get("auth") or {})
     return response
+
+
+def _model_credential_response(resource) -> ModelCredentialResponse:
+    data = resource.data or {}
+    provider_id = _model_credential_provider_id(resource)
+    if provider_id is None:
+        raise HTTPException(status_code=404, detail="Model credential not found")
+    return ModelCredentialResponse(
+        id=resource.id,
+        vault_id=str(resource.parent_id or ""),
+        model_provider=provider_id,
+        display_name=str(data.get("display_name") or resource.name or ""),
+        metadata=dict(data.get("metadata") or {}),
+        created_at=resource.created_at,
+        updated_at=resource.updated_at,
+        archived_at=resource.archived_at,
+    )
+
+
+def _model_credential_provider_id(resource) -> str | None:
+    """Identify native BYOK rows without returning their generic auth shape.
+
+    New rows carry an explicit internal kind. The provider plus environment
+    credential shape also recognizes rows created before that marker existed,
+    even if an operator later removes the provider from the live catalog.
+    """
+
+    data = resource.data or {}
+    provider_id = data.get("model_provider")
+    if not isinstance(provider_id, str) or not provider_id:
+        return None
+    auth = data.get("auth")
+    if not isinstance(auth, dict) or auth.get("type") != "environment_variable":
+        return None
+    return provider_id
+
+
+def _require_generic_credential(resource) -> None:
+    if _model_credential_provider_id(resource) is not None:
+        raise HTTPException(status_code=404, detail="credential not found")
 
 
 def _credential_auth_response(auth: dict[str, Any]) -> dict[str, Any]:
@@ -2243,6 +2669,12 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
     metadata.update({"deployment_id": deployment.id, "deployment_run_id": run.id})
     vault_input = run_input["vault_ids"] if "vault_ids" in run_input else data.get("vault_ids")
     vault_ids = await _validate_deployment_vault_ids(db, vault_input)
+    agent_config = await resolve_session_agent_config(
+        db,
+        agent_version,
+        None,
+        workspace_id=agent.workspace_id,
+    )
     try:
         async with db.begin_nested():
             session = await sessions_q.create_session(
@@ -2253,6 +2685,7 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
                 title=run_input.get("title") or data.get("title") or data.get("name") or deployment.name,
                 metadata=metadata,
                 vault_ids=vault_ids,
+                agent_config=agent_config,
             )
             resource_input = run_input["resources"] if "resources" in run_input else data.get("resources")
             for resource_data in _normalize_deployment_resources(resource_input):
@@ -2313,6 +2746,7 @@ def _deployment_agent_ref(value: Any) -> tuple[str, int | None]:
 
 async def _append_deployment_session_events(db: AsyncSession, session, initial_events: list[Any]) -> None:
     _validate_deployment_initial_events(initial_events)
+    await validate_user_message_file_references(db, session, initial_events)
     await events_q.append_event(
         db,
         session,

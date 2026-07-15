@@ -70,6 +70,8 @@ async def test_thread_stream_rejects_event_deltas(client):
 
 
 def test_last_event_id_is_a_numeric_durable_sequence():
+    assert _resume_after_seq(None, None) is None
+    assert _resume_after_seq(None, "12") == 12
     assert _resume_after_seq(0, "12") == 12
     assert _resume_after_seq(15, "12") == 15
 
@@ -93,6 +95,28 @@ async def test_last_event_id_replays_only_newer_durable_events(client):
         request,
         _resume_after_seq(0, "1"),
     )
+    iterator = response.body_iterator.__aiter__()
+    try:
+        frame = await asyncio.wait_for(anext(iterator), timeout=1)
+    finally:
+        await iterator.aclose()
+
+    assert frame.startswith("id: 2\nevent: session.updated\n")
+    assert '"seq":2' in frame
+
+
+async def test_stream_without_cursor_starts_after_connection_head(client):
+    session = await _create_session(client)
+    request = _ConnectedRequest()
+    response = await _stream_response(session["id"], request, after_seq=None)
+
+    update_response = await client.patch(
+        f"/v1/sessions/{session['id']}",
+        headers=TEST_HEADERS,
+        json={"title": "connected after initial idle"},
+    )
+    assert update_response.status_code == 200, update_response.text
+
     iterator = response.body_iterator.__aiter__()
     try:
         frame = await asyncio.wait_for(anext(iterator), timeout=1)

@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.db.models import ManagedSession
-from app.models.common import ApiModel
+from app.models.common import ApiModel, FlexibleApiModel
 
 
 class AgentReference(ApiModel):
@@ -13,8 +13,19 @@ class AgentReference(ApiModel):
     version: int | None = None
 
 
+class AgentWithOverrides(ApiModel):
+    type: Literal["agent_with_overrides"]
+    id: str
+    version: int | None = None
+    model: str | dict[str, Any] | None = None
+    system: str | None = None
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
+    skills: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class SessionCreateRequest(ApiModel):
-    agent: str | AgentReference
+    agent: str | AgentReference | AgentWithOverrides
     environment_id: str
     title: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -56,6 +67,85 @@ class SessionResponse(ApiModel):
     updated_at: datetime
 
 
+class SessionDeletedResponse(ApiModel):
+    id: str
+    type: Literal["session_deleted"] = "session_deleted"
+    deleted: Literal[True] = True
+
+
+class SessionFileResourceCreateRequest(FlexibleApiModel):
+    type: Literal["file"] = "file"
+    file_id: str = Field(description="Identifier of an uploaded file to copy into the Session scope.")
+    mount_path: str | None = Field(
+        default=None,
+        description="Absolute read-only path where the Session runtime mounts the file.",
+    )
+
+
+class SessionResourceTokenRotateRequest(FlexibleApiModel):
+    authorization_token: str = Field(
+        description="Replacement authorization token for a legacy GitHub repository resource.",
+    )
+
+
+class SessionFileResourceResponse(FlexibleApiModel):
+    id: str
+    type: Literal["file"] = "file"
+    file_id: str = Field(description="Identifier of the isolated Session-scoped file copy.")
+    mount_path: str = Field(description="Absolute path where the runtime mounts the file.")
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionGithubResourceResponse(FlexibleApiModel):
+    id: str
+    type: Literal["github_repository"] = "github_repository"
+    url: str = Field(description="Repository URL associated with this legacy resource.")
+    mount_path: str = Field(description="Absolute path where the runtime mounts the repository.")
+    checkout: dict[str, str] | None = Field(
+        default=None,
+        description="Pinned branch or commit checkout configuration.",
+    )
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionMemoryResourceResponse(FlexibleApiModel):
+    id: str
+    type: Literal["memory_store"] = "memory_store"
+    memory_store_id: str = Field(description="Identifier of the attached memory store.")
+    access: Literal["read_only", "read_write"] = Field(description="Access granted to the Session runtime.")
+    description: str
+    mount_path: str | None = Field(default=None, description="Runtime mount path for the memory store.")
+    name: str | None = None
+    instructions: str | None = Field(default=None, description="Session-specific instructions for using this memory store.")
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionGenericResourceResponse(FlexibleApiModel):
+    """Compatibility shape for resource types created by older deployments."""
+
+    id: str
+    type: str
+    created_at: datetime
+    updated_at: datetime
+
+
+SessionResourceResponse = (
+    SessionFileResourceResponse
+    | SessionGithubResourceResponse
+    | SessionMemoryResourceResponse
+    | SessionGenericResourceResponse
+)
+
+
+class SessionResourceDeletedResponse(ApiModel):
+    id: str
+    type: Literal["session_resource_deleted"] = "session_resource_deleted"
+    deleted: Literal[True] = True
+
+
 def session_to_response(
     session: ManagedSession,
     *,
@@ -63,6 +153,7 @@ def session_to_response(
     resources: list[dict[str, Any]] | None = None,
 ) -> SessionResponse:
     details = session.status_details or {}
+    public_details = _public_status_details(details)
     return SessionResponse(
         id=session.id,
         agent=agent,
@@ -71,7 +162,7 @@ def session_to_response(
         environment_id=session.environment_id,
         title=session.title,
         status=session.status,
-        status_details=session.status_details,
+        status_details=public_details,
         stop_reason=session.stop_reason,
         run_state=session.run_state,
         sandbox_state=session.sandbox_state,
@@ -88,3 +179,23 @@ def session_to_response(
         created_at=session.created_at,
         updated_at=session.updated_at,
     )
+
+
+def _public_status_details(details: dict[str, Any]) -> dict[str, Any]:
+    """Remove control-plane-only model credential coordinates from responses."""
+
+    public = dict(details)
+    binding = details.get("model_credential_binding")
+    if isinstance(binding, dict):
+        public["model_credential_binding"] = {
+            key: binding[key]
+            for key in (
+                "version",
+                "source",
+                "credential_id",
+                "vault_id",
+                "model_provider",
+            )
+            if key in binding
+        }
+    return public

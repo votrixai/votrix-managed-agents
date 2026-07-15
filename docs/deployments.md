@@ -38,4 +38,8 @@ Deployments are stored in Postgres as managed resources.
 
 ## Remaining Production Work
 
-The MVP has an importable scheduler tick, but it is not a production scheduler by itself. Production deployment execution should call the tick from a durable scheduler plus a worker queue with retries, leases, fencing, and idempotency.
+The MVP has an importable scheduler tick, but it is not a production scheduler
+by itself. A future operated deployment service should call the tick from a
+durable scheduler and feed the existing leased/fenced work protocol, while
+adding scheduler leader election, misfire policy, retries, dead letters, and
+monitoring.

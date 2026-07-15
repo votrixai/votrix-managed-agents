@@ -125,7 +125,30 @@ async def test_agent_name_and_model_contract_is_enforced(client):
     agent = response.json()
     assert agent["name"] == "Model Alias"
     assert agent["model"]["id"] == "mini-max/MiniMax-Text-01"
+    assert "model" not in agent["model"]
     assert agent["model"]["provider"] == "mini-max"
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Conflicting Model Aliases",
+            "model": {"id": "model-a", "model": "model-b"},
+        },
+    )
+    assert response.status_code == 422
+    assert "must match" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "No Inline Provider Secret",
+            "model": {"id": "gpt-5.5", "api_key": "must-use-a-vault"},
+        },
+    )
+    assert response.status_code == 422
+    assert "api_key" in response.json()["error"]["message"]
 
     response = await client.patch(
         f"/v1/agents/{agent['id']}",
@@ -608,6 +631,20 @@ async def test_votrix_managed_agents_beta_alias_is_accepted(client):
         json={"name": "Votrix Beta Compatibility Header", "model": {"id": "gpt-5.5"}},
     )
     assert response.status_code == 201, response.text
+
+
+async def test_anthropic_agent_memory_beta_is_accepted(client):
+    response = await client.post(
+        "/v1/memory_stores",
+        headers={
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "agent-memory-2026-07-22",
+        },
+        json={"name": "Agent Memory Beta"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["type"] == "memory_store"
 
 
 async def test_missing_anthropic_version_header_is_rejected(client):

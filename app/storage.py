@@ -26,7 +26,6 @@ _lock = asyncio.Lock()
 class StoredObject:
     backend: str
     key: str
-    url: str
     content_type: str
     size_bytes: int
     sha256: str
@@ -40,7 +39,6 @@ class StorageConfigurationError(RuntimeError):
 class ObjectStorageSettings:
     backend: str
     bucket_name: str
-    public_url: str
     access_key_id: str
     secret_access_key: str
     endpoint_url: str | None
@@ -67,24 +65,13 @@ def should_store_in_object_storage() -> bool:
     return True
 
 
-def public_url_for_key(key: str) -> str:
-    base = _require_object_storage().public_url.rstrip("/")
-    return f"{base}/{key}"
-
-
-def key_from_public_url(url: str) -> str:
-    base = f"{_require_object_storage().public_url.rstrip('/')}/"
-    return url[len(base) :] if url.startswith(base) else url
-
-
 def _object_storage_settings() -> ObjectStorageSettings | None:
     s = get_settings()
 
-    if all([s.s3_access_key_id, s.s3_secret_access_key, s.s3_bucket_name, s.s3_public_url]):
+    if all([s.s3_access_key_id, s.s3_secret_access_key, s.s3_bucket_name]):
         return ObjectStorageSettings(
             backend="s3",
             bucket_name=s.s3_bucket_name,
-            public_url=s.s3_public_url,
             access_key_id=s.s3_access_key_id,
             secret_access_key=s.s3_secret_access_key,
             endpoint_url=s.s3_endpoint_url or None,
@@ -97,7 +84,10 @@ def _object_storage_settings() -> ObjectStorageSettings | None:
 def _require_object_storage() -> ObjectStorageSettings:
     config = _object_storage_settings()
     if config is None:
-        raise StorageConfigurationError("S3-compatible object storage requires S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET_NAME, and S3_PUBLIC_URL")
+        raise StorageConfigurationError(
+            "Private S3-compatible object storage requires S3_ACCESS_KEY_ID, "
+            "S3_SECRET_ACCESS_KEY, and S3_BUCKET_NAME"
+        )
     return config
 
 
@@ -148,7 +138,6 @@ async def save_file_bytes(
     return StoredObject(
         backend=config.backend,
         key=key,
-        url=public_url_for_key(key),
         content_type=content_type,
         size_bytes=len(data),
         sha256=sha256,

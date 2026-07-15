@@ -37,9 +37,16 @@ from app.runtime.deepagent_tools import (
     web_fetch_tool,
     web_search_tool,
 )
+from app.runtime.model_inputs import ModelInputValidationError, adapt_user_message_content
 from app.runtime.providers import build_chat_model, resolve_runtime_provider
 from app.runtime.sandbox_inputs import sandbox_input_bundle
 from app.runtime.sandbox import open_backend
+from app.runtime.sandbox_outputs import (
+    MAX_DISCOVERED_OUTPUT_FILES,
+    MAX_OUTPUT_FILE_BYTES,
+    MAX_OUTPUT_TOTAL_BYTES,
+    SANDBOX_OUTPUT_ROOT,
+)
 
 
 class DeepAgentsRuntimeError(RuntimeError):
@@ -97,7 +104,18 @@ async def execute_deep_agent(
 
     previous_state = runtime_context.get("previous_run_state")
     previous_state = dict(previous_state) if isinstance(previous_state, dict) else {}
-    graph_input, processed_seq = _graph_input(history, previous_state)
+    raw_session_files = runtime_context.get("session_files")
+    session_files = (
+        [item for item in raw_session_files if isinstance(item, dict)]
+        if isinstance(raw_session_files, list)
+        else []
+    )
+    graph_input, processed_seq = _graph_input(
+        history,
+        previous_state,
+        session_files=session_files,
+        multimodal_input=provider.capabilities.multimodal_input,
+    )
     if graph_input is None:
         return RuntimeResult(
             events_persisted=emit_event is not None,
@@ -111,6 +129,7 @@ async def execute_deep_agent(
 
     tool_events: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    sandbox_outputs: list[Any] = []
     input_bundle = sandbox_input_bundle(runtime_context)
     async with AsyncExitStack() as stack:
         backend_handle = await stack.enter_async_context(
@@ -212,6 +231,18 @@ async def execute_deep_agent(
                 mcp_tool_names=mcp_tool_names,
                 interrupt_on=interrupt_on,
             )
+        if backend_handle.plan.backend == "e2b":
+            if backend_handle.connection is None:
+                raise DeepAgentsRuntimeError("E2B output discovery requires the live sandbox connection")
+            from app.runtime.sandbox_lifecycle import build_e2b_provider
+
+            sandbox_outputs = await build_e2b_provider().discover_outputs(
+                backend_handle.connection,
+                root=SANDBOX_OUTPUT_ROOT,
+                max_files=MAX_DISCOVERED_OUTPUT_FILES,
+                max_file_bytes=MAX_OUTPUT_FILE_BYTES,
+                max_total_bytes=MAX_OUTPUT_TOTAL_BYTES,
+            )
 
     pending_actions = streamed["pending_actions"]
     run_state = {
@@ -231,6 +262,7 @@ async def execute_deep_agent(
         events_persisted=emit_event is not None,
         run_state=run_state,
         sandbox_state={**backend_handle.plan.summary, "runtime_backend": "deepagents"},
+        sandbox_outputs=sandbox_outputs,
         usage=streamed["usage"],
     )
 
@@ -254,7 +286,7 @@ async def _stream_graph(
     tool_accumulator: dict[tuple[tuple[str, ...], str, int], dict[str, Any]] = {}
     emitted_calls: dict[str, _EmittedToolCall] = {}
     pending_interrupts: list[Any] = []
-    usage: dict[str, int] = defaultdict(int)
+    usage: dict[str, Any] = defaultdict(int)
 
     async for item in graph.astream(
         graph_input,
@@ -548,6 +580,7 @@ async def _load_mcp_tools(
     names: set[str] = set()
     interrupts: dict[str, Any] = {}
     from langchain_mcp_adapters.client import MultiServerMCPClient
+    from app.network_security import create_restricted_http_client, validate_public_https_url
 
     for server in version.mcp_servers or []:
         if not isinstance(server, dict):
@@ -558,8 +591,24 @@ async def _load_mcp_tools(
         url = str(server.get("url") or "")
         if not server_name or not url:
             continue
+        try:
+            await validate_public_https_url(url)
+        except ValueError as exc:
+            warnings.append(
+                {
+                    "type": "mcp_connection_blocked",
+                    "server_name": server_name,
+                    "error_type": exc.__class__.__name__,
+                    "message": str(exc),
+                }
+            )
+            continue
         auth = auth_by_url.get(url.rstrip("/"), {})
-        connection: dict[str, Any] = {"transport": "streamable_http", "url": url}
+        connection: dict[str, Any] = {
+            "transport": "streamable_http",
+            "url": url,
+            "httpx_client_factory": create_restricted_http_client,
+        }
         if isinstance(auth.get("headers"), dict):
             connection["headers"] = dict(auth["headers"])
         client = MultiServerMCPClient({server_name: connection})
@@ -673,7 +722,13 @@ async def _upload_virtual_files(backend, files: list[tuple[str, bytes]], warning
             warnings.append({"type": "sandbox_upload_error", "message": str(error)})
 
 
-def _graph_input(history: list[Any], previous_state: dict[str, Any]) -> tuple[dict[str, Any] | Command | None, int]:
+def _graph_input(
+    history: list[Any],
+    previous_state: dict[str, Any],
+    *,
+    session_files: list[dict[str, Any]] | None = None,
+    multimodal_input: bool = False,
+) -> tuple[dict[str, Any] | Command | None, int]:
     pending = previous_state.get("pending_actions")
     if isinstance(pending, list) and pending:
         command, seq = _resume_command(history, pending)
@@ -706,6 +761,14 @@ def _graph_input(history: list[Any], previous_state: dict[str, Any]) -> tuple[di
             content += suffix
         elif isinstance(content, list):
             content = [*content, {"type": "text", "text": suffix}]
+    try:
+        content = adapt_user_message_content(
+            content,
+            session_files=session_files or [],
+            multimodal_input=multimodal_input,
+        )
+    except ModelInputValidationError as exc:
+        raise DeepAgentsRuntimeError(str(exc)) from exc
     return {"messages": [{"role": "user", "content": content}]}, candidate.seq
 
 
@@ -835,12 +898,22 @@ def _content_text(content: Any) -> str:
     return "".join(parts)
 
 
-def _merge_usage(total: dict[str, int], usage: Any) -> None:
+def _merge_usage(total: dict[str, Any], usage: Any) -> None:
     if not isinstance(usage, dict):
         return
     for key, value in usage.items():
+        if isinstance(value, bool):
+            continue
         if isinstance(value, int):
-            total[key] += value
+            current = total.get(key, 0)
+            if isinstance(current, int) and not isinstance(current, bool):
+                total[key] = current + value
+        elif isinstance(value, dict):
+            current = total.get(key)
+            if not isinstance(current, dict):
+                current = {}
+                total[key] = current
+            _merge_usage(current, value)
 
 
 def _graph_name(name: str, identifier: str) -> str:

@@ -1,9 +1,11 @@
+import re
 from dataclasses import dataclass
 from typing import Annotated, Protocol, runtime_checkable
 
 from fastapi import Header, HTTPException, Request
 
 from app.config import get_settings
+from app.db.queries.api_keys import API_KEYS_MANAGE_SCOPE, API_SCOPE, WORKER_SCOPE
 from app.workspace import (
     CurrentWorkspace,
     DEFAULT_WORKSPACE_ID,
@@ -17,11 +19,13 @@ CMA_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
 VOTRIX_MANAGED_AGENTS_BETA = "votrix-managed-agents-2026-04-01"
 ANTHROPIC_SKILLS_BETA = "skills-2025-10-02"
 ANTHROPIC_USER_PROFILES_BETA = "user-profiles-2026-03-24"
+ANTHROPIC_AGENT_MEMORY_BETA = "agent-memory-2026-07-22"
 ACCEPTED_MANAGED_AGENTS_BETAS = {
     CMA_MANAGED_AGENTS_BETA,
     VOTRIX_MANAGED_AGENTS_BETA,
     ANTHROPIC_SKILLS_BETA,
     ANTHROPIC_USER_PROFILES_BETA,
+    ANTHROPIC_AGENT_MEMORY_BETA,
 }
 ANTHROPIC_API_VERSION = "2023-06-01"
 
@@ -66,6 +70,7 @@ class EnvApiKeyAuthProvider:
 class DatabaseApiKeyAuthProvider:
     async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
         from app.db.engine import session_scope
+        from app.db.models import Workspace
         from app.db.queries import api_keys as api_keys_q
 
         token = credentials.x_api_key or _bearer_token(credentials.authorization)
@@ -74,15 +79,31 @@ class DatabaseApiKeyAuthProvider:
 
         async with session_scope() as db:
             api_key = await api_keys_q.get_api_key_by_token(db, token)
-            if api_key is None:
+            if api_key is None or api_keys_q.api_key_is_expired(api_key):
+                raise HTTPException(status_code=401, detail="Invalid API key")
+            workspace = await db.get(Workspace, api_key.workspace_id)
+            if workspace is not None and workspace.archived_at is not None:
                 raise HTTPException(status_code=401, detail="Invalid API key")
             await api_keys_q.touch_api_key(db, api_key)
             await db.commit()
             return CurrentWorkspace(
                 id=api_key.workspace_id,
-                slug=api_key.workspace_id,
+                slug=workspace.slug if workspace is not None else api_key.workspace_id,
                 source="database_api_key",
+                api_key_id=api_key.id,
+                scopes=frozenset(api_key.scopes or ()),
             )
+
+
+def default_auth_provider() -> AuthProvider:
+    """Choose fail-closed database auth for hosted environments.
+
+    Local/test retain the environment-key provider so existing development and
+    embedded deployments can opt into anonymous local access.
+    """
+    if get_settings().app_env.strip().lower() in {"local", "test"}:
+        return EnvApiKeyAuthProvider()
+    return DatabaseApiKeyAuthProvider()
 
 
 async def require_api_access(
@@ -121,7 +142,8 @@ async def require_api_access(
                 detail=(
                     "Missing required beta header: "
                     f"{CMA_MANAGED_AGENTS_BETA}, {VOTRIX_MANAGED_AGENTS_BETA}, "
-                    f"{ANTHROPIC_SKILLS_BETA}, or {ANTHROPIC_USER_PROFILES_BETA}"
+                    f"{ANTHROPIC_SKILLS_BETA}, {ANTHROPIC_USER_PROFILES_BETA}, "
+                    f"or {ANTHROPIC_AGENT_MEMORY_BETA}"
                 ),
             )
 
@@ -137,7 +159,42 @@ async def require_api_access(
         request,
         RequestCredentials(x_api_key=x_api_key, authorization=authorization),
     )
+    # Keep the authenticated actor on the request even when a later scope or
+    # quota check rejects it. The HTTP audit middleware can then attribute the
+    # denial without relying on a context variable that is only installed for
+    # successful dependencies.
     request.state.current_workspace = workspace
+    required_scope = required_scope_for_request(request)
+    if required_scope not in workspace.scopes:
+        raise HTTPException(
+            status_code=403,
+            detail=f"API key is missing required scope: {required_scope}",
+        )
+    if settings.vma_governance_enabled:
+        from app.governance_runtime import governance_service, rate_limit_headers
+
+        decision = await governance_service().authorize_request(
+            workspace.id,
+            actor_type=workspace.source,
+            actor_id=workspace.api_key_id,
+            request_id=getattr(request.state, "request_id", None),
+            method=request.method,
+            path=request.url.path,
+        )
+        request.state.rate_limit_decision = decision
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "code": "request_quota_exceeded",
+                        "message": "Workspace request rate limit exceeded",
+                    },
+                },
+                headers=rate_limit_headers(decision),
+            )
     token = set_current_workspace(workspace)
     try:
         yield workspace
@@ -171,3 +228,12 @@ def _configured_api_keys(primary: str, configured: list[str]) -> set[str]:
     keys = {primary.strip()} if primary.strip() else set()
     keys.update(key.strip() for key in configured if key.strip())
     return keys
+
+
+def required_scope_for_request(request: Request) -> str:
+    path = request.url.path.rstrip("/")
+    if path == "/v1/api_keys" or path.startswith("/v1/api_keys/"):
+        return API_KEYS_MANAGE_SCOPE
+    if re.fullmatch(r"/v1/environments/[^/]+/work(?:/.*)?", path):
+        return WORKER_SCOPE
+    return API_SCOPE

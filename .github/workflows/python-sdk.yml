@@ -1,0 +1,90 @@
+name: Votrix Python SDK CI
+
+on:
+  push:
+    paths:
+      - "sdks/python/**"
+      - "tests/contract/test_votrix_sdk_contract.py"
+      - ".github/workflows/python-sdk.yml"
+  pull_request:
+    paths:
+      - "sdks/python/**"
+      - "tests/contract/test_votrix_sdk_contract.py"
+      - ".github/workflows/python-sdk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: sdks/python
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install SDK dependencies
+        run: uv sync --extra dev
+
+      - name: Run SDK tests
+        run: uv run pytest
+
+      - name: Type-check the public package
+        run: uv run pyright
+
+      - name: Verify the public import
+        run: uv run python -c "from votrix import AsyncVotrix; assert AsyncVotrix.__name__ == 'AsyncVotrix'"
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Validate distributions
+        run: uv run --with twine twine check dist/*
+
+      - name: Install and import only the built wheel
+        run: |
+          uv venv --python "${{ matrix.python-version }}" .wheel-smoke
+          uv pip install --python .wheel-smoke/bin/python dist/*.whl
+          .wheel-smoke/bin/python -c "import asyncio; from importlib.resources import files; from votrix import AsyncVotrix, Votrix; a=AsyncVotrix(api_key='vma_smoke', base_url='https://example.com'); s=Votrix(api_key='vma_smoke', base_url='https://example.com'); assert files('votrix').joinpath('py.typed').is_file(); assert hasattr(a, 'api_keys') and hasattr(s, 'api_keys'); assert not hasattr(a, 'memory_stores') and not hasattr(a.vaults, 'credentials'); asyncio.run(a.close()); s.close()"
+
+  server-contract:
+    name: Native SDK server contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server test dependencies
+        run: uv sync --extra dev
+
+      - name: Run the native SDK against the ASGI service
+        run: uv run pytest tests/contract/test_votrix_sdk_contract.py

@@ -11,7 +11,7 @@ The boundary is architectural, not a claim that the current core already provide
 
 ```text
 Hosted/private product
-  organizations, members, RBAC, SSO, billing, quotas, audit, support
+  organizations, members, RBAC, SSO, RLS, paid billing, audit operations, support
   hosted model gateway, secret manager, sandbox fleet, broker, scheduler
                               |
                               v
@@ -32,6 +32,9 @@ The Votrix core owns:
 - FastAPI paths and models for the covered `/v1` Managed Agents-shaped resources.
 - Beta/version-header validation and official-SDK contract tests.
 - Workspace-scoped authentication interfaces and API-key implementations.
+- Database API-key create/list/retrieve/revoke/rotate lifecycle, expiration,
+  `api`/`api_keys:manage`/`worker` scopes, and trusted first-key bootstrap.
+- Request IDs, stable error codes, and authenticated request audit correlation.
 - Agent/version immutability and session version pinning.
 - Environment and session resources, append-only events, session state, and work records.
 - Deep Agents graph compilation and translation of runtime events into public events.
@@ -41,6 +44,12 @@ The Votrix core owns:
 - S3-compatible file and custom-skill bytes.
 - Workspace-scoped memory and credential resources.
 - Optional self-hosted worker mechanics and an importable deployment scheduler tick.
+- Durable work leases/generations, heartbeat, expired-attempt recovery, and
+  stale-worker terminal-write fencing.
+- Atomic workspace request, active-work, daily model-token, and stored-byte
+  quotas with append-only raw audit/usage ledgers.
+- Generic tenant idempotency for Session creation plus transactional event
+  submission idempotency.
 - A default single-workspace local experience.
 
 The core may expose extension interfaces, but it must stay useful without a private repository.
@@ -49,10 +58,14 @@ The core may expose extension interfaces, but it must stay useful without a priv
 
 A hosted or enterprise layer owns:
 
-- Organizations, users, memberships, invitations, teams, service accounts, and API-key administration.
+- Organizations, users, memberships, invitations, teams, and human/service-account identity.
 - RBAC/ABAC, SSO/SAML/OIDC, SCIM, trust grants, and support impersonation policy.
-- Billing accounts, plans, seats, credits, authoritative usage metering, quotas, and cost controls.
-- Immutable audit trails, export, retention, legal hold, and administrator access logging.
+- Advanced policy beyond the core's narrow workspace quotas, including sandbox
+  compute/egress, tool/MCP, retention, and monetary spend controls.
+- Commercial billing after the BYOK/free beta: price books, currency amounts,
+  balances/credits, top-ups, refunds, Stripe, invoices, plans, seats, and taxes.
+- Enterprise audit export, automated retention, legal hold, external tamper
+  anchoring, and administrator/support access logging.
 - Hosted model gateways and tenant credential policy.
 - KMS-backed secret management, credential rotation, OAuth enrollment/refresh, and revocation.
 - Remote sandbox fleet selection, isolation, images, lifecycle, snapshots, and regional placement.
@@ -111,7 +124,9 @@ The repository includes:
 - `DatabaseApiKeyAuthProvider` for keys stored in the core database.
 - The injectable `AuthProvider` path for hosted identity.
 
-Those providers authenticate a workspace. They do not add organization membership, roles, SSO, billing, or audit policy.
+Those providers authenticate a workspace. Core request/quota activity can be
+written to the append-only audit ledger, but the providers do not add
+organization membership, roles, SSO, paid billing, or enterprise audit policy.
 
 Prefer in-process provider injection over copying routers or placing an API-shape translation proxy in front of core. Run VMA as a separate internal service only when the deployment intentionally wants a network boundary and accepts the additional identity, tracing, and consistency work.
 
@@ -143,7 +158,12 @@ The Votrix core currently persists optionally encrypted credential material and 
 
 ## Process topology
 
-Local mode can execute inline in one web process. The maintained Cloud Run MVP also uses a single web process and a single instance because preview delivery and run ownership are currently process-local. A future horizontally scalable production topology should separate responsibilities:
+Local mode can execute inline in one web process. Hosted work is durably
+leased, heartbeated, recoverable, and terminal-write fenced, but the maintained
+Cloud Run MVP still uses one web process and one instance because preview
+delivery and parts of Session/checkpoint ownership remain process-local. A
+future horizontally scalable production topology should separate
+responsibilities:
 
 ```text
 web/API -> Postgres work/event record -> worker -> model/MCP/remote sandbox
@@ -151,17 +171,22 @@ web/API -> Postgres work/event record -> worker -> model/MCP/remote sandbox
    +---------- tenant-scoped broker <-----+
 ```
 
-Required production services include:
+Required horizontally scaled production services include:
 
-- Durable work ownership with leases and fencing.
-- A distributed per-session lock.
+- A distributed per-Session/checkpoint lock spanning side effects beyond the
+  existing durable work-item leases and terminal-write fencing.
 - A preview broker for live deltas between worker and web processes.
 - Postgres for control-plane data and LangGraph checkpoints.
-- S3-compatible object storage for bytes and artifacts.
+- Private S3-compatible object storage for bytes and artifacts.
 - A scheduler service for due deployments.
 - A webhook delivery service with retries and idempotency.
 
-The current process-local preview bus and session-run lock are development/preview mechanisms. They do not become distributed merely because Postgres is configured. Until the broker, distributed lock, and fencing exist, the production Cloud Run manifest must remain at `WEB_CONCURRENCY=1` and `maxScale=1`; this preserves the MVP's process assumptions but does not provide high availability.
+The current process-local preview bus and remaining Session/checkpoint lock are
+development/preview mechanisms. They do not become distributed merely because
+Postgres work leases are configured. Until the broker and complete distributed
+ownership exist, the Cloud Run manifest must remain at `WEB_CONCURRENCY=1` and
+`maxScale=1`; this preserves the public-beta process assumptions but does not
+provide high availability.
 
 ## Data ownership
 
@@ -177,6 +202,9 @@ Core:
   sessions
   session_events
   managed_resources and versions
+  workspace_quotas and quota counters/reservations
+  audit_ledger and usage_ledger
+  tenant_idempotency and session_event_idempotency
 
 Hosted/private:
   organizations
@@ -184,9 +212,8 @@ Hosted/private:
   workspace_members
   roles and grants
   service_accounts
-  billing_accounts
-  usage_ledger
-  audit_log
+  billing_accounts, price books, balances, invoices, and payments
+  enterprise audit export/retention state
   sso_connections
   support_access
 ```
@@ -227,12 +254,22 @@ See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations
 - Tenant-specific Deep Agents provider/harness profiles are never registered globally.
 - Tenant shell execution never occurs in the web/worker host unless explicit unsafe local mode is enabled.
 - Durable public events are persisted independently from best-effort previews.
+- Durable work attempts are leased, heartbeated, recoverable, and fenced by
+  lease generation before terminal writes.
+- Audit and usage facts are append-only; raw usage is not priced billing.
 - Hosted features may extend core but cannot become prerequisites for basic self-hosting.
 - New resource families include cross-workspace non-visibility tests.
 - Documentation labels wire compatibility separately from runtime and production semantics.
 
 ## Current boundary gaps
 
-The interfaces for hosted implementations are not equally mature. Auth and sandbox injection exist; model configuration is server-controlled; broker, secret-manager, usage-ledger, audit, and webhook-delivery interfaces still need formalization. Until they exist, a hosted implementation may compose those services around core, but should avoid embedding hosted assumptions into core tables.
+The interfaces for hosted implementations are not equally mature. Workspace
+auth, narrow quotas, raw append-only ledgers, sandbox injection, and
+server-controlled model configuration exist. A cross-process preview broker,
+complete distributed Session/checkpoint ownership, KMS secret management,
+Postgres RLS, Organization RBAC/SSO, enterprise audit operations, webhook
+delivery, and optional commercial billing still need formalization. Hosted
+implementations should avoid embedding those assumptions into unrelated core
+resource tables.
 
 The complete gap ledger is [known incompatibilities](./known-incompatibilities.md).

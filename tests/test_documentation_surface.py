@@ -83,8 +83,6 @@ def test_documentation_schema_adds_examples_and_code_samples_to_core_writes():
         ("post", "/v1/environments", "201"),
         ("post", "/v1/sessions", "201"),
         ("post", "/v1/sessions/{session_id}/events", "200"),
-        ("post", "/v1/deployments", "201"),
-        ("post", "/v1/deployments/{deployment_id}/run", "200"),
     )
 
     for method, path, status in core_operations:
@@ -123,8 +121,6 @@ def test_documentation_schema_adds_real_examples_to_core_reads():
         "/v1/environments/{environment_id}",
         "/v1/sessions",
         "/v1/sessions/{session_id}",
-        "/v1/deployments",
-        "/v1/deployments/{deployment_id}",
     )
 
     for path in core_reads:
@@ -156,7 +152,6 @@ def test_documentation_schema_matches_sse_and_error_response_contracts():
     stream_paths = (
         "/v1/sessions/{session_id}/events/stream",
         "/v1/sessions/{session_id}/stream",
-        "/v1/sessions/{session_id}/threads/{thread_id}/stream",
     )
     for path in stream_paths:
         content = schema["paths"][path]["get"]["responses"]["200"]["content"]
@@ -205,4 +200,8 @@ def test_documentation_schema_supports_interactive_binary_and_skill_uploads():
             "type": "string",
             "format": "binary",
         }
-        assert "Content-Disposition" in response["headers"]
+        assert set(response["headers"]) == {
+            "Cache-Control",
+            "Content-Disposition",
+            "X-Content-Type-Options",
+        }

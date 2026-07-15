@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 import structlog
 from sqlalchemy import select
@@ -11,8 +15,10 @@ from app.db.engine import session_scope
 from app.db.models import ManagedResource, ManagedSession
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.governance import QuotaExceededError
+from app.governance_runtime import governance_service
 from app.session_state import SESSION_RESCHEDULING, SESSION_TERMINATED
-from app.workspace import workspace_id_or_default
+from app.workspace import current_workspace, workspace_id_or_default
 
 logger = structlog.get_logger()
 
@@ -24,6 +30,38 @@ class WorkLeaseError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class WorkExecutionLease:
+    work_id: str
+    worker_id: str
+    lease_id: str
+    generation: int
+
+
+async def get_active_session_work(
+    db: AsyncSession,
+    session: ManagedSession,
+    *,
+    for_update: bool = False,
+) -> ManagedResource | None:
+    stmt = (
+        select(ManagedResource)
+        .where(
+            ManagedResource.workspace_id == session.workspace_id,
+            ManagedResource.resource_type == "environment_work",
+            ManagedResource.name == f"session:{session.id}",
+            ManagedResource.deleted_at.is_(None),
+            ManagedResource.status.in_(RUNNABLE_WORK_STATUSES | LEASED_WORK_STATUSES),
+        )
+        .order_by(ManagedResource.created_at.asc(), ManagedResource.id.asc())
+        .limit(1)
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def enqueue_session_run(
     db: AsyncSession,
     session: ManagedSession,
@@ -31,7 +69,20 @@ async def enqueue_session_run(
     trigger: str,
     metadata: dict[str, Any] | None = None,
 ) -> ManagedResource:
-    return await res_q.create_resource(
+    from app.config import get_settings
+
+    service = governance_service()
+    if get_settings().vma_governance_enabled:
+        token_decision = await service.preflight_model_tokens_in_session(
+            db,
+            workspace_id=session.workspace_id,
+            source_type="session",
+            source_id=session.id,
+        )
+        if not token_decision.allowed:
+            raise QuotaExceededError(token_decision)
+
+    work = await res_q.create_resource(
         db,
         resource_type="environment_work",
         parent_id=session.environment_id,
@@ -47,51 +98,130 @@ async def enqueue_session_run(
         },
         workspace_id=session.workspace_id,
     )
+    if get_settings().vma_governance_enabled:
+        actor = current_workspace()
+        active_decision = await service.acquire_active_work_in_session(
+            db,
+            workspace_id=session.workspace_id,
+            reference_id=work.id,
+            actor_id=actor.api_key_id,
+            metadata={"session_id": session.id, "trigger": trigger},
+        )
+        if not active_decision.allowed:
+            raise QuotaExceededError(active_decision)
+    return work
 
 
-async def execute_work_item(work_id: str, *, worker_id: str | None = None) -> None:
+async def execute_work_item(
+    work_id: str,
+    *,
+    worker_id: str | None = None,
+    lease_id: str | None = None,
+    lease_generation: int | None = None,
+    lease_seconds: int = 60,
+) -> str:
+    effective_worker_id = worker_id or f"inline-{uuid4().hex}"
     async with session_scope() as db:
         work = await res_q.get_work_item_for_worker(db, work_id)
         if work is None:
-            return
+            return "missing"
         data = dict(work.data or {})
-        if work.status == "running" and data.get("started_at"):
-            return
+        if work.status == "running" and data.get("started_at") and not _lease_expired(work, datetime.now(timezone.utc)):
+            return "already_running"
         if work.status in LEASED_WORK_STATUSES:
-            _require_lease_owner(work, worker_id=worker_id, action="execute")
+            _require_lease_owner(
+                work,
+                worker_id=effective_worker_id,
+                lease_id=lease_id,
+                action="execute",
+            )
+            current_generation = int(((work.data or {}).get("lease") or {}).get("generation") or 0)
+            if lease_generation is not None and current_generation != lease_generation:
+                raise WorkLeaseError(
+                    f"Worker {effective_worker_id} does not own the current work lease generation"
+                )
         elif is_work_ready_for_execution(work):
-            data["attempt"] = int(data.get("attempt") or 0) + 1
+            await lease_work(
+                db,
+                work,
+                worker_id=effective_worker_id,
+                lease_seconds=lease_seconds,
+            )
+            data = dict(work.data or {})
         else:
-            return
+            return "not_runnable"
+        execution_lease = _execution_lease(work)
         data["started_at"] = _utcnow_iso()
-        if worker_id:
-            data["started_by"] = worker_id
+        data["started_by"] = effective_worker_id
         await res_q.update_resource(db, work, data=data, status="running")
         await db.commit()
 
+    heartbeat_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _heartbeat_execution_lease(
+            execution_lease,
+            stop=heartbeat_stop,
+            lease_seconds=lease_seconds,
+        ),
+        name=f"vma-work-heartbeat-{work_id}",
+    )
+    executed = False
     try:
         from app.runtime.runner import run_session_turn
 
-        await run_session_turn(
+        executed = await run_session_turn(
             str(data["session_id"]),
             workspace_id=str(data.get("workspace_id") or work.workspace_id),
+            work_lease=execution_lease,
         )
     except Exception as exc:
         logger.exception("work_item_failed", work_id=work_id)
         async with session_scope() as db:
             work = await res_q.get_work_item_for_worker(db, work_id)
-            if work is not None:
+            if work is not None and _lease_matches(work, execution_lease):
                 data = dict(work.data or {})
                 data["error"] = {"type": exc.__class__.__name__, "message": str(exc)}
                 data["finished_at"] = _utcnow_iso()
                 await res_q.update_resource(db, work, data=data, status="error")
+                await _release_work_quota(
+                    db,
+                    work,
+                    actor_id=effective_worker_id,
+                )
                 await db.commit()
-        return
+        return "error"
+    finally:
+        heartbeat_stop.set()
+        try:
+            await asyncio.wait_for(heartbeat_task, timeout=5)
+        except TimeoutError:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+        except Exception:
+            logger.exception(
+                "work_lease_heartbeat_failed",
+                work_id=execution_lease.work_id,
+                lease_id=execution_lease.lease_id,
+            )
+
+    if not executed:
+        async with session_scope() as db:
+            work = await res_q.get_work_item_for_worker(db, work_id)
+            if work is not None and _lease_matches(work, execution_lease):
+                data = dict(work.data or {})
+                data.pop("started_at", None)
+                data.pop("started_by", None)
+                data.pop("lease", None)
+                data["deferred_at"] = _utcnow_iso()
+                await res_q.update_resource(db, work, data=data, status="queued")
+                await db.commit()
+        return "deferred"
 
     async with session_scope() as db:
         work = await res_q.get_work_item_for_worker(db, work_id)
-        if work is None:
-            return
+        if work is None or not _lease_matches(work, execution_lease):
+            return "superseded"
         session = await sessions_q.get_session(
             db,
             str((work.data or {}).get("session_id")),
@@ -113,11 +243,24 @@ async def execute_work_item(work_id: str, *, worker_id: str | None = None) -> No
         if work.status == "stopped":
             status = "stopped"
         await res_q.update_resource(db, work, data=data, status=status)
+        if status in {"completed", "error", "stopped"}:
+            await _release_work_quota(
+                db,
+                work,
+                actor_id=effective_worker_id,
+            )
         await db.commit()
+    return status
 
 
 def should_execute_inline(environment_config: dict[str, Any] | None) -> bool:
-    return (environment_config or {}).get("type") != "self_hosted"
+    from app.config import get_settings
+
+    settings = get_settings()
+    return (
+        settings.app_env.lower() in {"local", "test"}
+        and (environment_config or {}).get("type") != "self_hosted"
+    )
 
 
 async def lease_next_work(
@@ -196,9 +339,13 @@ async def lease_work(
 ) -> ManagedResource:
     now = now or datetime.now(timezone.utc)
     data = dict(work.data or {})
+    generation = int(data.get("run_generation") or 0) + 1
     data["attempt"] = int(data.get("attempt") or 0) + 1
+    data["run_generation"] = generation
     data["lease"] = {
         "worker_id": worker_id,
+        "lease_id": uuid4().hex,
+        "generation": generation,
         "leased_at": now.isoformat(),
         "expires_at": (now + timedelta(seconds=lease_seconds)).isoformat(),
     }
@@ -212,8 +359,15 @@ async def ack_work(
     work: ManagedResource,
     *,
     worker_id: str | None = None,
+    lease_id: str | None = None,
 ) -> ManagedResource:
-    _require_lease_owner(work, worker_id=worker_id, action="ack")
+    _require_lease_owner(
+        work,
+        worker_id=worker_id,
+        lease_id=lease_id,
+        action="ack",
+        require_lease_id=False,
+    )
     data = dict(work.data or {})
     data["acked_at"] = _utcnow_iso()
     if worker_id:
@@ -227,10 +381,11 @@ async def heartbeat_work(
     work: ManagedResource,
     *,
     worker_id: str | None,
+    lease_id: str | None = None,
     lease_seconds: int = 60,
     payload: dict[str, Any] | None = None,
 ) -> ManagedResource:
-    _require_lease_owner(work, worker_id=worker_id, action="heartbeat")
+    _require_lease_owner(work, worker_id=worker_id, lease_id=lease_id, action="heartbeat")
     data = dict(work.data or {})
     now = datetime.now(timezone.utc)
     data["last_heartbeat_at"] = now.isoformat()
@@ -244,12 +399,59 @@ async def heartbeat_work(
     return work
 
 
+async def _heartbeat_execution_lease(
+    execution_lease: WorkExecutionLease,
+    *,
+    stop: asyncio.Event,
+    lease_seconds: int,
+) -> None:
+    interval = max(1.0, lease_seconds / 3)
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+            return
+        except TimeoutError:
+            pass
+        async with session_scope() as db:
+            work = await res_q.get_work_item_for_worker(db, execution_lease.work_id)
+            if work is None or not _lease_matches(work, execution_lease):
+                return
+            await heartbeat_work(
+                db,
+                work,
+                worker_id=execution_lease.worker_id,
+                lease_id=execution_lease.lease_id,
+                lease_seconds=lease_seconds,
+                payload={"type": "execution"},
+            )
+            await db.commit()
+
+
 async def stop_work(db: AsyncSession, work: ManagedResource, *, payload: dict[str, Any]) -> ManagedResource:
     data = dict(work.data or {})
     data["stop"] = payload
     data["stopped_at"] = _utcnow_iso()
     await res_q.update_resource(db, work, data=data, status="stopped")
+    await _release_work_quota(db, work)
     return work
+
+
+async def _release_work_quota(
+    db: AsyncSession,
+    work: ManagedResource,
+    *,
+    actor_id: str | None = None,
+) -> None:
+    from app.config import get_settings
+
+    if not get_settings().vma_governance_enabled:
+        return
+    await governance_service().release_active_work_in_session(
+        db,
+        workspace_id=work.workspace_id,
+        reference_id=work.id,
+        actor_id=actor_id,
+    )
 
 
 def _work_ready_for_execution(work: ManagedResource, now: datetime) -> bool:
@@ -294,7 +496,14 @@ def _lease_expired(work: ManagedResource, now: datetime) -> bool:
         return True
 
 
-def _require_lease_owner(work: ManagedResource, *, worker_id: str | None, action: str) -> None:
+def _require_lease_owner(
+    work: ManagedResource,
+    *,
+    worker_id: str | None,
+    lease_id: str | None = None,
+    action: str,
+    require_lease_id: bool = True,
+) -> None:
     if work.status not in LEASED_WORK_STATUSES:
         raise WorkLeaseError(f"Cannot {action} work item while status is {work.status}")
     lease = (work.data or {}).get("lease") or {}
@@ -305,6 +514,35 @@ def _require_lease_owner(work: ManagedResource, *, worker_id: str | None, action
         raise WorkLeaseError(f"worker_id is required to {action} this leased work item")
     if str(lease_worker_id) != str(worker_id):
         raise WorkLeaseError(f"Worker {worker_id} does not own this work lease")
+    current_lease_id = lease.get("lease_id")
+    if require_lease_id and current_lease_id and not lease_id:
+        raise WorkLeaseError(f"lease_id is required to {action} this work lease")
+    if lease_id is not None and str(current_lease_id or "") != str(lease_id):
+        raise WorkLeaseError(f"Worker {worker_id} does not own the current work lease generation")
+
+
+def _execution_lease(work: ManagedResource) -> WorkExecutionLease:
+    lease = dict((work.data or {}).get("lease") or {})
+    worker_id = str(lease.get("worker_id") or "")
+    lease_id = str(lease.get("lease_id") or "")
+    generation = int(lease.get("generation") or (work.data or {}).get("run_generation") or 0)
+    if not worker_id or not lease_id or generation < 1:
+        raise WorkLeaseError("Work item does not have a complete execution lease")
+    return WorkExecutionLease(
+        work_id=work.id,
+        worker_id=worker_id,
+        lease_id=lease_id,
+        generation=generation,
+    )
+
+
+def _lease_matches(work: ManagedResource, execution_lease: WorkExecutionLease) -> bool:
+    lease = dict((work.data or {}).get("lease") or {})
+    return (
+        str(lease.get("worker_id") or "") == execution_lease.worker_id
+        and str(lease.get("lease_id") or "") == execution_lease.lease_id
+        and int(lease.get("generation") or 0) == execution_lease.generation
+    )
 
 
 def _utcnow_iso() -> str:

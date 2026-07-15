@@ -42,6 +42,28 @@ spec:
               value: "INFO"
             - name: WEB_CONCURRENCY
               value: "1"
+            - name: VMA_EMBEDDED_WORKER_ENABLED
+              value: "true"
+            - name: VMA_WORKER_CONCURRENCY
+              value: "2"
+            - name: VMA_WORKER_POLL_INTERVAL_SECONDS
+              value: "0.5"
+            - name: VMA_WORKER_LEASE_SECONDS
+              value: "120"
+            - name: VMA_PUBLIC_GA_ONLY
+              value: "true"
+            - name: VMA_GOVERNANCE_ENABLED
+              value: "true"
+            - name: VMA_REQUESTS_PER_MINUTE
+              value: "120"
+            - name: VMA_MAX_ACTIVE_WORK
+              value: "5"
+            - name: VMA_DAILY_MODEL_TOKENS
+              value: "1000000"
+            - name: VMA_WORKSPACE_STORAGE_BYTES
+              value: "5368709120"
+            - name: VMA_CORS_ORIGINS
+              value: "https://docs.votrixai.com"
             - name: VMA_DEFAULT_MODEL_PROVIDER
               value: "openrouter"
             - name: VMA_MODEL_PROVIDERS
@@ -52,6 +74,12 @@ spec:
               value: "vma-hardened"
             - name: VMA_E2B_TEMPLATE_RESOURCES
               value: '{"cpu":2,"memory_mb":2048}'
+            - name: VMA_E2B_COST_ESTIMATION_ENABLED
+              value: "true"
+            - name: VMA_E2B_VCPU_SECOND_USD
+              value: "0.000014"
+            - name: VMA_E2B_GIB_SECOND_USD
+              value: "0.0000045"
             - name: VMA_E2B_WORKDIR
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER
@@ -83,11 +111,6 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url
-            - name: VMA_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: vma-api-key
             - name: VMA_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -123,13 +146,3 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-s3-bucket-name
-            - name: S3_PUBLIC_URL
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: vma-s3-public-url
-            - name: VMA_PUBLIC_BASE_URL
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: vma-public-base-url

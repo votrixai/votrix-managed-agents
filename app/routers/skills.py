@@ -1,6 +1,8 @@
 import hashlib
 import io
 import json
+import mimetypes
+import stat
 import zipfile
 from time import time_ns
 from typing import Any
@@ -14,8 +16,15 @@ from app.config import get_settings
 from app.content_scan import UnsafeContentError, validate_upload_content
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
+from app.governance_runtime import governance_service
 from app.models.common import ListResponse
 from app.models.resources import resource_to_response
+from app.models.skills import (
+    SkillDeletedResponse,
+    SkillResponse,
+    SkillVersionDeletedResponse,
+    SkillVersionResponse,
+)
 from app.pagination import paginate, sort_by_created_at
 from app.storage import (
     StorageConfigurationError,
@@ -24,8 +33,15 @@ from app.storage import (
     save_file_bytes,
     should_store_in_object_storage,
 )
+from app.workspace import workspace_id_or_default
 
 SKILL_SOURCES = {"anthropic", "custom"}
+MAX_SKILL_ZIP_MEMBERS = 1_000
+MAX_SKILL_ZIP_PATH_BYTES = 4_096
+MAX_SKILL_ZIP_PATH_SEGMENT_BYTES = 255
+MAX_SKILL_ZIP_COMPRESSION_RATIO = 1_000
+ABSOLUTE_MAX_SKILL_ZIP_EXPANDED_BYTES = 100 * 1024 * 1024
+SUPPORTED_SKILL_ZIP_COMPRESSION = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
 
 router = APIRouter(
     prefix="/v1/skills",
@@ -34,7 +50,7 @@ router = APIRouter(
 )
 
 
-@router.post("", status_code=201)
+@router.post("", response_model=SkillResponse, status_code=201)
 async def create_skill(request: Request, db: AsyncSession = Depends(get_session)):
     data, content = await _skill_payload_from_request(request)
     version_number = _new_skill_version_id()
@@ -57,7 +73,7 @@ async def create_skill(request: Request, db: AsyncSession = Depends(get_session)
     return response
 
 
-@router.get("")
+@router.get("", response_model=ListResponse[SkillResponse])
 async def list_skills(
     limit: int = 50,
     page: str | None = None,
@@ -75,7 +91,7 @@ async def list_skills(
     return paginate(responses, limit=limit, page=page)
 
 
-@router.get("/{skill_id}")
+@router.get("/{skill_id}", response_model=SkillResponse)
 async def retrieve_skill(skill_id: str, db: AsyncSession = Depends(get_session)):
     skill = await res_q.get_resource(db, resource_id=skill_id, resource_type="skill")
     if skill is None:
@@ -83,7 +99,7 @@ async def retrieve_skill(skill_id: str, db: AsyncSession = Depends(get_session))
     return _skill_response(skill)
 
 
-@router.delete("/{skill_id}")
+@router.delete("/{skill_id}", response_model=SkillDeletedResponse)
 async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_session)):
     skill = await res_q.get_resource(db, resource_id=skill_id, resource_type="skill")
     if skill is None:
@@ -93,7 +109,11 @@ async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_session)):
     return {"id": skill.id, "type": "skill_deleted", "deleted": True}
 
 
-@router.post("/{skill_id}/versions", status_code=201)
+@router.post(
+    "/{skill_id}/versions",
+    response_model=SkillVersionResponse,
+    status_code=201,
+)
 async def create_skill_version(
     skill_id: str,
     request: Request,
@@ -112,7 +132,10 @@ async def create_skill_version(
     return _skill_version_response(version)
 
 
-@router.get("/{skill_id}/versions")
+@router.get(
+    "/{skill_id}/versions",
+    response_model=ListResponse[SkillVersionResponse],
+)
 async def list_skill_versions(
     skill_id: str,
     limit: int = 50,
@@ -127,7 +150,10 @@ async def list_skill_versions(
     return paginate([_skill_version_response(v) for v in versions], limit=limit, page=page)
 
 
-@router.get("/{skill_id}/versions/{version}")
+@router.get(
+    "/{skill_id}/versions/{version}",
+    response_model=SkillVersionResponse,
+)
 async def retrieve_skill_version(
     skill_id: str,
     version: int,
@@ -144,7 +170,10 @@ async def retrieve_skill_version(
     return _skill_version_response(skill_version)
 
 
-@router.delete("/{skill_id}/versions/{version}")
+@router.delete(
+    "/{skill_id}/versions/{version}",
+    response_model=SkillVersionDeletedResponse,
+)
 async def delete_skill_version(skill_id: str, version: int, db: AsyncSession = Depends(get_session)):
     skill_version = await res_q.get_resource_version(
         db,
@@ -176,7 +205,11 @@ async def download_skill_version(skill_id: str, version: int, db: AsyncSession =
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{skill_version.filename or skill_version.id}.zip"'},
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'attachment; filename="{skill_version.filename or skill_version.id}.zip"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -190,6 +223,12 @@ async def _create_skill_version_resource(
     _enforce_skill_archive_size(content)
     _scan_skill_content(content, label="Skill archive")
     sha256 = hashlib.sha256(content).hexdigest()
+    if get_settings().vma_governance_enabled:
+        await governance_service().enforce_storage_quota(
+            db,
+            workspace_id_or_default(),
+            len(content),
+        )
     try:
         should_store_in_object_storage()
         stored = await save_file_bytes(
@@ -221,7 +260,7 @@ async def _create_skill_version_resource(
         },
         storage_backend=stored.backend,
         storage_key=stored.key,
-        storage_url=stored.url,
+        storage_url=None,
         size_bytes=stored.size_bytes,
         sha256=stored.sha256 or sha256,
     )
@@ -252,21 +291,42 @@ async def _skill_payload_from_request(request: Request) -> tuple[dict[str, Any],
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         display_title = form.get("display_title")
-        uploaded_files = []
-        file_records = []
+        multipart_files = []
+        multipart_bytes = 0
+        multipart_byte_limit = _skill_archive_byte_limit()
         for key, value in form.multi_items():
             if hasattr(value, "read"):
-                raw = await value.read()
                 filename = _normalize_zip_path(getattr(value, "filename", key))
-                _scan_skill_content(raw, label=f"Skill file {filename}")
-                uploaded_files.append((filename, raw, getattr(value, "content_type", None)))
-                file_records.append(
-                    {
-                        "filename": filename,
-                        "mime_type": getattr(value, "content_type", None),
-                        "size_bytes": len(raw),
-                    }
+                raw = await _read_multipart_upload(
+                    value,
+                    max_bytes=multipart_byte_limit - multipart_bytes,
+                    label="Skill multipart upload",
                 )
+                multipart_bytes += len(raw)
+                multipart_files.append((filename, raw, getattr(value, "content_type", None)))
+
+        zip_uploads = [item for item in multipart_files if item[0].lower() == "skill.zip"]
+        if zip_uploads and len(multipart_files) != 1:
+            raise HTTPException(
+                status_code=422,
+                detail="A skill.zip archive must be the only multipart file",
+            )
+        if len(zip_uploads) == 1:
+            _scan_skill_content(multipart_files[0][1], label="Skill ZIP archive")
+            uploaded_files = _unpack_skill_zip(multipart_files[0][1])
+        else:
+            uploaded_files = multipart_files
+            for filename, raw, _mime_type in uploaded_files:
+                _scan_skill_content(raw, label=f"Skill file {filename}")
+
+        file_records = [
+            {
+                "filename": filename,
+                "mime_type": mime_type,
+                "size_bytes": len(raw),
+            }
+            for filename, raw, mime_type in uploaded_files
+        ]
         manifest = _validate_skill_files(uploaded_files) if uploaded_files else {}
         content = _zip_uploaded_files(uploaded_files)
         return {
@@ -308,6 +368,184 @@ async def _skill_payload_from_request(request: Request) -> tuple[dict[str, Any],
     return body, content
 
 
+async def _read_multipart_upload(
+    value: Any,
+    *,
+    max_bytes: int,
+    label: str,
+) -> bytes:
+    if max_bytes < 0:
+        raise HTTPException(status_code=413, detail=f"{label} exceeds maximum size")
+    raw = await value.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{label} exceeds maximum size of {_skill_archive_byte_limit()} bytes",
+        )
+    return raw
+
+
+def _unpack_skill_zip(content: bytes) -> list[tuple[str, bytes, str | None]]:
+    byte_limit = _skill_archive_byte_limit()
+    if len(content) > byte_limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Skill ZIP archive exceeds maximum size of {byte_limit} bytes",
+        )
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise HTTPException(status_code=422, detail="Uploaded skill.zip is not a valid ZIP archive") from exc
+
+    try:
+        with archive:
+            members = archive.infolist()
+            if len(members) > MAX_SKILL_ZIP_MEMBERS:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Skill ZIP archive exceeds maximum member count of {MAX_SKILL_ZIP_MEMBERS}",
+                )
+
+            uploaded_files: list[tuple[str, bytes, str | None]] = []
+            member_paths: set[str] = set()
+            directory_paths: set[str] = set()
+            file_paths: set[str] = set()
+            top_level_directories: set[str] = set()
+            declared_size = 0
+            extracted_size = 0
+
+            for member in members:
+                normalized, is_directory = _validate_skill_zip_member(member)
+                if normalized in member_paths:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Skill ZIP archive contains duplicate path: {normalized}",
+                    )
+                member_paths.add(normalized)
+                top_level_directories.add(normalized.split("/", 1)[0])
+
+                if is_directory:
+                    if normalized in file_paths:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"Skill ZIP path is both a file and directory: {normalized}",
+                        )
+                    directory_paths.add(normalized)
+                    continue
+
+                if normalized in directory_paths:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Skill ZIP path is both a file and directory: {normalized}",
+                    )
+                file_paths.add(normalized)
+                declared_size += member.file_size
+                if declared_size > byte_limit:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Skill ZIP expanded content exceeds maximum size of {byte_limit} bytes",
+                    )
+                if _skill_zip_compression_ratio(member) > MAX_SKILL_ZIP_COMPRESSION_RATIO:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Skill ZIP member has an unsafe compression ratio: {normalized}",
+                    )
+
+                remaining = byte_limit - extracted_size
+                raw = _read_skill_zip_member(archive, member, remaining=remaining)
+                extracted_size += len(raw)
+                _scan_skill_content(raw, label=f"Skill file {normalized}")
+                uploaded_files.append((normalized, raw, mimetypes.guess_type(normalized)[0]))
+
+            if len(top_level_directories) > 1:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Skill files must share one top-level directory",
+                )
+            _reject_skill_zip_file_directory_conflicts(file_paths)
+            return uploaded_files
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Uploaded skill.zip could not be safely read") from exc
+
+
+def _validate_skill_zip_member(member: zipfile.ZipInfo) -> tuple[str, bool]:
+    if member.flag_bits & 0x1:
+        raise HTTPException(status_code=422, detail="Encrypted Skill ZIP members are not supported")
+    if member.compress_type not in SUPPORTED_SKILL_ZIP_COMPRESSION:
+        raise HTTPException(status_code=422, detail="Skill ZIP uses an unsupported compression method")
+
+    raw_name = member.filename.replace("\\", "/")
+    is_directory = member.is_dir() or raw_name.endswith("/")
+    candidate = raw_name[:-1] if is_directory else raw_name
+    normalized = _normalize_zip_path(candidate)
+    if len(normalized.encode("utf-8")) > MAX_SKILL_ZIP_PATH_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Skill ZIP member path exceeds {MAX_SKILL_ZIP_PATH_BYTES} bytes",
+        )
+
+    unix_mode = (member.external_attr >> 16) & 0xFFFF
+    file_type = stat.S_IFMT(unix_mode)
+    if is_directory:
+        if file_type not in {0, stat.S_IFDIR}:
+            raise HTTPException(status_code=422, detail=f"Skill ZIP contains a special file: {normalized}")
+    elif file_type not in {0, stat.S_IFREG}:
+        kind = "symbolic link" if file_type == stat.S_IFLNK else "special file"
+        raise HTTPException(status_code=422, detail=f"Skill ZIP contains a {kind}: {normalized}")
+    return normalized, is_directory
+
+
+def _skill_zip_compression_ratio(member: zipfile.ZipInfo) -> float:
+    if member.file_size <= 0:
+        return 1.0
+    if member.compress_size <= 0:
+        return float("inf")
+    return member.file_size / member.compress_size
+
+
+def _read_skill_zip_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, *, remaining: int) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    with archive.open(member, mode="r") as source:
+        while True:
+            chunk = source.read(min(64 * 1024, remaining - size + 1))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > remaining:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Skill ZIP expanded content exceeds maximum size of {_skill_archive_byte_limit()} bytes",
+                )
+            chunks.append(chunk)
+    raw = b"".join(chunks)
+    if len(raw) != member.file_size:
+        raise HTTPException(status_code=422, detail=f"Skill ZIP member size is invalid: {member.filename}")
+    return raw
+
+
+def _reject_skill_zip_file_directory_conflicts(file_paths: set[str]) -> None:
+    for path in file_paths:
+        parts = path.split("/")
+        for index in range(1, len(parts)):
+            parent = "/".join(parts[:index])
+            if parent in file_paths:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Skill ZIP file path conflicts with a directory: {parent}",
+                )
+
+
+def _skill_archive_byte_limit() -> int:
+    configured = int(get_settings().vma_max_skill_archive_bytes)
+    if configured > 0:
+        return min(configured, ABSOLUTE_MAX_SKILL_ZIP_EXPANDED_BYTES)
+    return ABSOLUTE_MAX_SKILL_ZIP_EXPANDED_BYTES
+
+
 def _zip_uploaded_files(uploaded_files: list[tuple[str, bytes, str | None]]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_STORED) as archive:
@@ -343,11 +581,25 @@ def _new_skill_version_id(previous: Any = None) -> int:
 
 def _normalize_zip_path(filename: str) -> str:
     raw = filename.replace("\\", "/")
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw):
+        raise HTTPException(status_code=422, detail="Skill file paths must not contain control characters")
     if raw.startswith("/"):
         raise HTTPException(status_code=422, detail="Skill file paths must be relative")
     parts = raw.split("/")
     if not parts or any(part in {"", ".", ".."} for part in parts):
         raise HTTPException(status_code=422, detail="Skill file paths must not contain empty, . or .. segments")
+    if len(parts[0]) == 2 and parts[0][0].isalpha() and parts[0][1] == ":":
+        raise HTTPException(status_code=422, detail="Skill file paths must not use Windows drive prefixes")
+    if any(len(part.encode("utf-8")) > MAX_SKILL_ZIP_PATH_SEGMENT_BYTES for part in parts):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Skill file path segments must not exceed {MAX_SKILL_ZIP_PATH_SEGMENT_BYTES} bytes",
+        )
+    if len(raw.encode("utf-8")) > MAX_SKILL_ZIP_PATH_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Skill file paths must not exceed {MAX_SKILL_ZIP_PATH_BYTES} bytes",
+        )
     return "/".join(parts) or "file"
 
 
@@ -356,6 +608,8 @@ def _validate_skill_files(uploaded_files: list[tuple[str, bytes, str | None]]) -
         raise HTTPException(status_code=422, detail="Skill uploads must include files")
 
     normalized_paths = [_normalize_zip_path(filename) for filename, _raw, _mime_type in uploaded_files]
+    if len(normalized_paths) != len(set(normalized_paths)):
+        raise HTTPException(status_code=422, detail="Skill uploads must not contain duplicate paths")
     path_parts = [path.split("/") for path in normalized_paths]
     if any(len(parts) < 2 for parts in path_parts):
         raise HTTPException(status_code=422, detail="Skill files must live under one top-level directory")

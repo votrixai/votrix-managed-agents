@@ -16,6 +16,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "structlog>=24.0",
     "sentry-sdk[fastapi]>=2.0",
+    "httpx>=0.27,<0.29",
+    "httpcore>=1.0.5,<1.1",
     "aioboto3>=13.0",
     "cryptography>=42.0",
     "deepagents==0.6.12",
@@ -40,9 +42,20 @@ dev = [
 contract = [
     "anthropic==0.116.0",
 ]
+contract-backend = [
+    "anthropic==0.97.0",
+]
 sandbox-e2b = [
     "langchain-e2b==0.0.5",
     "e2b==2.31.0",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "contract" },
+        { extra = "contract-backend" },
+    ],
 ]
 
 [build-system]
@@ -57,4 +70,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "contract: compatibility tests that require official third-party SDK clients",
+    "postgres: integration tests that require an isolated PostgreSQL database",
 ]

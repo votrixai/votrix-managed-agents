@@ -1,18 +1,23 @@
 import asyncio
 
+import pytest
+
 from app.db.engine import session_scope
+from app.db.queries import agents as agents_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.runtime.agent_resolution import effective_agent_version
+from app.runtime.runner import _runtime_context_for_session
 from tests.conftest import TEST_HEADERS
 
 
-async def _create_agent(client, *, tools=None, mcp_servers=None):
+async def _create_agent(client, *, tools=None, mcp_servers=None, model=None):
     response = await client.post(
         "/v1/agents",
         headers=TEST_HEADERS,
         json={
             "name": "Session Semantic Agent",
-            "model": {"id": "gpt-5.5"},
+            "model": model or {"id": "gpt-5.5"},
             "tools": tools or [],
             "mcp_servers": mcp_servers or [],
         },
@@ -365,6 +370,245 @@ async def test_session_local_agent_update_does_not_mutate_agent_version(client):
     session = await _wait_for_stop_reason(client, session["id"], "requires_action")
     events = await _wait_for_event_type(client, session["id"], "agent.custom_tool_use")
     assert next(event for event in events if event["id"] == session["stop_reason"]["event_ids"][0])["name"] == "session_lookup"
+
+
+async def test_session_create_resolves_full_agent_overrides_without_mutating_agent(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Override Base Agent",
+            "model": {"id": "base-model", "provider": "openrouter"},
+            "system": "base system",
+            "tools": [{"type": "agent_toolset_20260401"}],
+            "skills": [{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {
+                "type": "agent_with_overrides",
+                "id": agent["id"],
+                "version": agent["version"],
+                "model": {"id": "deepseek-chat", "provider": "deepseek"},
+                "system": None,
+                "tools": [{"type": "custom", "name": "session_lookup"}],
+                "mcp_servers": [],
+                "skills": [],
+            },
+            "environment_id": environment["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    session = response.json()
+    assert session["agent"]["model"] == {"id": "deepseek-chat", "provider": "deepseek"}
+    assert session["agent"]["system"] is None
+    assert session["agent"]["tools"][0]["name"] == "session_lookup"
+    assert session["agent"]["mcp_servers"] == []
+    assert session["agent"]["skills"] == []
+
+    response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    primary = response.json()["data"][0]
+    assert primary["agent"]["model"] == session["agent"]["model"]
+    assert primary["agent"]["system"] is None
+    assert primary["agent"]["skills"] == []
+
+    response = await client.patch(
+        f"/v1/sessions/{session['id']}",
+        headers=TEST_HEADERS,
+        json={"agent": {"tools": [{"type": "custom", "name": "replacement_tool"}]}},
+    )
+    assert response.status_code == 200, response.text
+    updated_session = response.json()
+    assert updated_session["agent"]["model"] == session["agent"]["model"]
+    assert updated_session["agent"]["system"] is None
+    assert updated_session["agent"]["skills"] == []
+    assert updated_session["agent"]["tools"][0]["name"] == "replacement_tool"
+
+    response = await client.get(f"/v1/agents/{agent['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    unchanged = response.json()
+    assert unchanged["version"] == agent["version"]
+    assert unchanged["model"] == {"id": "base-model", "provider": "openrouter"}
+    assert unchanged["system"] == "base system"
+    assert unchanged["skills"] == [{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}]
+
+
+async def test_session_agent_override_null_and_skill_tool_rules(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Override Validation Agent",
+            "model": {"id": "base-model"},
+            "tools": [{"type": "agent_toolset_20260401"}],
+            "skills": [{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent_with_overrides", "id": agent["id"], "model": None},
+            "environment_id": environment["id"],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "agent_model_required"
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent_with_overrides", "id": agent["id"], "tools": []},
+            "environment_id": environment["id"],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert "skills" in response.json()["error"]["message"]
+
+    for field in ("tools", "skills", "mcp_servers"):
+        response = await client.post(
+            "/v1/sessions",
+            headers=TEST_HEADERS,
+            json={
+                "agent": {
+                    "type": "agent_with_overrides",
+                    "id": agent["id"],
+                    field: None,
+                },
+                "environment_id": environment["id"],
+            },
+        )
+        assert response.status_code == 422, response.text
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {
+                "type": "agent_with_overrides",
+                "id": agent["id"],
+                "tools": [],
+                "skills": [],
+                "system": None,
+                "mcp_servers": [],
+            },
+            "environment_id": environment["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    resolved = response.json()["agent"]
+    assert resolved["model"] == agent["model"]
+    assert resolved["system"] is None
+    assert resolved["tools"] == []
+    assert resolved["mcp_servers"] == []
+    assert resolved["skills"] == []
+    session_id = response.json()["id"]
+
+    for field in ("tools", "mcp_servers"):
+        response = await client.patch(
+            f"/v1/sessions/{session_id}",
+            headers=TEST_HEADERS,
+            json={"agent": {field: None}},
+        )
+        assert response.status_code == 422, response.text
+
+
+async def test_model_byok_uses_first_matching_vault_and_fails_closed_on_revocation(client):
+    agent = await _create_agent(
+        client,
+        model={"id": "deepseek/deepseek-v4-pro", "provider": "openrouter"},
+    )
+    environment = await _create_environment(client)
+
+    vaults = []
+    credentials = []
+    for display_name, secret in (("Personal BYOK", "personal-key"), ("Customer Shared", "shared-key")):
+        response = await client.post(
+            "/v1/vaults",
+            headers=TEST_HEADERS,
+            json={"display_name": display_name},
+        )
+        assert response.status_code == 201, response.text
+        vault = response.json()
+        vaults.append(vault)
+        response = await client.post(
+            f"/v1/vaults/{vault['id']}/credentials",
+            headers=TEST_HEADERS,
+            json={
+                "display_name": "OpenRouter",
+                "auth": {
+                    "type": "environment_variable",
+                    "secret_name": "OPENROUTER_API_KEY",
+                    "secret_value": secret,
+                    "networking": {"type": "unrestricted"},
+                },
+            },
+        )
+        assert response.status_code == 201, response.text
+        credentials.append(response.json())
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": agent["id"],
+            "environment_id": environment["id"],
+            "vault_ids": [vaults[0]["id"], vaults[1]["id"]],
+        },
+    )
+    assert response.status_code == 201, response.text
+    session_id = response.json()["id"]
+
+    async def provider_secrets():
+        async with session_scope() as db:
+            session = await sessions_q.get_session(db, session_id)
+            version = await agents_q.get_agent_version(
+                db,
+                agent_id=session.agent_id,
+                version=session.agent_version,
+                workspace_id=session.workspace_id,
+            )
+            effective = effective_agent_version(version, session.status_details)
+            context = await _runtime_context_for_session(db, session, effective)
+            return context["provider_secrets"]
+
+    assert (await provider_secrets())["OPENROUTER_API_KEY"] == "personal-key"
+    async with session_scope() as db:
+        session = await sessions_q.get_session(db, session_id)
+        binding = session.status_details["model_credential_binding"]
+        assert binding["credential_id"] == credentials[0]["id"]
+        assert binding["vault_id"] == vaults[0]["id"]
+
+    response = await client.post(f"/v1/vaults/{vaults[0]['id']}/archive", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    with pytest.raises(RuntimeError, match="create a new Session"):
+        await provider_secrets()
+    response = await client.post(
+        f"/v1/sessions/{session_id}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "must not use the shared key"}]},
+    )
+    assert response.status_code == 200, response.text
+    terminated = await _wait_for_stop_reason(client, session_id, "error")
+    assert terminated["status"] == "terminated"
+
+    response = await client.delete(f"/v1/vaults/{vaults[1]['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    with pytest.raises(RuntimeError, match="create a new Session"):
+        await provider_secrets()
 
 
 async def test_file_session_resource_creates_session_scoped_copy(client):

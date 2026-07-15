@@ -3,7 +3,7 @@ title: Known Incompatibilities
 description: Important behavioral and infrastructure differences from Claude Managed Agents.
 ---
 
-Snapshot: 2026-07-11
+Snapshot: 2026-07-15
 Runtime kernel: Deep Agents 0.6.12
 
 This is the explicit gap ledger between VMA and [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview). It covers differences that can be hidden by a compatible route or response shape but materially affect execution, security, durability, or operations.
@@ -17,8 +17,9 @@ Status terms match the [compatibility matrix](./compatibility-matrix.md): **Impl
 | Difference | Status | Operational consequence |
 | --- | --- | --- |
 | Cross-process live preview broker | Gap | Separate workers cannot deliver token/tool deltas to web-process SSE subscribers. |
-| Distributed per-session run ownership | Gap | Process-local locks cannot prevent duplicate turns across replicas. |
+| Distributed per-session/checkpoint ownership | Gap | Durable work leases fence stale worker completion, but the process-local Session/checkpoint assumptions are not validated for multiple replicas. |
 | E2B remote sandbox | Partial | Optional isolated execution exists, but E2B is hosted unless deployed through BYOC and is not Claude's managed sandbox service. |
+| Dynamic Session files and output export | Partial | E2B supports bounded append-only inputs, direct output snapshots, and mounted-file block translation, but not arbitrary mount mutation or model-independent Claude-identical multimodal behavior. |
 | Provider behavioral parity | Inherently partial | Tool calls, streaming, reasoning, multimodal input, usage, and failures vary by model/provider. |
 | `deepseek-reasoner` runtime | Unsupported | The current Deep Agents adapter rejects it because the harness requires tool calling. |
 | Exact declared subagent roster | Partial | Deep Agents can add a built-in general-purpose subagent when `task` is exposed. |
@@ -27,8 +28,11 @@ Status terms match the [compatibility matrix](./compatibility-matrix.md): **Impl
 | Anthropic system skills | Gap | Their private packages and behavior are unavailable to VMA. |
 | Claude memory mount/writeback | Gap | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
 | Production deployment scheduler | Gap | An idempotent tick exists, but no always-on scheduler service is included. |
-| Webhook delivery | Gap | Cryptographic helpers exist, but endpoint management and delivery do not. |
-| RBAC, quotas, billing, and audit | Gap | Workspace API keys alone are not a hosted enterprise control plane. |
+| Webhook delivery | Gap | Cryptographic helpers exist, but endpoint management and delivery do not; webhooks are not a public-beta product promise. |
+| User-profile enrollment and attribution | Gap | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |
+| Organization RBAC/SSO and Postgres RLS | Gap | Workspace-scoped API keys are the beta tenant boundary, not an enterprise identity system or database defense-in-depth policy. |
+| Tenant quotas and raw ledgers | Implemented | Request, active-work, daily token, and stored-byte limits plus append-only audit/usage facts provide the public-beta baseline, not enterprise policy or priced billing. |
+| Billing and payments | Deferred | The beta is BYOK/free; price books, balances/credits, top-ups, refunds, Stripe, and invoices are outside this release. |
 
 ## API and SDK surface
 
@@ -43,9 +47,43 @@ Covered resources are parsed with strict validation by a pinned official Anthrop
 
 The route-by-route inventory is [Managed Agents API coverage](./managed-agents-api-coverage.md).
 
-### Session overrides are incomplete
+### Native VMA SDK and Anthropic compatibility are separate contracts
 
-Claude supports create-time `agent_with_overrides` for model, system, tools, MCP servers, and skills. VMA's current session-create request accepts an agent ID or pinned agent reference. Selected session-local agent updates exist, but create-time and runtime override semantics are not complete or uniform.
+New VMA integrations can use the independently packaged native Python clients:
+
+```python
+from votrix import AsyncVotrix
+from votrix import Votrix
+```
+
+`AsyncVotrix` keeps the familiar resource-oriented GA API while `Votrix`
+provides the synchronous API-key, model-provider, Vault, and native
+model-Credential administration subset. Both expose provider discovery and
+provider-based model-Credential creation. The SDK also supplies cursor
+pagination, true streamed downloads, reconnecting SSE on the async client,
+bounded replay-safe retries, and typed stable error codes. The official
+`AsyncAnthropic` client remains useful for the overlapping Claude Managed Agents
+wire surface. A native SDK test does not establish Anthropic compatibility, and
+an Anthropic strict-response test does not establish support for VMA extensions.
+Applications must keep resource IDs and persistence separated by control-plane
+provider during migration.
+
+### Session overrides cannot make providers behaviorally identical
+
+VMA supports Claude's three create-time Agent forms, including
+`agent_with_overrides` for model, system, tools, MCP servers, and Skills. Each
+provided field is a full replacement: `system: null` clears the system prompt,
+empty arrays clear tools, MCP servers, or Skills, and null is rejected for those
+array fields. `model: null` is rejected. The resolved configuration is pinned in
+the Session without changing the base Agent version. Custom Skill `latest`
+references are resolved to a concrete version before sandbox bootstrap. After
+creation, only tools and MCP servers are mutable while the Session is idle.
+
+This wire and lifecycle compatibility does not make a DeepSeek, MiniMax,
+OpenRouter, OpenAI, or other model reproduce Claude's tool calls, reasoning,
+streaming, usage accounting, or errors. VMA also permits a Session Vault
+credential to supply the selected model provider's API key, which is a VMA
+extension rather than a Claude Managed Agents inference feature.
 
 Consequence: a request accepted by the newest official SDK may fail validation or may not affect graph compilation exactly as it would on Claude.
 
@@ -82,17 +120,35 @@ Closing the gap requires a tenant-scoped cross-process broker such as Redis Stre
 
 ### Run serialization is process-local
 
-The current in-process `_running_sessions` lock prevents duplicate execution only inside one worker process. A database work lease improves visibility but is not by itself a distributed session mutex with fencing.
+The Session Events endpoint now supports an optional `Idempotency-Key`. A successful keyed request stores its canonical request hash and exact response in the same transaction as its input events and queued work. Reusing the key with the same body replays that response; reusing it with a different body returns `409`. `votrix-backend` supplies this header and reuses it across SDK and 529 transport retries.
 
-Two replicas can otherwise start work for one session, race checkpoint writes, duplicate provider cost, and emit conflicting events. Production needs a database advisory lock, Redis/etcd lease with fencing token, or equivalent ownership tied to the work item and checkpoint attempt.
+Session creation separately uses a generic tenant idempotency table scoped by
+workspace, operation, key hash, and request fingerprint; the native SDK
+generates a key when callers do not supply one. The mechanism is intentionally
+not presented as a guarantee for every mutation.
+
+This request-level guarantee does not yet make runtime execution exactly-once.
+A new Backend process does not yet persist a logical `/chat` request identity.
+Every work attempt now receives a unique lease ID and monotonically increasing
+generation, heartbeats its lease, and must still own that generation before it
+can commit terminal work/session events. Expired leases are recoverable, and a
+stale worker is fenced from finalizing a newer attempt. Those guarantees protect
+one durable work item; they are not yet a general distributed mutex covering
+all per-Session checkpoint writes and every side effect.
+
+Two replicas or overlapping revisions can still race outside the fenced
+terminal-write boundary, particularly around checkpoints and process-local
+previews. A horizontally scaled service needs a database advisory lock,
+Redis/etcd lease, or equivalent per-Session ownership spanning the checkpoint
+attempt and its external side effects.
 
 The reference Cloud Run manifests therefore pin the MVP to one Uvicorn worker and
 `maxScale=1`. Production also keeps one minimum instance with instance-based CPU so
 response-following work and the E2B janitor are less likely to be suspended. This is
 only a deployment guardrail: a revision rollout can briefly overlap old and new
 instances, and an instance crash still loses process-local previews and ownership.
-Do not raise the replica or worker count until distributed run fencing and a shared
-preview broker exist.
+Do not raise the replica or web-process count until complete distributed
+Session/checkpoint ownership and a shared preview broker exist.
 
 ### Cancellation is not end-to-end
 
@@ -108,7 +164,17 @@ Claude cloud environments include Anthropic-managed isolated execution infrastru
 - Optional `sandbox-e2b` extra: `langchain-e2b==0.0.5` and `e2b==2.31.0`, selected with `VMA_SANDBOX_PROVIDER=e2b`, a server-owned `E2B_API_KEY`, and a required operator-owned `VMA_E2B_TEMPLATE`.
 - Custom integration: `VMA_SANDBOX_FACTORY` returning an operator-provided backend.
 
-The E2B path provisions exactly one isolated sandbox while creating a Session. It uploads the fixed initial bundle once, seals the immutable inputs, pauses with full-memory preservation, and later reconnects the same opaque external ID. Before every turn it recomputes the input identity and verifies the stored seal; it never re-uploads, repairs, or synchronizes files on resume. Deep Agents receives an `AsyncE2BSandbox` backend and invokes command and file operations through tool calls.
+The E2B path provisions exactly one isolated sandbox while creating a Session.
+It uploads the initial bundle, seals the immutable inputs at revision `0`,
+pauses with full-memory preservation, and later reconnects the same opaque
+external ID. While the active Session is idle—including an idle
+`requires_action` custom-tool window—`sessions.resources.add` may append one
+read-only direct file at `/mnt/session/uploads/<filename>` and advance the
+sealed manifest by one revision. Existing mounts cannot be replaced, updated,
+or deleted. Before every turn VMA recomputes the latest committed input identity
+and verifies the stored seal; resume never re-uploads, repairs, or synchronizes
+inputs. Deep Agents receives an `AsyncE2BSandbox` backend and invokes command
+and file operations through tool calls.
 
 Provider auto-resume is disabled so every reconnect passes through VMA authorization. Secure access is enabled and public traffic is disabled. Archive preserves the sandbox, deletion kills it, and best-effort retention cleanup defaults to 30 days. E2B remains an external dependency unless the operator deploys [E2B BYOC](https://e2b.dev/docs/byoc), and VMA makes no guarantee that its performance, failure behavior, isolation implementation, or lifecycle is behaviorally equal to [Claude Managed Agents sessions](https://platform.claude.com/docs/en/managed-agents/sessions). See [sandbox runtime](./sandbox-runtime.md).
 
@@ -116,7 +182,18 @@ The hardened template is the trusted computing base for guest filesystem confine
 
 ### Sandbox lifecycle has no recovery protocol
 
-VMA records one external E2B sandbox ID as opaque private database state; it is not a public resource identifier or an authorization boundary. Database transactions and provider side effects cannot be atomic. A failed Session create attempts to kill a sandbox it already created, but VMA has no provisioning generations, snapshots, operation leases, heartbeat/fencing, durable outbox, or automatic orphan discovery/recovery. A process crash can therefore leave provider and database state inconsistent, and operators must inspect failed creates and E2B inventory.
+VMA records one external E2B sandbox ID as opaque private database state; it is
+not a public resource identifier or an authorization boundary. Database
+transactions and provider side effects cannot be atomic. A failed Session
+create attempts to kill a sandbox it already created. During file append, VMA
+advances E2B's compare-and-swap seal before committing the resource and latest
+manifest in PostgreSQL. A crash in that window is recoverable only by retrying
+the exact same file bytes and mount path; the provider accepts the expected old
+seal or that exact already-advanced seal. Unrelated append/resume attempts fail
+closed until recovery. VMA has no provisioning generations, snapshots,
+operation leases, heartbeat/fencing, durable outbox, or automatic orphan
+discovery/recovery. Operators must inspect failed creates/appends and E2B
+inventory.
 
 When retention cleanup is enabled, VMA's in-process janitor makes eligible paused sandboxes best-effort cleanup candidates after a configurable threshold, which defaults to 30 days. This is not an E2B retention guarantee or exact deletion deadline. Scale-to-zero and suspended API services also suspend the loop, so overdue cleanup waits for a later API start. Once the janitor or Session deletion kills a sandbox, its filesystem and process state cannot be resumed; conversation events follow their separate database retention policy.
 
@@ -139,7 +216,16 @@ Only the sandbox can enforce actual filesystem/process/network authority.
 
 ### Self-hosted work queue is not self-hosted isolation
 
-The environment work API and `vma-worker` lease and execute work. They do not create a container or VM, verify a worker image, attest policy, or isolate tenants. The worker must still use an approved sandbox provider. Worker identity, RBAC, fencing, and sandbox attestation remain gaps.
+The environment work API, embedded consumer, and `vma-worker` durably lease and
+execute work. Each attempt has a unique lease ID and generation; ack,
+heartbeat, execution, and terminal writes verify current ownership, and expired
+leases can be recovered. This fences a stale worker from completing a newer
+attempt.
+
+The queue does not create a container or VM, verify a worker image, attest
+policy, or isolate tenants. The worker must still use an approved sandbox
+provider. Strong worker identity/RBAC, sandbox attestation, dead-letter policy,
+and a complete distributed per-Session/checkpoint mutex remain gaps.
 
 ## Model and provider behavior
 
@@ -275,17 +361,66 @@ Claude manages OAuth refresh for supported vault credentials. VMA currently does
 
 Production should supply a managed secret provider and never place provider keys or MCP headers in public events, previews, checkpoints, traces, or sandbox environments.
 
+For model BYOK, native callers create a model Credential with a registered
+provider ID and the key; VMA performs the private provider-to-credential-slot
+mapping. Callers do not supply `secret_name` or `api_key_env`. Session creation
+then resolves attached Vaults in declared `vault_ids` order and fixes the first
+matching Credential. VMA persists only the selected Credential ID and reloads
+that exact record for later turns. Archiving or deleting it fails the Session's
+next turn closed; it does not switch the Session to another Vault or to the
+server-owned key. If no matching Vault Credential exists at creation, the
+Session binds the server-owned key source. The trusted caller expresses
+personal/shared preference through `vault_ids` ordering rather than a VMA
+policy enum. Model keys are decrypted only for the control-plane model client
+and are not injected into E2B.
+
 ## Files, skills, and memory
 
 ### Public mount paths are portable; enforcement depends on the provider
 
-R2 or another S3-compatible object store supplies uploaded files and custom Skill archives when a Session is created. VMA materializes the fixed bundle into the one E2B sandbox exactly once. Read-only uploads default below `/mnt/session/uploads`, Skills live below `/skills/custom`, and memory seeds live below their `/mnt/memory` mount. Immutable inputs cannot overlap `/workspace` or a read-write memory root. Once the seal exists, Session-resource mutations are rejected and the control plane never performs per-turn upload, repair, deletion, or managed-file synchronization.
+Private R2 or another private S3-compatible object store supplies uploaded
+files and custom Skill archives. VMA requires no bucket public URL and serves
+downloads through the authenticated Files API. Public GA hides the
+presign/complete routes; beta callers use the bounded authenticated upload.
+Workspace stored-byte quota is checked for File and Skill writes, but storage
+retention and garbage-collection policy still need operational ownership.
 
-The built-in E2B adapter rejects traversal, symlinks, aliases, and path collisions, then makes control-plane-owned immutable files root-owned and verifies their digest before each turn. This protects those files only. Durable Agent data belongs in `/workspace` or approved read-write memory roots, but E2B also supplies untrusted Session-local writable scratch and package paths. The required operator-owned template must protect the system roots used by VMA; VMA checks the non-root/no-passwordless-sudo boundary plus its trusted system interpreter and directories, without implementing general Linux hardening.
+VMA materializes Skills, Memory Store seeds, and create-time
+files into the one E2B sandbox during Session creation. A later file may be
+added only through the bounded append protocol: the Session and sandbox must be
+idle/paused, the path must be one direct filename under
+`/mnt/session/uploads`, and the existing manifest must remain an unchanged
+subset of the next revision. VMA checks Workspace ownership plus the copied
+object's size and SHA-256 before touching E2B. Skills and memory remain fixed;
+existing file mounts cannot be updated or removed. Immutable inputs cannot
+overlap `/workspace`, `/mnt/session/outputs`, or a read-write memory root. The
+control plane never performs per-turn input upload, repair, deletion, or
+continuous synchronization.
+
+The built-in E2B adapter rejects traversal, symlinks, aliases, and path collisions, then makes control-plane-owned immutable files root-owned and verifies their digest before each turn. This protects those files only. Persistent private Agent data belongs in `/workspace` or approved read-write memory roots, and generated files intended for export belong directly in `/mnt/session/outputs`; E2B also supplies untrusted Session-local writable scratch and package paths. The required operator-owned template must protect the system roots used by VMA; VMA checks the non-root/no-passwordless-sudo boundary plus its trusted system interpreter and directories, without implementing general Linux hardening.
 
 E2B Session creation currently rejects `github_repository` resources because VMA does not yet implement secure one-time checkout and credential handling. The response union remains available for compatibility on non-E2B control-plane resources, but it must not be interpreted as a completed E2B mount.
 
-Generated sandbox artifacts are not discovered or exported automatically. A file created only inside E2B can disappear when retention cleanup or Session deletion kills the sandbox. Production malware quarantine and content-disarm policy are also absent.
+Managed Agents image/document blocks may reference only an immutable file
+already mounted in the same Session. VMA accepts the source upload ID or its
+Session-scoped copy ID, keeps the public event unchanged, and converts verified
+JPEG/PNG/GIF/WebP, PDF, or UTF-8 text bytes into LangChain standard model input.
+It rejects arbitrary URL/inline sources and cross-Session IDs. Image/PDF inline
+behavior still depends on the selected model profile declaring multimodal
+input. A text-only profile such as the default DeepSeek/OpenRouter route gets a
+sandbox-path marker and must use sandbox tools; that is not Claude-equivalent
+vision or native document understanding.
+
+`/mnt/session/outputs` is a guest-owned mutable root. At the end of an E2B graph
+execution, VMA discovers only bounded direct regular files there, rejects
+nested paths, directories, symlinks, hardlinks, and out-of-root entries, then
+snapshots each new `(Session, path, SHA-256)` version into R2-compatible storage
+as a downloadable Session-scoped File. Exact rediscovery is idempotent; changed
+bytes at the same path produce another immutable File record. These artifacts
+are available through `files.list(scope_id=session_id)`, metadata, and download.
+Files left elsewhere in the sandbox are not exported and can disappear when
+retention cleanup or Session deletion kills it. Production malware quarantine
+and content-disarm policy are also absent.
 
 ### Custom skills use Deep Agents semantics
 
@@ -335,7 +470,8 @@ An interrupted run must resume with:
 
 - The same workspace-scoped internal thread ID.
 - The same pinned agent revision.
-- The same E2B external ID, fixed create-time input identity, and immutable-file seal.
+- The same E2B external ID, fixed Skills/Memory identity, and latest committed
+  append-only input digest, manifest revision, and immutable-file seal.
 - A compatible graph and middleware topology.
 - Decisions ordered against the saved interrupt action requests.
 
@@ -385,35 +521,62 @@ Applications must poll or stream session events until a webhook delivery service
 
 ### Authentication is workspace-level only
 
-The Votrix core supports configured or database-backed API keys that resolve to a workspace. It does not include users, organizations, memberships, invitations, service accounts, roles, SSO, SCIM, support access, or policy evaluation.
+Hosted VMA uses database-backed API keys that resolve to exactly one workspace.
+Keys are hashed at rest, return plaintext only during create/rotate, can expire
+or be revoked independently, and use the small `api`, `api_keys:manage`, and
+`worker` scope set. A trusted CLI bootstraps the first management key without a
+permanent global hosted key. Local/test mode retains the explicitly configured
+environment-key or anonymous developer path.
 
-Every key mapped to a workspace effectively has broad core API authority unless an injected hosted layer adds finer policy.
+This does not add users, organizations, memberships, invitations, human/service
+account identity, roles, SSO, SCIM, support access, or policy evaluation.
+Scopes separate ordinary API access, key administration, and worker routes;
+they are not resource-level RBAC.
 
 ### RBAC is absent
 
 There are no built-in read/run/write/admin grants across agents, environments, vaults, memories, or deployments. A hosted layer must authorize each operation before core query/mutation and prevent privilege escalation through resources such as vault IDs and sandbox environments.
 
-### Quotas and rate limits are absent
+### Public-beta quotas are intentionally narrow
 
-VMA records some usage and validates selected resource-count/size limits, but it does not enforce tenant budgets for:
+VMA atomically enforces workspace defaults/overrides for requests per minute,
+active queued/running work, daily model tokens, and stored File/Skill bytes.
+Quota denials return `429`, stable codes, reset metadata, and rate/quota headers.
+Active-work reservations are released idempotently on terminal work states, and
+provider-reported actual token usage is appended exactly once with
+provider/model attribution.
 
-- Concurrent sessions or sandboxes.
-- Model tokens, requests, or cost.
-- Tool/MCP calls.
-- Sandbox CPU, memory, disk, or egress.
-- File/object storage.
-- Event retention.
-- Deployment frequency.
+Provider usage is known only after a turn. A turn admitted while below the
+daily limit can cross it; VMA records the complete usage and blocks later turns
+until the UTC-day reset. This bounded one-turn overrun is deliberate. It is not
+an authorization to discard usage or convert it into a monetary charge.
 
-Provider rate-limit errors may trigger retries, but that is not quota policy.
+The beta does not enforce concurrent sandbox count, sandbox CPU/memory/disk or
+egress, tool/MCP calls, event retention, deployment frequency, or monetary
+spend. Postgres RLS is also absent; quota enforcement does not replace database
+defense in depth.
 
-### Billing is absent
+### Billing and payments are deferred
 
-There is no usage ledger with authoritative pricing, credits, invoices, plans, seats, taxes, refunds, or spend alerts. Session usage fields are diagnostic data, not a billing source of truth.
+The public beta is BYOK/free and does not require a billing product. The
+append-only usage ledger records raw metric quantities with provider/model and
+source attribution for quota enforcement and cost analysis. It is not a priced
+or monetary source of truth.
 
-### Audit is absent
+Price books, currency amounts, balances/credits, top-ups, refunds, Stripe,
+invoices, plans, seats, taxes, and spend alerts are explicitly deferred.
 
-Structured application logs and resource timestamps are not an immutable audit trail. VMA lacks actor-attributed records for every read/write/run/approval/secret access, retention controls, export, tamper evidence, and administrator/support access history.
+### Audit is a beta ledger, not an enterprise archive
+
+VMA appends workspace-attributed authorization decisions, HTTP completion,
+quota actions, and runtime governance events with actor, resource, outcome, and
+request IDs. ORM guards and database triggers reject updates/deletes to audit
+and usage ledger rows.
+
+Coverage is not yet every read/write/run/approval/secret access; an invalid key
+cannot be attributed to a workspace. Enterprise export, automated retention,
+legal hold, external tamper anchoring, and administrator/support access history
+remain absent.
 
 ### Compliance is deployment-specific
 

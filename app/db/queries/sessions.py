@@ -4,8 +4,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Agent, Environment, ManagedSession
+from app.db.models import Agent, AgentVersion, Environment, ManagedSession
 from app.ids import new_id
+from app.runtime.model_credentials import (
+    MODEL_CREDENTIAL_BINDING_KEY,
+    resolve_model_credential_binding,
+)
 from app.workspace import workspace_id_or_default
 
 
@@ -19,9 +23,38 @@ async def create_session(
     metadata: dict[str, Any] | None = None,
     resources: list[dict[str, Any]] | None = None,
     vault_ids: list[str] | None = None,
+    agent_config: dict[str, Any] | None = None,
     workspace_id: str | None = None,
 ) -> ManagedSession:
     scoped_workspace_id = workspace_id_or_default(workspace_id or agent.workspace_id)
+    status_details: dict[str, Any] = {
+        "resources": resources or [],
+        "vault_ids": vault_ids or [],
+    }
+    if agent_config is not None:
+        status_details["agent"] = agent_config
+    version_result = await db.execute(
+        select(AgentVersion).where(
+            AgentVersion.agent_id == agent.id,
+            AgentVersion.version == agent_version,
+            AgentVersion.workspace_id == scoped_workspace_id,
+        )
+    )
+    version_record = version_result.scalar_one_or_none()
+    if version_record is None:
+        raise RuntimeError(f"Agent version {agent.id}:{agent_version} not found")
+    effective_model = (
+        agent_config.get("model")
+        if isinstance(agent_config, dict) and isinstance(agent_config.get("model"), dict)
+        else version_record.model
+    )
+    status_details[MODEL_CREDENTIAL_BINDING_KEY] = await resolve_model_credential_binding(
+        db,
+        model=effective_model,
+        runtime=version_record.runtime,
+        vault_ids=vault_ids,
+        workspace_id=scoped_workspace_id,
+    )
     session = ManagedSession(
         id=new_id("sess"),
         runtime_thread_id=new_id("thread"),
@@ -32,10 +65,7 @@ async def create_session(
         title=title,
         status="idle",
         metadata_=metadata or {},
-        status_details={
-            "resources": resources or [],
-            "vault_ids": vault_ids or [],
-        },
+        status_details=status_details,
         last_event_seq=0,
     )
     db.add(session)

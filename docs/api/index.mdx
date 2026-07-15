@@ -7,11 +7,21 @@ The Votrix Managed Agents API is a workspace-scoped REST API for defining agents
 creating durable sessions, managing execution environments, and operating the
 resources that long-running agents need.
 
+The public-beta document contains API keys, Agents, Environments, Sessions,
+Files, Skills, Vaults/native model Credentials, Model Providers, and the
+capability manifest. Experimental repository routes such as Memory Stores,
+Deployments, User Profiles, Session Threads, presigned-upload completion, and
+webhook delivery are intentionally excluded from the GA schema.
+
 <Callout title="Authentication">
   Every `/v1` request requires the current `votrix-managed-agents-beta` header plus
   either an `x-api-key` header or the same key as a Bearer token. Authentication
   values entered in the playground stay in your browser.
 </Callout>
+
+Every response echoes or generates `request-id` and `x-request-id`. Standard
+API error envelopes expose a stable `error.code` and include the request ID;
+quota denials also include `X-RateLimit-*` or `X-Quota-*` reset metadata.
 
 ## Base URL
 

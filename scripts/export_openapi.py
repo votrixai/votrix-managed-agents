@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.auth import VOTRIX_MANAGED_AGENTS_BETA
+from app.public_surface import public_ga_openapi
 from votrix_managed_agents import create_app
 
 
@@ -19,6 +20,10 @@ HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "tra
 
 TAG_DESCRIPTIONS = {
     "agents": ("Agents", "Agent definitions and immutable agent versions."),
+    "api keys": (
+        "API keys",
+        "Tenant-scoped credentials, permissions, expiration, rotation, and revocation.",
+    ),
     "environments": (
         "Environments",
         "Execution environment configuration and lifecycle.",
@@ -59,13 +64,24 @@ TAG_DESCRIPTIONS = {
     ),
     "user profiles": (
         "User profiles",
-        "Managed user profiles and enrollment flows.",
+        "Managed user profiles and relationship metadata.",
     ),
     "health": ("Health", "Service and database readiness endpoints."),
 }
 
 
 SPECIAL_OPERATION_DESCRIPTIONS = {
+    ("post", "/v1/api_keys"): (
+        "Creates a tenant-scoped API key and returns its plaintext secret exactly once. "
+        "Persist the secret immediately because later responses expose only its safe prefix."
+    ),
+    ("post", "/v1/api_keys/{key_id}/rotate"): (
+        "Atomically creates a replacement with the same permissions and revokes the old key. "
+        "The replacement plaintext is returned exactly once."
+    ),
+    ("post", "/v1/api_keys/{key_id}/revoke"): (
+        "Revokes an API key immediately and records the requesting actor and optional audit reason."
+    ),
     ("post", "/v1/agents"): (
         "Creates a versioned agent definition in the current workspace. "
         "The returned agent is ready to be referenced by a session or deployment."
@@ -243,6 +259,7 @@ COMMON_PROPERTY_DESCRIPTIONS = {
     "first_id": "Identifier of the first item in this page.",
     "last_id": "Identifier of the last item in this page.",
     "next_page": "Opaque cursor used to request the next page, or null at the end.",
+    "deleted": "Whether the requested resource was deleted successfully.",
 }
 
 
@@ -877,10 +894,18 @@ def enrich_binary_and_multipart_operations(
         operation.setdefault("responses", {})["200"] = {
             "description": "Binary content returned as a downloadable response.",
             "headers": {
+                "Cache-Control": {
+                    "description": "Prevents shared or browser caches from retaining private content.",
+                    "schema": {"type": "string", "example": "private, no-store"},
+                },
                 "Content-Disposition": {
                     "description": "Suggested filename for the downloaded content.",
                     "schema": {"type": "string"},
-                }
+                },
+                "X-Content-Type-Options": {
+                    "description": "Disables MIME type sniffing for downloaded content.",
+                    "schema": {"type": "string", "example": "nosniff"},
+                },
             },
             "content": {
                 "application/octet-stream": {
@@ -1033,7 +1058,10 @@ def enrich_read_operation_examples(
 
 
 def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
-    schema = create_app().openapi()
+    # The hosted service exposes only the public-GA route allowlist. Keep the
+    # committed explorer independent from a developer's local .env so deferred
+    # compatibility routes cannot leak back into published documentation.
+    schema = public_ga_openapi(create_app().openapi())
     schema["servers"] = [
         {
             "url": server_url.rstrip("/"),

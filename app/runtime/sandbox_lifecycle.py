@@ -1,16 +1,18 @@
-"""One persistent E2B sandbox for one managed session.
+"""One persistent E2B sandbox for one managed Session.
 
-An E2B-backed session is provisioned and seeded exactly once. Skills, initial
-inputs, and memory seeds are bound to a fixed identity; read-only files are
-also sealed in the sandbox. Every later turn reconnects the same opaque
-provider ID and refuses to run if the create-time identity changed.
+An E2B-backed Session is provisioned and seeded exactly once. Skills and
+memory seeds keep their create-time identity. Read-only files are sealed in an
+append-only manifest so ``resources.add`` can materialize a new upload in the
+same sandbox without ever replacing an existing input.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
 
 import structlog
@@ -21,9 +23,17 @@ from app.db.engine import session_scope
 from app.db.queries import environments as environments_q
 from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
+from app.runtime.e2b_cost_estimation import (
+    begin_e2b_cost_interval,
+    configured_e2b_cost_profile,
+    end_e2b_cost_interval,
+)
 from app.runtime.sandbox_inputs import (
+    SESSION_OUTPUT_ROOT,
+    SESSION_UPLOAD_ROOT,
     SandboxInputBundle,
     SandboxInputError,
+    SandboxInputFile,
     sandbox_input_bundle,
 )
 from app.runtime.sandbox_providers import (
@@ -41,6 +51,7 @@ logger = structlog.get_logger()
 E2B_PROVIDER = "e2b"
 STATE_PROVIDER = "state"
 SUPPORTED_PROVIDERS = frozenset({E2B_PROVIDER, STATE_PROVIDER})
+APPEND_SEAL_SCHEMA = "vma-immutable-inputs-v2"
 
 
 class SandboxLifecycleError(RuntimeError):
@@ -53,6 +64,10 @@ class SandboxLifecycleConfigurationError(SandboxLifecycleError):
 
 class SandboxInputMismatchError(SandboxLifecycleError):
     """A caller tried to resume with different sealed session inputs."""
+
+
+class SandboxLifecycleStateError(SandboxLifecycleError):
+    """The persistent sandbox is not in a state that permits this operation."""
 
 
 def selected_sandbox_provider(environment_config: dict[str, Any] | None) -> str:
@@ -190,17 +205,56 @@ def build_e2b_provider() -> E2BSandboxProvider:
 
 async def build_session_input_bundle(db: AsyncSession, session, agent_version) -> SandboxInputBundle:
     """Resolve the pinned session resources without exposing provider secrets."""
-    from app.runtime.runner import _effective_agent_version, _runtime_context_for_session
+    from app.runtime.agent_resolution import effective_agent_version
+    from app.runtime.runner import _runtime_context_for_session
 
-    effective_version = _effective_agent_version(agent_version, session.status_details)
+    effective_version = effective_agent_version(agent_version, session.status_details)
     runtime_context = await _runtime_context_for_session(db, session, effective_version)
     try:
-        return sandbox_input_bundle(
+        bundle = sandbox_input_bundle(
             runtime_context,
             reject_unsupported_resources=True,
         )
+        _validate_bundle_capacity(bundle)
+        return bundle
     except SandboxInputError as exc:
         raise SandboxLifecycleConfigurationError(str(exc)) from exc
+
+
+async def build_appended_session_input_bundle(
+    previous_bundle: SandboxInputBundle,
+    resource,
+) -> SandboxInputBundle:
+    """Load only the newly copied file and extend an already verified bundle."""
+    from app import storage
+
+    data = dict(resource.data or {})
+    session_file = dict(data.get("session_file") or {})
+    stored = dict(session_file.get("storage") or {})
+    key = stored.get("key")
+    path = str(data.get("mount_path") or "")
+    if data.get("type") != "file" or not isinstance(key, str) or not key or not path:
+        raise SandboxLifecycleConfigurationError("Appended Session file metadata is incomplete")
+    content = await storage.download_file(key)
+    expected_size = session_file.get("size_bytes")
+    expected_sha256 = str(session_file.get("sha256") or "")
+    if isinstance(expected_size, int) and len(content) != expected_size:
+        raise SandboxInputMismatchError("Appended Session file size changed after R2 copy")
+    if expected_sha256 and hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise SandboxInputMismatchError("Appended Session file sha256 changed after R2 copy")
+    try:
+        bundle = previous_bundle.with_appended_file(
+            SandboxInputFile(
+                path=path,
+                content=content,
+                read_only=True,
+                source="session_file",
+            )
+        )
+        _validate_bundle_capacity(bundle)
+        return bundle
+    except SandboxInputError as exc:
+        raise SandboxInputMismatchError(str(exc)) from exc
 
 
 async def provision_session_sandbox(
@@ -229,16 +283,24 @@ async def provision_session_sandbox(
     _validate_bundle_layout(bundle, policy)
     owner = SandboxOwner(session.workspace_id, session.id)
     provider = build_e2b_provider()
+    provision_config = begin_e2b_cost_interval(
+        {
+            "append_seal_schema": APPEND_SEAL_SCHEMA,
+            "create_input_digest": bundle.input_digest,
+            "input_digest": bundle.input_digest,
+            "immutable_manifest": bundle.immutable_manifest,
+            "immutable_manifest_revision": 0,
+        },
+        profile=configured_e2b_cost_profile(),
+        at=_now(),
+    )
     await sandboxes_q.upsert_session_sandbox(
         db,
         workspace_id=session.workspace_id,
         session_id=session.id,
         provider=provider.name,
         state="provisioning",
-        config={
-            "input_digest": bundle.input_digest,
-            "immutable_manifest": bundle.immutable_manifest,
-        },
+        config=provision_config,
         capabilities=provider.capabilities.to_dict(),
         expires_at=_expiry(),
     )
@@ -254,20 +316,25 @@ async def provision_session_sandbox(
             connection,
             files=bundle.upload_pairs(),
             read_only_paths=tuple(item.path for item in bundle.immutable_files),
-            mutable_roots=(policy.workdir, *bundle.mutable_roots),
+            mutable_roots=_sandbox_mutable_roots(policy, bundle),
             digest=bundle.input_digest,
         )
         await provider.pause(connection.reference, owner)
         record_config = {
             **connection.config,
+            **provision_config,
+            "append_seal_schema": APPEND_SEAL_SCHEMA,
+            "create_input_digest": bundle.input_digest,
             "input_digest": bundle.input_digest,
             "immutable_manifest": bundle.immutable_manifest,
+            "immutable_manifest_revision": 0,
             "skill_sources": list(bundle.skill_sources),
             "memory_sources": list(bundle.memory_sources),
-            "mutable_roots": [policy.workdir, *bundle.mutable_roots],
+            "mutable_roots": list(_sandbox_mutable_roots(policy, bundle)),
             "configured_template": _optional(get_settings().vma_e2b_template),
             "sealed": True,
         }
+        record_config = end_e2b_cost_interval(record_config, at=_now())
         await sandboxes_q.upsert_session_sandbox(
             db,
             workspace_id=session.workspace_id,
@@ -300,6 +367,144 @@ async def provision_session_sandbox(
     return True
 
 
+async def append_session_file_to_sandbox(
+    db: AsyncSession,
+    *,
+    session,
+    environment_config: dict[str, Any] | None,
+    previous_bundle: SandboxInputBundle,
+    next_bundle: SandboxInputBundle,
+    new_path: str,
+) -> bool:
+    """Append exactly one immutable upload to the Session's existing E2B.
+
+    The caller owns the surrounding database transaction and must have locked
+    the Session row. The sandbox row is locked here. Provider state advances
+    before the database manifest is committed, making an exact retry
+    recoverable while every unrelated resume fails closed.
+    """
+    record = await _lock_appendable_session_sandbox(db, session)
+    if record is None:
+        return False
+
+    config = dict(record.config or {})
+    previous_digest = str(config.get("input_digest") or "")
+    previous_manifest = config.get("immutable_manifest")
+    previous_revision = config.get("immutable_manifest_revision")
+    if (
+        previous_digest != previous_bundle.input_digest
+        or not isinstance(previous_manifest, dict)
+        or previous_manifest != previous_bundle.immutable_manifest
+        or not isinstance(previous_revision, int)
+        or isinstance(previous_revision, bool)
+        or previous_revision < 0
+    ):
+        raise SandboxInputMismatchError(
+            "Session immutable inputs no longer match the sandbox binding; create a new Session"
+        )
+
+    policy = sandbox_policy_from_environment(environment_config)
+    _validate_bundle_layout(previous_bundle, policy)
+    _validate_bundle_layout(next_bundle, policy)
+    new_file = _validate_single_append(previous_bundle, next_bundle, new_path)
+    next_manifest = next_bundle.immutable_manifest
+    next_revision = previous_revision + 1
+    if config.get("configured_template") != _optional(get_settings().vma_e2b_template):
+        raise SandboxInputMismatchError(
+            "The configured E2B template changed; create a new Session"
+        )
+
+    owner = SandboxOwner(session.workspace_id, session.id)
+    reference = _reference_from_record(record, owner)
+    provider = build_e2b_provider()
+    interval_config = begin_e2b_cost_interval(
+        config,
+        profile=configured_e2b_cost_profile(),
+        at=_now(),
+    )
+    connection: SandboxConnection | None = None
+    try:
+        connection = await provider.connect(reference, owner, policy)
+        await provider.append_immutable_files(
+            connection,
+            files=[(new_file.path, new_file.content)],
+            previous_digest=previous_digest,
+            previous_manifest=previous_manifest,
+            next_digest=next_bundle.input_digest,
+            next_manifest=next_manifest,
+            previous_revision=previous_revision,
+            next_revision=next_revision,
+        )
+        await provider.pause(reference, owner)
+    except BaseException:
+        if connection is not None:
+            await _best_effort_provider_pause(
+                provider,
+                reference,
+                owner,
+                workspace_id=session.workspace_id,
+                session_id=session.id,
+            )
+        raise
+
+    next_config = {
+        **interval_config,
+        "input_digest": next_bundle.input_digest,
+        "immutable_manifest": next_manifest,
+        "immutable_manifest_revision": next_revision,
+        "mutable_roots": list(_sandbox_mutable_roots(policy, next_bundle)),
+    }
+    next_config = end_e2b_cost_interval(next_config, at=_now())
+    await sandboxes_q.update_session_sandbox_state(
+        db,
+        record,
+        workspace_id=session.workspace_id,
+        state="paused",
+        config=next_config,
+        error=None,
+        last_active_at=_now(),
+        expires_at=_expiry(),
+    )
+    return True
+
+
+async def lock_session_sandbox_for_file_append(
+    db: AsyncSession,
+    *,
+    session,
+) -> bool:
+    """Lock and preflight the sandbox before any new R2 object is copied."""
+    return await _lock_appendable_session_sandbox(db, session) is not None
+
+
+async def _lock_appendable_session_sandbox(db: AsyncSession, session):
+    record = await sandboxes_q.get_session_sandbox(
+        db,
+        session.id,
+        workspace_id=session.workspace_id,
+        for_update=True,
+    )
+    if record is None:
+        return None
+    if record.provider != E2B_PROVIDER:
+        raise SandboxLifecycleConfigurationError(
+            "This managed sandbox does not support append-only file resources"
+        )
+    if not record.external_sandbox_id:
+        raise SandboxLifecycleStateError("Session sandbox has no persistent provider binding")
+    if record.state != "paused":
+        raise SandboxLifecycleStateError(
+            f"Session sandbox must be paused before adding resources (current state: {record.state})"
+        )
+
+    config = dict(record.config or {})
+    if config.get("append_seal_schema") != APPEND_SEAL_SCHEMA:
+        raise SandboxInputMismatchError(
+            "Session sandbox predates append-only resources; create a new Session"
+        )
+    return record
+
+
 @asynccontextmanager
 async def open_e2b_session_backend(
     *,
@@ -330,6 +535,11 @@ async def open_e2b_session_backend(
         raise SandboxInputMismatchError(
             "Session immutable input manifest changed; create a new Session"
         )
+    expected_revision = (record.config or {}).get("immutable_manifest_revision", 0)
+    if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+        raise SandboxInputMismatchError(
+            "Session immutable input revision is invalid; create a new Session"
+        )
     if (record.config or {}).get("configured_template") != _optional(
         get_settings().vma_e2b_template
     ):
@@ -340,7 +550,12 @@ async def open_e2b_session_backend(
     owner = SandboxOwner(workspace_id, session_id)
     reference = _reference_from_record(record, owner)
     provider = build_e2b_provider()
-    await _mark_state(workspace_id, session_id, "connecting")
+    await _mark_state(
+        workspace_id,
+        session_id,
+        "connecting",
+        cost_transition="start",
+    )
     connection: SandboxConnection | None = None
     try:
         connection = await provider.connect(reference, owner, policy)
@@ -348,11 +563,13 @@ async def open_e2b_session_backend(
             connection,
             digest=expected_digest,
             immutable_manifest=expected_manifest,
+            revision=expected_revision,
         )
         await _mark_state(workspace_id, session_id, "running", last_active_at=_now())
     except BaseException as exc:
+        paused_after_failure = connection is None
         if connection is not None:
-            await _best_effort_provider_pause(
+            paused_after_failure = await _best_effort_provider_pause(
                 provider,
                 reference,
                 owner,
@@ -365,6 +582,7 @@ async def open_e2b_session_backend(
                 session_id,
                 "lost" if isinstance(exc, SandboxNotFoundError) else "error",
                 error={"type": type(exc).__name__, "message": str(exc)[:1000]},
+                cost_transition="stop" if paused_after_failure else None,
             )
         except BaseException:
             logger.exception(
@@ -393,6 +611,7 @@ async def open_e2b_session_backend(
                 error=None,
                 last_active_at=_now(),
                 expires_at=_expiry(),
+                cost_transition="stop",
             )
         except Exception as exc:
             await _mark_state(
@@ -405,18 +624,53 @@ async def open_e2b_session_backend(
                 raise
 
 
-async def pause_session_sandbox(*, workspace_id: str, session_id: str) -> bool:
-    target = await _load_target(workspace_id, session_id)
+async def pause_session_sandbox(
+    *,
+    workspace_id: str,
+    session_id: str,
+    db: AsyncSession | None = None,
+) -> bool:
+    if db is None:
+        async with session_scope() as owned_db:
+            paused = await _pause_session_sandbox_in_db(
+                owned_db,
+                workspace_id=workspace_id,
+                session_id=session_id,
+            )
+            await owned_db.commit()
+            return paused
+    return await _pause_session_sandbox_in_db(
+        db,
+        workspace_id=workspace_id,
+        session_id=session_id,
+    )
+
+
+async def _pause_session_sandbox_in_db(
+    db: AsyncSession,
+    *,
+    workspace_id: str,
+    session_id: str,
+) -> bool:
+    target = await _load_target_in_db(
+        db,
+        workspace_id,
+        session_id,
+        for_update=True,
+    )
     if target is None:
         return False
-    provider, owner, reference, record = target
+    provider, owner, reference, record, _session = target
     if record.state == "paused":
         return True
     await provider.pause(reference, owner)
-    await _mark_state(
-        workspace_id,
-        session_id,
-        "paused",
+    next_config = end_e2b_cost_interval(record.config, at=_now())
+    await sandboxes_q.update_session_sandbox_state(
+        db,
+        record,
+        workspace_id=workspace_id,
+        state="paused",
+        config=next_config,
         error=None,
         last_active_at=_now(),
         expires_at=_expiry(),
@@ -429,21 +683,65 @@ async def delete_session_sandbox(
     workspace_id: str,
     session_id: str,
     only_states: frozenset[str] | None = None,
+    require_expired: bool = False,
+    db: AsyncSession | None = None,
 ) -> bool:
-    target = await _load_target(workspace_id, session_id)
+    if db is None:
+        async with session_scope() as owned_db:
+            deleted = await _delete_session_sandbox_in_db(
+                owned_db,
+                workspace_id=workspace_id,
+                session_id=session_id,
+                only_states=only_states,
+                require_expired=require_expired,
+            )
+            await owned_db.commit()
+            return deleted
+    return await _delete_session_sandbox_in_db(
+        db,
+        workspace_id=workspace_id,
+        session_id=session_id,
+        only_states=only_states,
+        require_expired=require_expired,
+    )
+
+
+async def _delete_session_sandbox_in_db(
+    db: AsyncSession,
+    *,
+    workspace_id: str,
+    session_id: str,
+    only_states: frozenset[str] | None,
+    require_expired: bool,
+) -> bool:
+    target = await _load_target_in_db(
+        db,
+        workspace_id,
+        session_id,
+        for_update=True,
+    )
     if target is None:
         return False
-    provider, owner, reference, record = target
+    provider, owner, reference, record, session = target
     if only_states is not None and record.state not in only_states:
+        return False
+    if require_expired and (
+        record.expires_at is None
+        or not _datetime_has_passed(record.expires_at)
+        or session.status in {"running", "rescheduling"}
+    ):
         return False
     try:
         await provider.delete(reference, owner)
     except SandboxNotFoundError:
         pass
-    await _mark_state(
-        workspace_id,
-        session_id,
-        "deleted",
+    next_config = end_e2b_cost_interval(record.config, at=_now())
+    await sandboxes_q.update_session_sandbox_state(
+        db,
+        record,
+        workspace_id=workspace_id,
+        state="deleted",
+        config=next_config,
         error=None,
         external_sandbox_id=None,
         expires_at=None,
@@ -464,6 +762,7 @@ async def cleanup_expired_session_sandboxes(*, limit: int = 25) -> int:
                 workspace_id=record.workspace_id,
                 session_id=record.session_id,
                 only_states=frozenset({"idle", "paused", "error"}),
+                require_expired=True,
             ):
                 cleaned += 1
         except SandboxProviderError:
@@ -523,32 +822,39 @@ async def _load_record(workspace_id: str, session_id: str):
         )
 
 
-async def _load_target(workspace_id: str, session_id: str):
-    async with session_scope() as db:
-        record = await sandboxes_q.get_session_sandbox(
-            db,
-            session_id,
-            workspace_id=workspace_id,
-        )
-        if record is None or not record.external_sandbox_id:
-            return None
-        session = await sessions_q.get_session(
-            db,
-            session_id,
-            workspace_id=workspace_id,
-        )
-        if session is None:
-            return None
-        environment = await environments_q.get_environment(
-            db,
-            session.environment_id,
-            workspace_id=workspace_id,
-        )
-        if environment is None:
-            return None
-        owner = SandboxOwner(workspace_id, session_id)
-        provider = build_e2b_provider()
-        return provider, owner, _reference_from_record(record, owner), record
+async def _load_target_in_db(
+    db: AsyncSession,
+    workspace_id: str,
+    session_id: str,
+    *,
+    for_update: bool = False,
+):
+    record = await sandboxes_q.get_session_sandbox(
+        db,
+        session_id,
+        workspace_id=workspace_id,
+        for_update=for_update,
+    )
+    if record is None or not record.external_sandbox_id:
+        return None
+    session = await sessions_q.get_session(
+        db,
+        session_id,
+        workspace_id=workspace_id,
+        for_update=for_update,
+    )
+    if session is None:
+        return None
+    environment = await environments_q.get_environment(
+        db,
+        session.environment_id,
+        workspace_id=workspace_id,
+    )
+    if environment is None:
+        return None
+    owner = SandboxOwner(workspace_id, session_id)
+    provider = build_e2b_provider()
+    return provider, owner, _reference_from_record(record, owner), record, session
 
 
 def _reference_from_record(record, owner: SandboxOwner) -> SandboxReference:
@@ -573,6 +879,8 @@ async def _mark_state(
     workspace_id: str,
     session_id: str,
     state: str,
+    *,
+    cost_transition: str | None = None,
     **values: Any,
 ) -> None:
     async with session_scope() as db:
@@ -584,6 +892,16 @@ async def _mark_state(
         )
         if record is None:
             return
+        if cost_transition == "start":
+            values["config"] = begin_e2b_cost_interval(
+                record.config,
+                profile=configured_e2b_cost_profile(),
+                at=_now(),
+            )
+        elif cost_transition == "stop":
+            values["config"] = end_e2b_cost_interval(record.config, at=_now())
+        elif cost_transition is not None:
+            raise ValueError(f"Unsupported E2B cost transition: {cost_transition!r}")
         await sandboxes_q.update_session_sandbox_state(
             db,
             record,
@@ -601,17 +919,19 @@ async def _best_effort_provider_pause(
     *,
     workspace_id: str,
     session_id: str,
-) -> None:
+) -> bool:
     task = asyncio.create_task(provider.pause(reference, owner))
     try:
         async with asyncio.timeout(10):
             await asyncio.shield(task)
+        return True
     except BaseException:
         logger.exception(
             "session_sandbox_failed_open_pause_failed",
             workspace_id=workspace_id,
             session_id=session_id,
         )
+        return False
 
 
 async def _best_effort_provider_delete(
@@ -635,15 +955,15 @@ async def _best_effort_provider_delete(
 
 
 def _validate_bundle_layout(bundle: SandboxInputBundle, policy: SandboxPolicy) -> None:
-    mutable_roots = {policy.workdir, *bundle.mutable_roots}
+    mutable_roots = set(_sandbox_mutable_roots(policy, bundle))
     for item in bundle.files:
         if item.source == "session_file" and not item.read_only:
             raise SandboxLifecycleConfigurationError(
                 "E2B initial session files must be read-only"
             )
-        if item.source == "session_file" and not item.path.startswith("/mnt/session/"):
+        if item.source == "session_file" and str(PurePosixPath(item.path).parent) != SESSION_UPLOAD_ROOT:
             raise SandboxLifecycleConfigurationError(
-                "E2B initial session files must be mounted below /mnt/session"
+                f"E2B session files must be mounted directly below {SESSION_UPLOAD_ROOT}"
             )
         if item.read_only and any(
             item.path == root or item.path.startswith(root.rstrip("/") + "/")
@@ -653,6 +973,61 @@ def _validate_bundle_layout(bundle: SandboxInputBundle, policy: SandboxPolicy) -
                 f"Read-only input {item.path} overlaps mutable workspace/memory; "
                 "mount it under /mnt/session/uploads"
             )
+
+
+def _sandbox_mutable_roots(
+    policy: SandboxPolicy,
+    bundle: SandboxInputBundle,
+) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((policy.workdir, SESSION_OUTPUT_ROOT, *bundle.mutable_roots)))
+
+
+def _validate_bundle_capacity(bundle: SandboxInputBundle) -> None:
+    maximum = max(1, int(get_settings().vma_max_session_input_bytes))
+    total = sum(len(item.content) for item in bundle.files)
+    if total > maximum:
+        raise SandboxLifecycleConfigurationError(
+            f"Managed Session inputs exceed maximum aggregate size of {maximum} bytes"
+        )
+
+
+def _validate_single_append(
+    previous: SandboxInputBundle,
+    desired: SandboxInputBundle,
+    new_path: str,
+):
+    path = PurePosixPath(new_path)
+    if str(path) != new_path or str(path.parent) != SESSION_UPLOAD_ROOT:
+        raise SandboxLifecycleConfigurationError(
+            f"E2B resources.add only accepts {SESSION_UPLOAD_ROOT}/<filename>"
+        )
+    candidates = [item for item in desired.files if item.path == new_path]
+    if len(candidates) != 1:
+        raise SandboxInputMismatchError("Append-only resource is missing from the desired bundle")
+    new_file = candidates[0]
+    if not new_file.read_only or new_file.source != "session_file":
+        raise SandboxInputMismatchError("Append-only resources must be read-only Session files")
+    without_new = tuple(item for item in desired.files if item.path != new_path)
+    if (
+        without_new != previous.files
+        or desired.skill_sources != previous.skill_sources
+        or desired.memory_sources != previous.memory_sources
+        or desired.mutable_roots != previous.mutable_roots
+    ):
+        raise SandboxInputMismatchError(
+            "resources.add may only append one file; existing Skills, memory, and inputs changed"
+        )
+    previous_manifest = previous.immutable_manifest
+    desired_manifest = desired.immutable_manifest
+    added = set(desired_manifest) - set(previous_manifest)
+    if (
+        added != {new_path}
+        or any(desired_manifest.get(key) != value for key, value in previous_manifest.items())
+    ):
+        raise SandboxInputMismatchError(
+            "Append-only immutable manifest must be a one-file strict superset"
+        )
+    return new_file
 
 
 def _public_sandbox_state(state: str, policy: SandboxPolicy) -> dict[str, Any]:
@@ -676,20 +1051,32 @@ def _expiry() -> datetime:
     return _now() + timedelta(seconds=max(1, int(get_settings().vma_sandbox_retention_seconds)))
 
 
+def _datetime_has_passed(value: datetime) -> bool:
+    now = _now()
+    if value.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return value <= now
+
+
 def _optional(value: Any) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
 
 
 __all__ = [
+    "APPEND_SEAL_SCHEMA",
     "E2B_PROVIDER",
     "SandboxInputMismatchError",
     "SandboxLifecycleConfigurationError",
     "SandboxLifecycleError",
+    "SandboxLifecycleStateError",
+    "append_session_file_to_sandbox",
+    "build_appended_session_input_bundle",
     "build_session_input_bundle",
     "bound_session_sandbox_provider",
     "cleanup_expired_session_sandboxes",
     "delete_session_sandbox",
+    "lock_session_sandbox_for_file_append",
     "open_e2b_session_backend",
     "pause_session_sandbox",
     "provision_session_sandbox",

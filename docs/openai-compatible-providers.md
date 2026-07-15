@@ -13,13 +13,61 @@ Current status is **implemented for provider resolution and model construction**
 
 Agent JSON selects a provider and model ID. It cannot supply an arbitrary base URL or raw API key. Credentials and connection endpoints come from:
 
-1. Session vault credentials of type `environment_variable`, matched by the provider's configured `api_key_env`.
+1. The Session's create-time model-Credential binding, created natively from a public provider ID and resolved to the provider's private credential slot by VMA.
 2. Server settings or process environment.
 3. A server-owned entry in `VMA_MODEL_PROVIDERS`.
 
 This prevents a tenant from turning model configuration into unrestricted server-side request forgery. Operators must still review every registered base URL, TLS policy, data-retention policy, and credential scope.
 
 VMA constructs model objects explicitly and does not mutate process environment or register tenant-specific Deep Agents provider profiles. Deep Agents provider and harness registries are process-global and are unsafe for per-request secrets.
+
+### Session model overrides and BYOK
+
+An Agent supplies the default model. Session creation may use CMA-compatible
+`agent_with_overrides` to replace that model for one Session; the resolved model
+is stored in the Session snapshot and the Agent resource is unchanged. A public
+model provider or provider-prefixed model ID takes precedence over the Agent's
+legacy private `runtime.model.provider` fallback.
+
+For end-user BYOK, use the native SDK or endpoint so the caller only handles a
+stable provider ID:
+
+```python
+credential = await client.vaults.model_credentials.create(
+    vault_id=end_user_vault_id,
+    provider="openrouter",
+    api_key=end_user_api_key,
+)
+```
+
+The corresponding REST endpoint is
+`POST /v1/vaults/{vault_id}/model_credentials`. VMA validates the provider
+against its authenticated, secret-free `model_providers` catalog and performs
+the private credential-slot mapping internally. The caller never needs to know
+`OPENROUTER_API_KEY` or any other configured `api_key_env`.
+
+Attach the Vault when creating the Session. At creation VMA reads Vaults in
+request order, selects the first matching model Credential, and stores only that
+Credential's ID as an immutable Session binding. For example:
+
+```text
+vault_ids = [end_user_personal_vault, customer_shared_vault]
+```
+
+This is BYOK-preferred at Session creation: a personal OpenRouter Credential wins
+when present; otherwise the shared Vault supplies one. After creation VMA reloads
+only the selected Credential ID. An invalid, archived, or deleted selected key
+fails closed and never switches that Session to the shared or server key. A new
+Session is required to choose a different payer. If no supplied Vault contains
+a matching Credential at creation, VMA binds the server-configured key source.
+The trusted customer backend owns the decision about which Vaults and order to
+submit; VMA intentionally has no separate BYOK policy enum.
+
+The model Credential is decrypted only in the control plane to construct the
+LangChain model client. It is never included in the public Session snapshot,
+events, checkpoints, run state, or E2B sandbox. This use of a Vault credential
+for inference is a VMA extension; Claude Managed Agents uses Vaults for
+third-party credentials rather than selecting a non-Anthropic model provider.
 
 ## Built-in providers
 
@@ -82,6 +130,15 @@ explicitly selects another server-approved provider or model retains that
 choice. Tenant runtime fields cannot override the OpenRouter API key, base URL,
 or provider-routing policy.
 
+The default profile declares `multimodal_input=false`. VMA still validates a
+Managed Agents image/document `file_id` against the current Session mount, but
+it does not send binary bytes to that text-only route. It replaces the inline
+block with a trusted sandbox-path marker so the Agent can use filesystem and
+execution tools. To obtain direct image/PDF model input, configure and
+contract-test a server-approved model profile with `multimodal_input=true`;
+VMA then converts the verified Session copy into LangChain standard base64
+image/file blocks, which `ChatOpenRouter` serializes into its native request.
+
 ## Selecting a provider on an agent
 
 The public model object may include a provider:
@@ -106,7 +163,7 @@ VMA also recognizes a provider-prefixed model ID:
 
 When no provider is present, `VMA_DEFAULT_MODEL_PROVIDER` is used. Provider names are lowercased and hyphens normalize to underscores.
 
-An agent's private `runtime.model` object may override the provider and these inference parameters:
+An agent's private `runtime.model` object may provide a legacy provider fallback and override these inference parameters:
 
 - `temperature`
 - `max_tokens`

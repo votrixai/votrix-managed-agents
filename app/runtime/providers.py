@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import SecretStr
 
@@ -41,6 +41,97 @@ class RuntimeProviderConfig:
     capabilities: RuntimeProviderCapabilities = RuntimeProviderCapabilities()
 
 
+@dataclass(frozen=True)
+class RuntimeProviderCatalogEntry:
+    """Public, secret-free metadata for one server-approved provider."""
+
+    id: str
+    display_name: str
+    adapter: str
+    credential_type: Literal["api_key", "none"]
+    default_model: str | None
+    capabilities: RuntimeProviderCapabilities
+
+
+_PROVIDER_DISPLAY_NAMES = {
+    "anthropic": "Anthropic",
+    "deepseek": "DeepSeek",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+}
+
+
+def runtime_provider_catalog(
+    settings: Settings | None = None,
+) -> tuple[RuntimeProviderCatalogEntry, ...]:
+    """Return the sanitized, deterministic model-provider catalog.
+
+    Provider registry entries may contain API keys, environment-variable names,
+    base URLs, and model kwargs.  This projection deliberately exposes none of
+    those values (including whether a server key is currently configured).
+    """
+
+    resolved_settings = settings or get_settings()
+    entries: list[RuntimeProviderCatalogEntry] = []
+    for provider_id, config in sorted(_provider_registry(resolved_settings).items()):
+        adapter = _clean_optional_str(config.get("adapter")) or provider_id
+        display_name = (
+            _clean_optional_str(config.get("display_name"))
+            or _PROVIDER_DISPLAY_NAMES.get(provider_id)
+            or provider_id.replace("_", " ").title()
+        )
+        entries.append(
+            RuntimeProviderCatalogEntry(
+                id=provider_id,
+                display_name=display_name,
+                adapter=adapter,
+                credential_type=(
+                    "none" if adapter in {"fake", "ollama"} else "api_key"
+                ),
+                default_model=_clean_optional_str(config.get("default_model")),
+                capabilities=_provider_capabilities(adapter, config),
+            )
+        )
+    return tuple(entries)
+
+
+def retrieve_runtime_provider_catalog_entry(
+    provider_id: str,
+    settings: Settings | None = None,
+) -> RuntimeProviderCatalogEntry | None:
+    """Resolve one canonical provider ID without exposing its private config."""
+
+    normalized = _normalize_provider_name(provider_id)
+    return next(
+        (entry for entry in runtime_provider_catalog(settings) if entry.id == normalized),
+        None,
+    )
+
+
+def registered_runtime_provider_api_key_env(
+    provider_id: str,
+    settings: Settings | None = None,
+) -> str | None:
+    """Return a registered provider's internal BYOK slot.
+
+    This is intentionally a server-side helper.  Public catalog responses must
+    never expose the returned environment-variable name.
+    """
+
+    resolved_settings = settings or get_settings()
+    config = _provider_registry(resolved_settings).get(
+        _normalize_provider_name(provider_id)
+    )
+    if config is None:
+        return None
+    adapter = _clean_optional_str(config.get("adapter")) or _normalize_provider_name(
+        provider_id
+    )
+    if adapter in {"fake", "ollama"}:
+        return None
+    return _clean_optional_str(config.get("api_key_env"))
+
+
 def runtime_provider_configured(
     model: dict[str, Any],
     *,
@@ -55,6 +146,42 @@ def runtime_provider_configured(
             return False
         raise
     return bool(config.api_key) or config.adapter in {"ollama", "fake"}
+
+
+def runtime_provider_api_key_env(
+    model: dict[str, Any],
+    *,
+    runtime: dict[str, Any] | None = None,
+) -> str | None:
+    """Return the server-approved environment-variable name for model BYOK.
+
+    Vault credentials never get to choose an endpoint or adapter.  They may only
+    supply the API key slot declared by the provider registry that would already
+    be used for this model.
+    """
+    settings = get_settings()
+    provider, _ = _provider_and_model(model, dict(runtime or {}), settings)
+    provider_config = _provider_registry(settings).get(provider)
+    if provider_config is None:
+        provider_config = {
+            "adapter": provider,
+            "api_key_env": f"{provider.upper()}_API_KEY",
+        }
+    adapter = _clean_optional_str(provider_config.get("adapter")) or provider
+    if adapter in {"ollama", "fake"}:
+        return None
+    return _clean_optional_str(provider_config.get("api_key_env"))
+
+
+def runtime_provider_id(
+    model: dict[str, Any],
+    *,
+    runtime: dict[str, Any] | None = None,
+) -> str:
+    """Return the canonical server-selected provider ID for a model."""
+
+    provider, _ = _provider_and_model(model, dict(runtime or {}), get_settings())
+    return provider
 
 
 def resolve_runtime_provider(
@@ -220,8 +347,7 @@ def _provider_and_model(
     runtime_model = runtime.get("model")
     runtime_provider = runtime_model.get("provider") if isinstance(runtime_model, dict) else None
     raw_provider = _clean_optional_str(
-        runtime_provider
-        or model.get("provider")
+        model.get("provider")
         or model.get("provider_id")
         or model.get("vendor")
         or model.get("source")
@@ -233,6 +359,9 @@ def _provider_and_model(
         candidate_provider, candidate_model = raw_model_id.split(":", 1)
         if candidate_provider and candidate_model:
             return _normalize_provider_name(candidate_provider), candidate_model
+
+    if runtime_provider:
+        return _normalize_provider_name(str(runtime_provider)), raw_model_id
 
     default_provider = _setting(
         settings,

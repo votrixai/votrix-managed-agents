@@ -8,6 +8,7 @@
     "claude-managed-agents-alignment",
     "managed-agents-api-coverage",
     "anthropic-sdk-contract-tests",
+    "python-sdk",
     "---Architecture & runtime---",
     "votrix-core-architecture",
     "agent-versioning",

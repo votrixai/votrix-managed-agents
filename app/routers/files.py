@@ -9,7 +9,13 @@ from app.config import get_settings
 from app.content_scan import UnsafeContentError, validate_upload_content
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
+from app.governance_runtime import governance_service
 from app.models.common import FlexibleApiModel, ListResponse
+from app.models.files import (
+    FileDeletedResponse,
+    FileResponse,
+    PresignedFileUploadResponse,
+)
 from app.models.resources import deleted_response, resource_to_response
 from app.pagination import paginate_by_id, sort_by_created_at
 from app.storage import (
@@ -22,11 +28,12 @@ from app.storage import (
     is_object_storage_backend,
     object_key,
     object_storage_backend_label,
-    public_url_for_key,
     save_file_bytes,
     should_store_in_object_storage,
 )
 from app.workspace import workspace_id_or_default
+
+UPLOAD_READ_CHUNK_BYTES = 64 * 1024
 
 router = APIRouter(
     prefix="/v1/files",
@@ -50,21 +57,20 @@ class CompleteFileBody(FlexibleApiModel):
     sha256: str | None = None
 
 
-@router.post("", status_code=201)
+@router.post("", response_model=FileResponse, status_code=201)
 async def upload_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_session),
 ):
-    content = await file.read()
-    _enforce_size_limit(
-        len(content),
-        get_settings().vma_max_file_upload_bytes,
-        label="File upload",
+    content = await _read_upload_file_bounded(
+        file,
+        max_bytes=get_settings().vma_max_file_upload_bytes,
     )
     _scan_upload_content(content, label="File upload")
     mime_type = file.content_type or "application/octet-stream"
     sha256 = hashlib.sha256(content).hexdigest()
     existing = await _find_deduplicated_file(db, sha256=sha256)
+    await _enforce_workspace_storage_quota(db, incoming_bytes=len(content))
     if existing is None:
         try:
             should_store_in_object_storage()
@@ -79,7 +85,7 @@ async def upload_file(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         storage_backend = stored.backend
         storage_key = stored.key
-        storage_url = stored.url
+        storage_url = None
         stored_size_bytes = stored.size_bytes
         stored_sha256 = stored.sha256 or sha256
         data = {
@@ -89,7 +95,7 @@ async def upload_file(
     else:
         storage_backend = existing.storage_backend
         storage_key = existing.storage_key
-        storage_url = existing.storage_url
+        storage_url = None
         stored_size_bytes = existing.size_bytes
         stored_sha256 = existing.sha256 or sha256
         data = {
@@ -116,7 +122,7 @@ async def upload_file(
     return resource_to_response(resource, public_type="file")
 
 
-@router.post("/presign")
+@router.post("/presign", response_model=PresignedFileUploadResponse)
 async def presign_file_upload(body: PresignFileBody):
     try:
         if not should_store_in_object_storage():
@@ -143,7 +149,7 @@ async def presign_file_upload(body: PresignFileBody):
     }
 
 
-@router.post("/complete", status_code=201)
+@router.post("/complete", response_model=FileResponse, status_code=201)
 async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depends(get_session)):
     try:
         if not should_store_in_object_storage():
@@ -153,23 +159,34 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
     _validate_staged_upload_key(body.key)
     info = await get_file_info(body.key)
     mime_type = body.mime_type or info.get("ContentType") or "application/octet-stream"
-    size_bytes = body.size_bytes or info.get("ContentLength")
-    if size_bytes is not None:
+    head_size = info.get("ContentLength")
+    for declared_size in (body.size_bytes, head_size):
+        if declared_size is None:
+            continue
         _enforce_size_limit(
-            int(size_bytes),
+            int(declared_size),
             get_settings().vma_max_file_upload_bytes,
             label="File upload",
         )
     staged_content, _stored_content_type = await download_file_with_type(body.key)
+    actual_size = len(staged_content)
+    _enforce_size_limit(
+        actual_size,
+        get_settings().vma_max_file_upload_bytes,
+        label="File upload",
+    )
+    if body.size_bytes is not None and int(body.size_bytes) != actual_size:
+        raise HTTPException(status_code=422, detail="File upload size_bytes does not match staged object")
+    if head_size is not None and int(head_size) != actual_size:
+        raise HTTPException(status_code=422, detail="File upload ContentLength does not match staged object")
     _scan_upload_content(staged_content, label="File upload")
     staged_sha256 = hashlib.sha256(staged_content).hexdigest()
     if body.sha256 and body.sha256 != staged_sha256:
         raise HTTPException(status_code=422, detail="File upload sha256 does not match staged object")
     sha256 = body.sha256 or staged_sha256
-    if size_bytes is None:
-        size_bytes = len(staged_content)
     filename = body.filename or body.key.split("/")[-1]
     existing = await _find_deduplicated_file(db, sha256=sha256)
+    await _enforce_workspace_storage_quota(db, incoming_bytes=actual_size)
     if existing is None:
         permanent_key = object_key(
             namespace="vma",
@@ -179,7 +196,7 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
         )
         await copy_file(body.key, permanent_key, content_type=mime_type)
         storage_key = permanent_key
-        storage_url = public_url_for_key(permanent_key)
+        storage_url = None
         storage_backend = object_storage_backend_label()
         data = {
             "filename": filename,
@@ -187,7 +204,7 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
         }
     else:
         storage_key = existing.storage_key
-        storage_url = existing.storage_url
+        storage_url = None
         storage_backend = existing.storage_backend
         data = {
             "filename": filename,
@@ -205,14 +222,14 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
         storage_backend=storage_backend,
         storage_key=storage_key,
         storage_url=storage_url,
-        size_bytes=int(size_bytes) if size_bytes is not None else None,
+        size_bytes=actual_size,
         sha256=sha256,
     )
     await db.commit()
     return resource_to_response(resource, public_type="file")
 
 
-@router.get("")
+@router.get("", response_model=ListResponse[FileResponse])
 async def list_files(
     limit: int = 50,
     after_id: str | None = None,
@@ -220,15 +237,17 @@ async def list_files(
     scope_id: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    files = await res_q.list_resources(db, resource_type="file", limit=1000)
     scope_file_ids: set[str] = set()
     if scope_id is not None:
         scope_file_ids = await _file_ids_for_scope(db, scope_id)
-        files = [
-            file
-            for file in files
-            if file.id in scope_file_ids or _file_scope_id(file.data) == scope_id
-        ]
+        files = await res_q.list_files_for_session_scope(
+            db,
+            session_id=scope_id,
+            referenced_file_ids=scope_file_ids,
+            limit=1000,
+        )
+    else:
+        files = await res_q.list_resources(db, resource_type="file", limit=1000)
     files = sort_by_created_at(files, order="desc")
     return paginate_by_id(
         [_file_response(f, scope_id=scope_id if f.id in scope_file_ids else None) for f in files],
@@ -238,7 +257,7 @@ async def list_files(
     )
 
 
-@router.get("/{file_id}")
+@router.get("/{file_id}", response_model=FileResponse)
 async def retrieve_file_metadata(file_id: str, db: AsyncSession = Depends(get_session)):
     file = await res_q.get_resource(db, resource_id=file_id, resource_type="file")
     if file is None:
@@ -258,15 +277,31 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_session)):
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{file.filename or file.id}"'},
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'attachment; filename="{file.filename or file.id}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
-@router.delete("/{file_id}")
+@router.delete("/{file_id}", response_model=FileDeletedResponse)
 async def delete_file(file_id: str, db: AsyncSession = Depends(get_session)):
     file = await res_q.get_resource(db, resource_id=file_id, resource_type="file")
     if file is None:
         raise HTTPException(status_code=404, detail="File not found")
+    mounted = await res_q.find_session_resource_referencing_file(
+        db,
+        file_id=file.id,
+    )
+    if mounted is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "File is mounted by an active Session resource; delete it through the "
+                "Session resources API when that runtime permits removal"
+            ),
+        )
     if is_object_storage_backend(file.storage_backend) and file.storage_key:
         active_references = await res_q.count_resources_by_storage_key(
             db,
@@ -287,6 +322,34 @@ def _enforce_size_limit(size_bytes: int, max_bytes: int, *, label: str) -> None:
             status_code=413,
             detail=f"{label} exceeds maximum size of {max_bytes} bytes",
         )
+
+
+async def _read_upload_file_bounded(file: UploadFile, *, max_bytes: int) -> bytes:
+    content = bytearray()
+    while True:
+        read_size = UPLOAD_READ_CHUNK_BYTES
+        if max_bytes > 0:
+            read_size = min(read_size, max_bytes + 1 - len(content))
+        chunk = await file.read(read_size)
+        if not chunk:
+            break
+        content.extend(chunk)
+        _enforce_size_limit(len(content), max_bytes, label="File upload")
+    return bytes(content)
+
+
+async def _enforce_workspace_storage_quota(
+    db: AsyncSession,
+    *,
+    incoming_bytes: int,
+) -> None:
+    if not get_settings().vma_governance_enabled:
+        return
+    await governance_service().enforce_storage_quota(
+        db,
+        workspace_id_or_default(),
+        incoming_bytes,
+    )
 
 
 def _scan_upload_content(content: bytes, *, label: str) -> None:
@@ -319,15 +382,6 @@ async def _file_ids_for_scope(db: AsyncSession, scope_id: str) -> set[str]:
         if isinstance(file_id, str) and file_id:
             file_ids.add(file_id)
     return file_ids
-
-
-def _file_scope_id(data: dict | None) -> str | None:
-    scope = (data or {}).get("scope")
-    if isinstance(scope, dict):
-        scope_id = scope.get("id")
-        return scope_id if isinstance(scope_id, str) else None
-    scope_id = (data or {}).get("scope_id")
-    return scope_id if isinstance(scope_id, str) else None
 
 
 async def _find_deduplicated_file(db: AsyncSession, *, sha256: str | None):

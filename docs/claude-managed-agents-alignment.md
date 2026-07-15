@@ -3,7 +3,7 @@ title: Claude Managed Agents Alignment
 description: How VMA maps the public Claude Managed Agents model onto its self-hosted architecture.
 ---
 
-Last checked: 2026-07-10
+Last checked: 2026-07-13
 Runtime kernel: Deep Agents 0.6.12
 
 This document defines how VMA maps the public Claude Managed Agents product model onto a self-hosted control plane and a Deep Agents execution plane. Official Claude documentation is the source of truth for the compatibility target. The VMA implementation and [compatibility matrix](./compatibility-matrix.md) are the source of truth for what works here today.
@@ -44,11 +44,11 @@ Claude Managed Agents combines a versioned control plane with managed execution 
 | Public concept | VMA control-plane representation | Deep Agents/runtime representation | Status |
 | --- | --- | --- | --- |
 | Agent | Mutable `agents` pointer plus immutable `agent_versions` snapshot | A graph compiled from the pinned snapshot | Implemented control plane; partial execution |
-| Environment | Workspace-scoped environment config | A backend selected from `StateBackend`, explicit unsafe local shell, or `VMA_SANDBOX_FACTORY` | Implemented config; remote enforcement gap |
+| Environment | Workspace-scoped environment config | A backend selected from `StateBackend`, explicit unsafe local shell, built-in Session-bound E2B, or `VMA_SANDBOX_FACTORY` | Implemented config; provider-specific enforcement |
 | Session | Pinned agent version, environment, resources, state, event sequence, checkpoint thread ID | One LangGraph thread plus run context | Partial |
 | Events | Append-only database records and SSE | LangGraph message/update chunks translated to public events | Partial |
 | Tool policy | Versioned toolset configuration and session continuation events | Deep Agents tool filtering plus LangGraph human-in-the-loop interrupts | Partial |
-| Files | File and session-resource metadata plus S3-compatible bytes | Files written into the selected backend for a run | Partial |
+| Files | File and session-resource metadata plus S3-compatible bytes | Create-time and append-only inputs materialized into the selected backend; eligible E2B outputs snapshotted as Session-scoped Files | Partial |
 | Skills | Versioned archives referenced by agent versions | Extracted Agent Skills directories consumed by `SkillsMiddleware` | Partial |
 | Memory | Versioned path records mounted as session resources | A bounded filesystem snapshot plus an `AGENTS.md` memory source | Partial |
 | Multiagent roster | Pinned agent/version references and thread resources | Declarative synchronous `SubAgent` entries reached through `task` | Partial |
@@ -92,7 +92,11 @@ Deep Agents owns the in-process graph loop:
 - Agent Skills loading.
 - Synchronous subagent delegation.
 
-Deep Agents does not provide tenant authentication, API resources, durable work ownership, a remote sandbox fleet, billing, quotas, audit, or Claude-compatible events. Those remain VMA responsibilities.
+Deep Agents does not provide tenant authentication, API resources, durable work
+ownership, a remote sandbox fleet, quotas, audit, billing, or Claude-compatible
+events. VMA now supplies the public-beta workspace auth, durable work,
+quota/raw-ledger, and event responsibilities; remote sandbox infrastructure and
+enterprise/commercial policy remain separate layers.
 
 ## Agent compilation contract
 
@@ -105,7 +109,9 @@ VMA compilation follows these rules:
 3. Map public built-in tool names to Deep Agents tool names and hide disabled tools at model-call time.
 4. Map `always_ask` policies and client-owned custom tools to LangGraph interrupts.
 5. Connect declared remote MCP servers using matched session-vault credentials when available.
-6. Materialize custom skills and session files into run-scoped paths.
+6. Resolve runtime inputs for the selected backend. E2B materializes Skills and
+   initial files at Session creation, permits only explicit append-only file
+   additions, and verifies the sealed state on each run.
 7. Map pinned coordinator roster entries to declarative Deep Agents subagents.
 8. Compile with an opaque session thread ID and the configured durable checkpointer.
 9. Apply VMA graph-step and wall-clock limits independently of Deep Agents' permissive defaults.
@@ -128,7 +134,11 @@ A normal turn is expected to move through this sequence:
 
 The same agent revision and compatible graph topology must be used when resuming a checkpoint. Updating an agent must not mutate already pinned sessions.
 
-The current implementation still uses process-local session-run serialization in places. A production multi-worker deployment needs a database advisory lock, Redis lock with fencing, or equivalent distributed ownership in addition to queue leases.
+Durable work attempts now carry unique lease IDs and generations, heartbeat,
+recover after expiry, and fence stale terminal writes. The implementation still
+uses process-local Session/checkpoint ownership in places. A production
+multi-worker deployment needs a database advisory lock, Redis lock, or
+equivalent distributed per-Session ownership in addition to work-item leases.
 
 ## Streaming alignment
 
@@ -188,7 +198,12 @@ from votrix_managed_agents import create_app
 app = create_app(auth_provider=HostedAuthProvider())
 ```
 
-The hosted layer owns organizations, membership, RBAC, SSO, billing, quotas, usage accounting, audit policy, managed secrets, sandbox fleets, and support/admin functions. Core tables must remain usable without hosted tables. See [Votrix core architecture](./votrix-core-architecture.md).
+The core includes database API keys, narrow workspace quotas, and append-only
+raw audit/usage ledgers for the public beta. The hosted layer still owns
+organizations, membership, RBAC, SSO, Postgres RLS, paid billing/pricing,
+enterprise audit export/retention, managed secrets, sandbox fleets, and
+support/admin functions. Core tables must remain usable without hosted tables.
+See [Votrix core architecture](./votrix-core-architecture.md).
 
 ## Compatibility priorities
 
@@ -202,6 +217,8 @@ Work should close gaps in this order:
 6. Complete file mounts, custom-skill lifecycle, and bidirectional memory tools.
 7. Decide and implement exact roster-only subagent behavior and durable multiagent threads.
 8. Operate scheduled deployments with a durable scheduler and workers.
-9. Add webhook registration/delivery and hosted RBAC, quotas, billing, and audit.
+9. Add webhook registration/delivery and hosted Organization RBAC/SSO,
+   Postgres RLS, enterprise audit operations, and—after the BYOK/free
+   beta—commercial billing if the product requires it.
 
 Do not mark a row implemented merely because the public response validates. The [compatibility matrix](./compatibility-matrix.md) and [known incompatibilities](./known-incompatibilities.md) must change with the implementation.

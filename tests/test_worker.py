@@ -122,14 +122,20 @@ async def test_vault_credential_response_redacts_secret_fields(client):
         headers=TEST_HEADERS,
         json={
             "name": "github",
-            "api_key": "sk-test",
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "GITHUB_TOKEN",
+                "secret_value": "sk-test",
+                "networking": {"type": "unrestricted"},
+            },
             "nested": {"access_token": "secret-token", "safe": "value"},
         },
     )
     assert response.status_code == 201, response.text
     credential = response.json()
 
-    assert credential["api_key"] == "redacted"
+    assert credential["auth"]["secret_name"] == "GITHUB_TOKEN"
+    assert "sk-test" not in str(credential)
     assert credential["nested"]["access_token"] == "redacted"
     assert credential["nested"]["safe"] == "value"
 

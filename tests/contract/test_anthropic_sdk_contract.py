@@ -340,6 +340,10 @@ async def test_anthropic_sdk_environment_work_contract():
             environment_id=environment.id,
             desired_ttl_seconds=30,
             expected_last_heartbeat="NO_HEARTBEAT",
+            extra_query={
+                "worker_id": "sdk-worker-1",
+                "lease_id": work.model_extra["lease"]["lease_id"],
+            },
             **BETA_KWARG,
         )
         assert heartbeat.type == "work_heartbeat"
@@ -602,6 +606,53 @@ async def test_anthropic_sdk_session_contract():
         deleted = await client.beta.sessions.delete(deletable.id, **BETA_KWARG)
         assert deleted.id == deletable.id
         assert deleted.type == "session_deleted"
+
+
+async def test_anthropic_sdk_session_agent_with_overrides_contract():
+    async with anthropic_client() as (client, _):
+        agent = await client.beta.agents.create(
+            name="SDK Override Base Agent",
+            model={"id": "base-model"},
+            system="base system",
+            **BETA_KWARG,
+        )
+        environment = await client.beta.environments.create(
+            name="SDK Override Environment",
+            config={"type": "cloud"},
+            **BETA_KWARG,
+        )
+
+        session = await client.beta.sessions.create(
+            agent={
+                "type": "agent_with_overrides",
+                "id": agent.id,
+                "version": agent.version,
+                "model": {"id": "override-model"},
+                "system": None,
+                "tools": [{"type": "custom", "name": "override_lookup"}],
+                "mcp_servers": [],
+                "skills": [],
+            },
+            environment_id=environment.id,
+            **BETA_KWARG,
+        )
+
+        assert session.agent.id == agent.id
+        assert session.agent.version == agent.version
+        assert session.agent.model.id == "override-model"
+        assert session.agent.system is None
+        assert session.agent.tools[0].name == "override_lookup"
+        assert session.agent.mcp_servers == []
+        assert session.agent.skills == []
+
+        threads = [item async for item in client.beta.sessions.threads.list(session.id, **BETA_KWARG)]
+        assert threads[0].agent.model.id == "override-model"
+        assert threads[0].agent.system is None
+
+        unchanged = await client.beta.agents.retrieve(agent.id, **BETA_KWARG)
+        assert unchanged.version == agent.version
+        assert unchanged.model.id == "base-model"
+        assert unchanged.system == "base system"
 
 
 async def test_anthropic_sdk_session_agent_string_pins_latest_contract():
@@ -1325,12 +1376,6 @@ async def test_anthropic_sdk_user_profiles_contract():
 
         profiles = [item async for item in client.beta.user_profiles.list(limit=20)]
         assert any(item.id == profile.id for item in profiles)
-
-        enrollment = await client.beta.user_profiles.create_enrollment_url(profile.id)
-        assert enrollment.type == "enrollment_url"
-        assert str(enrollment.url).startswith("https://example.invalid/")
-        assert enrollment.expires_at is not None
-
 
 async def test_anthropic_sdk_page_cursor_pagination_and_filters_contract():
     async with anthropic_client() as (client, _):

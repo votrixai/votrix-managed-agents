@@ -29,14 +29,13 @@ async def test_database(tmp_path, monkeypatch):
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-key")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret")
     monkeypatch.setenv("S3_BUCKET_NAME", "vma-test")
-    monkeypatch.setenv("S3_PUBLIC_URL", "https://cdn.example.com/vma-test")
     monkeypatch.setenv("S3_REGION", "us-east-1")
     monkeypatch.setenv("VMA_REQUIRE_BETA_HEADER", "true")
     monkeypatch.setenv("VMA_REQUIRE_ANTHROPIC_VERSION_HEADER", "true")
     object_store: dict[str, tuple[bytes, str]] = {}
 
     async def fake_save_file_bytes(data, mime_type, *, namespace, filename, category="general", workspace_id=None):
-        from app.storage import StoredObject, object_key, public_url_for_key
+        from app.storage import StoredObject, object_key
 
         content_type = mime_type or "application/octet-stream"
         sha256 = hashlib.sha256(data).hexdigest()
@@ -51,7 +50,6 @@ async def test_database(tmp_path, monkeypatch):
         return StoredObject(
             backend="s3",
             key=key,
-            url=public_url_for_key(key),
             content_type=content_type,
             size_bytes=len(data),
             sha256=sha256,

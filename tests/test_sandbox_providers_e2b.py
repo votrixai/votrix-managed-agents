@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,6 +22,7 @@ from app.runtime.sandbox_providers import (
     SandboxProviderCapabilities,
     SandboxReference,
 )
+from app.runtime.sandbox_outputs import DiscoveredSandboxOutput
 
 
 class FakeNotFoundError(Exception):
@@ -51,6 +55,7 @@ class FakeNativeSandbox:
         self.state = "running"
         self.kill_calls: list[dict[str, Any]] = []
         self.command_exit_code = 0
+        self.command_stdout = ""
         self.root_commands: list[dict[str, Any]] = []
         self.root_writes: list[dict[str, Any]] = []
         self.commands = _FakeCommands(self)
@@ -82,7 +87,7 @@ class _FakeCommands:
         self.sandbox.root_commands.append({"command": command, **kwargs})
         return SimpleNamespace(
             exit_code=self.sandbox.command_exit_code,
-            stdout="",
+            stdout=self.sandbox.command_stdout,
             stderr="",
         )
 
@@ -370,10 +375,10 @@ async def test_bootstrap_uploads_once_as_root_and_verifies_seal():
     await instance.bootstrap(
         created,
         files=[
-            ("/mnt/session/inputs/data.txt", b"fixed"),
+            ("/mnt/session/uploads/data.txt", b"fixed"),
             ("/workspace/memory.txt", b"mutable"),
         ],
-        read_only_paths=("/mnt/session/inputs/data.txt",),
+        read_only_paths=("/mnt/session/uploads/data.txt",),
         mutable_roots=("/workspace",),
         digest=digest,
     )
@@ -381,16 +386,17 @@ async def test_bootstrap_uploads_once_as_root_and_verifies_seal():
         created,
         digest=digest,
         immutable_manifest={
-            "/mnt/session/inputs/data.txt": (
+            "/mnt/session/uploads/data.txt": (
                 "992a93455c71fedd36ac9bbc439952c041cf61445958472af479269b8d873513"
             )
         },
+        revision=0,
     )
 
     native = FakeSDK.registry[created.external_id]
     assert native.root_writes == [
         {
-            "path": "/mnt/session/inputs/data.txt",
+            "path": "/mnt/session/uploads/data.txt",
             "content": b"fixed",
             "user": "root",
         },
@@ -415,6 +421,208 @@ async def test_bootstrap_uploads_once_as_root_and_verifies_seal():
         for call in root_operations
     )
     assert all(call["timeout"] == 300 for call in native.root_commands)
+    assert any('"revision":0' in call["command"] for call in root_operations)
+    assert all(
+        "/mnt/session" not in call["command"]
+        or "/mnt/session/uploads" in call["command"]
+        for call in root_operations
+    )
+
+
+async def test_bootstrap_always_protects_upload_root_and_rejects_other_session_roots():
+    instance = provider()
+    created = await instance.provision(
+        SandboxOwner("wrkspc_a", "session_a"),
+        SandboxPolicy(workdir="/workspace"),
+    )
+    await instance.bootstrap(
+        created,
+        files=[],
+        read_only_paths=(),
+        mutable_roots=("/workspace", "/mnt/session/outputs"),
+        digest="sha256:" + "d" * 64,
+    )
+    native = FakeSDK.registry[created.external_id]
+    root_operations = [call for call in native.root_commands if call.get("user") == "root"]
+    assert all("/mnt/session/uploads" in call["command"] for call in root_operations)
+
+    with pytest.raises(SandboxPolicyError, match="must be below /mnt/session/uploads"):
+        await instance.bootstrap(
+            created,
+            files=[("/mnt/session/legacy.txt", b"legacy")],
+            read_only_paths=("/mnt/session/legacy.txt",),
+            mutable_roots=("/workspace", "/mnt/session/outputs"),
+            digest="sha256:" + "e" * 64,
+        )
+
+
+async def test_append_immutable_file_stages_as_root_and_advances_one_revision():
+    instance = provider()
+    created = await instance.provision(
+        SandboxOwner("wrkspc_a", "session_a"),
+        SandboxPolicy(workdir="/workspace"),
+    )
+    content = b"append-only"
+    content_sha = hashlib.sha256(content).hexdigest()
+    previous_digest = "sha256:" + "1" * 64
+    next_digest = "sha256:" + "2" * 64
+
+    await instance.append_immutable_files(
+        created,
+        files=[("/mnt/session/uploads/new.txt", content)],
+        previous_digest=previous_digest,
+        previous_manifest={},
+        next_digest=next_digest,
+        next_manifest={"/mnt/session/uploads/new.txt": content_sha},
+        previous_revision=0,
+        next_revision=1,
+    )
+
+    native = FakeSDK.registry[created.external_id]
+    assert native.root_writes == [
+        {
+            "path": f"/var/lib/vma/session-input-staging/payload-{content_sha[:24]}",
+            "content": content,
+            "user": "root",
+        }
+    ]
+    root_operations = [call for call in native.root_commands if call.get("user") == "root"]
+    assert len(root_operations) == 3
+    assert "append CAS predecessor" in root_operations[0]["command"]
+    assert "VMA_APPEND_ALREADY_APPLIED" in root_operations[1]["command"]
+    assert "sandbox immutable revision mismatch" in root_operations[2]["command"]
+    assert all("/mnt/session/uploads" in call["command"] for call in root_operations)
+
+    # A control-plane retry sends the same predecessor and desired identities.
+    # The sandbox-side CAS script accepts either the old seal or the already
+    # applied desired seal, so repeating this call is deliberately supported.
+    await instance.append_immutable_files(
+        created,
+        files=[("/mnt/session/uploads/new.txt", content)],
+        previous_digest=previous_digest,
+        previous_manifest={},
+        next_digest=next_digest,
+        next_manifest={"/mnt/session/uploads/new.txt": content_sha},
+        previous_revision=0,
+        next_revision=1,
+    )
+    assert len(native.root_writes) == 2
+    assert native.root_writes[0] == native.root_writes[1]
+
+
+@pytest.mark.parametrize(
+    ("files", "next_manifest", "next_revision", "match"),
+    [
+        (
+            [("/mnt/session/uploads/a.txt", b"a"), ("/mnt/session/uploads/b.txt", b"b")],
+            {},
+            1,
+            "exactly one",
+        ),
+        (
+            [("/mnt/session/nested/a.txt", b"a")],
+            {"/mnt/session/nested/a.txt": hashlib.sha256(b"a").hexdigest()},
+            1,
+            "direct file",
+        ),
+        (
+            [("/mnt/session/uploads/a.txt", b"a")],
+            {"/mnt/session/uploads/a.txt": hashlib.sha256(b"a").hexdigest()},
+            2,
+            "exactly one",
+        ),
+    ],
+)
+async def test_append_rejects_non_canonical_or_non_cas_updates(
+    files, next_manifest, next_revision, match
+):
+    instance = provider()
+    created = await instance.provision(
+        SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy()
+    )
+    with pytest.raises(SandboxPolicyError, match=match):
+        await instance.append_immutable_files(
+            created,
+            files=files,
+            previous_digest="sha256:" + "3" * 64,
+            previous_manifest={},
+            next_digest="sha256:" + "4" * 64,
+            next_manifest=next_manifest,
+            previous_revision=0,
+            next_revision=next_revision,
+        )
+    assert FakeSDK.registry[created.external_id].root_writes == []
+
+
+async def test_discover_outputs_decodes_bounded_direct_regular_files():
+    instance = provider()
+    created = await instance.provision(
+        SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy()
+    )
+    native = FakeSDK.registry[created.external_id]
+    native.command_stdout = json.dumps(
+        [
+            {
+                "path": "/mnt/session/outputs/report.txt",
+                "content_base64": base64.b64encode(b"report").decode("ascii"),
+                "mime_type": "text/plain",
+                "is_regular_file": True,
+                "is_symlink": False,
+                "hardlink_count": 1,
+            }
+        ]
+    )
+
+    outputs = await instance.discover_outputs(
+        created,
+        max_files=10,
+        max_file_bytes=1024,
+        max_total_bytes=4096,
+    )
+
+    assert outputs == [
+        DiscoveredSandboxOutput(
+            path="/mnt/session/outputs/report.txt",
+            content=b"report",
+            mime_type="text/plain",
+            is_regular_file=True,
+            is_symlink=False,
+            hardlink_count=1,
+        )
+    ]
+    root_operation = [
+        call for call in native.root_commands if call.get("user") == "root"
+    ][0]
+    assert "os.lstat" in root_operation["command"]
+    assert "os.scandir(root)" in root_operation["command"]
+    assert "O_NOFOLLOW" in root_operation["command"]
+
+
+async def test_discover_outputs_rejects_provider_metadata_and_decoded_size_drift():
+    instance = provider()
+    created = await instance.provision(
+        SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy()
+    )
+    native = FakeSDK.registry[created.external_id]
+    native.command_stdout = json.dumps(
+        [
+            {
+                "path": "/mnt/session/outputs/link.txt",
+                "content_base64": base64.b64encode(b"large").decode("ascii"),
+                "mime_type": "text/plain",
+                "is_regular_file": True,
+                "is_symlink": True,
+                "hardlink_count": 1,
+            }
+        ]
+    )
+    with pytest.raises(SandboxOperationError, match="unsafe file metadata"):
+        await instance.discover_outputs(
+            created,
+            max_files=1,
+            max_file_bytes=4,
+            max_total_bytes=4,
+        )
 
 
 async def test_bootstrap_rejects_read_only_content_inside_mutable_root():

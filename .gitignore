@@ -2,6 +2,10 @@
 .pytest_cache/
 __pycache__/
 *.py[cod]
+dist/
+build/
+*.egg-info/
+.ruff_cache/
 votrix_managed_agents.db*
 *.checkpoints.sqlite3
 .terraform/

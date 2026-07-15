@@ -49,6 +49,12 @@ class EnvironmentResponse(ApiModel):
     updated_at: datetime
 
 
+class EnvironmentDeletedResponse(ApiModel):
+    id: str
+    type: Literal["environment_deleted"] = "environment_deleted"
+    deleted: Literal[True] = True
+
+
 def validate_environment_config(config: dict[str, Any]) -> None:
     if not isinstance(config, dict):
         raise ValueError("environment config must be an object")

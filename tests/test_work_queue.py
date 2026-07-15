@@ -94,11 +94,14 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
     response = await client.post(
         f"/v1/environments/{environment['id']}/work/{work['id']}/ack",
         headers=TEST_HEADERS,
-        params={"worker_id": "worker-2"},
+        params={"worker_id": "worker-2", "lease_id": work["lease"]["lease_id"]},
     )
     assert response.status_code == 409
     assert "does not own" in response.json()["error"]["message"]
 
+    # Ack is the one compatibility exception: Anthropic's generated SDK method
+    # has no lease_id parameter.  Worker ownership is still checked, and an
+    # explicitly supplied stale lease remains fenced.
     response = await client.post(
         f"/v1/environments/{environment['id']}/work/{work['id']}/ack",
         headers=TEST_HEADERS,
@@ -111,6 +114,19 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
         f"/v1/environments/{environment['id']}/work/{work['id']}/heartbeat",
         headers=TEST_HEADERS,
         params={"worker_id": "worker-1", "lease_seconds": 30},
+        json={"progress": 0.25},
+    )
+    assert response.status_code == 409
+    assert "lease_id is required" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}/heartbeat",
+        headers=TEST_HEADERS,
+        params={
+            "worker_id": "worker-1",
+            "lease_id": work["lease"]["lease_id"],
+            "lease_seconds": 30,
+        },
         json={"progress": 0.5},
     )
     assert response.status_code == 200, response.text
@@ -120,7 +136,11 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
     response = await client.post(
         f"/v1/environments/{environment['id']}/work/{work['id']}/heartbeat",
         headers=TEST_HEADERS,
-        params={"worker_id": "worker-2", "lease_seconds": 30},
+        params={
+            "worker_id": "worker-2",
+            "lease_id": work["lease"]["lease_id"],
+            "lease_seconds": 30,
+        },
         json={"progress": 0.9},
     )
     assert response.status_code == 409
@@ -250,6 +270,76 @@ async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
     assert recovered["status"] == "leased"
     assert recovered["attempt"] == 2
     assert recovered["lease"]["worker_id"] == "worker-2"
+
+
+async def test_stale_lease_id_is_fenced_when_worker_id_is_reused(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "fence stale lease"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    first_response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "reused-worker", "lease_seconds": 30},
+    )
+    assert first_response.status_code == 200, first_response.text
+    first = first_response.json()
+
+    async with session_scope() as db:
+        work = await res_q.get_resource(
+            db,
+            resource_id=first["id"],
+            resource_type="environment_work",
+            parent_id=environment["id"],
+        )
+        assert work is not None
+        data = dict(work.data)
+        data["lease"] = {
+            **dict(data["lease"]),
+            "expires_at": datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat(),
+        }
+        await res_q.update_resource(db, work, data=data, status="running")
+        await db.commit()
+
+    second_response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "reused-worker", "lease_seconds": 30},
+    )
+    assert second_response.status_code == 200, second_response.text
+    second = second_response.json()
+    assert second["lease"]["lease_id"] != first["lease"]["lease_id"]
+    assert second["lease"]["generation"] == first["lease"]["generation"] + 1
+
+    stale_ack = await client.post(
+        f"/v1/environments/{environment['id']}/work/{first['id']}/ack",
+        headers=TEST_HEADERS,
+        params={
+            "worker_id": "reused-worker",
+            "lease_id": first["lease"]["lease_id"],
+        },
+    )
+    assert stale_ack.status_code == 409
+    assert "current work lease generation" in stale_ack.json()["error"]["message"]
+
+    stale = await client.post(
+        f"/v1/environments/{environment['id']}/work/{first['id']}/heartbeat",
+        headers=TEST_HEADERS,
+        params={
+            "worker_id": "reused-worker",
+            "lease_id": first["lease"]["lease_id"],
+            "lease_seconds": 30,
+        },
+        json={"progress": 0.9},
+    )
+    assert stale.status_code == 409
+    assert "current work lease generation" in stale.json()["error"]["message"]
 
 
 async def test_rescheduled_work_is_not_leased_until_retry_at(client):

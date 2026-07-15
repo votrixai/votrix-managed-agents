@@ -4,7 +4,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_contract import normalize_agent_tools, validate_mcp_bindings
+from app.agent_contract import (
+    normalize_agent_model,
+    normalize_agent_skill_refs,
+    normalize_agent_tools,
+    validate_mcp_bindings,
+)
 from app.auth import require_api_access
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
@@ -33,11 +38,11 @@ async def create_agent(
     db: AsyncSession = Depends(get_session),
 ):
     name = _normalize_agent_name(body.name)
-    model = _normalize_agent_model(body.model)
+    model = normalize_agent_model(body.model)
     tools = normalize_agent_tools(body.tools)
     validate_mcp_bindings(body.mcp_servers, tools)
     multiagent = await _normalize_multiagent_roster(db, body.multiagent)
-    skills = await _normalize_skill_refs(db, body.skills)
+    skills = await normalize_agent_skill_refs(db, body.skills)
     agent, version = await agents_q.create_agent(
         db,
         name=name,
@@ -140,7 +145,7 @@ async def update_agent(
     if "multiagent" in update:
         update["multiagent"] = await _normalize_multiagent_roster(db, update["multiagent"], self_agent_id=agent.id)
     if "skills" in update:
-        update["skills"] = await _normalize_skill_refs(db, update["skills"] or [])
+        update["skills"] = await normalize_agent_skill_refs(db, update["skills"] or [])
     if "tools" in update:
         update["tools"] = normalize_agent_tools(update["tools"] or [])
     next_config = _merge_agent_update(active, agent, update)
@@ -270,62 +275,6 @@ def _resolve_multiagent_self_entries(multiagent: dict[str, Any], *, agent_id: st
     return resolved
 
 
-async def _normalize_skill_refs(db: AsyncSession, skills: list[dict]) -> list[dict]:
-    if not isinstance(skills, list):
-        raise HTTPException(status_code=422, detail="skills must be an array")
-    normalized: list[dict] = []
-    seen: set[tuple[str, str, str]] = set()
-    for entry in skills:
-        if not isinstance(entry, dict):
-            raise HTTPException(status_code=422, detail="skills entries must be objects")
-        skill_type = str(entry.get("type") or "custom")
-        skill_id = entry.get("id") or entry.get("skill_id")
-        if not isinstance(skill_id, str) or not skill_id:
-            raise HTTPException(status_code=422, detail="skills entries require skill_id")
-
-        requested_version = entry.get("version", "latest")
-        version = "latest" if requested_version in (None, "", "latest") else str(requested_version)
-
-        if skill_type == "anthropic":
-            key = (skill_type, skill_id, version)
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized.append({"type": "anthropic", "skill_id": skill_id, "version": version})
-            continue
-
-        if skill_type not in {"custom", "skill"}:
-            raise HTTPException(status_code=422, detail='skills entries type must be "custom" or "anthropic"')
-
-        skill = await res_q.get_resource(db, resource_id=skill_id, resource_type="skill")
-        if skill is None:
-            raise HTTPException(status_code=422, detail=f"Skill not found: {skill_id}")
-
-        if version == "latest":
-            if not (skill.data or {}).get("latest_version"):
-                raise HTTPException(status_code=422, detail=f"Skill has no latest version: {skill_id}")
-        else:
-            try:
-                version_int = int(version)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=422, detail="skill version must be an integer or latest") from exc
-            skill_version = await res_q.get_resource_version(
-                db,
-                resource_type="skill_version",
-                parent_id=skill_id,
-                version=version_int,
-            )
-            if skill_version is None:
-                raise HTTPException(status_code=422, detail=f"Skill version not found: {skill_id}@{version}")
-
-        key = ("custom", skill_id, version)
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append({"type": "custom", "skill_id": skill_id, "version": version})
-    return normalized
-
-
 def _merge_agent_update(active, agent, update: dict) -> dict:
     name = active.name
     model = active.model
@@ -341,7 +290,7 @@ def _merge_agent_update(active, agent, update: dict) -> dict:
     if "name" in update:
         name = _normalize_agent_name(update["name"], field_name="name")
     if "model" in update:
-        model = _normalize_agent_model(update["model"])
+        model = normalize_agent_model(update["model"])
     if "system" in update:
         system = update["system"]
     if "description" in update:
@@ -377,21 +326,3 @@ def _normalize_agent_name(value: Any, *, field_name: str = "name") -> str:
     if not isinstance(value, str) or not value.strip():
         raise HTTPException(status_code=422, detail=f"{field_name} must be a non-empty string")
     return value.strip()
-
-
-def _normalize_agent_model(value: Any) -> dict[str, Any]:
-    if isinstance(value, str):
-        model_id = value.strip()
-        if not model_id:
-            raise HTTPException(status_code=422, detail="model id must be a non-empty string")
-        return {"id": model_id}
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=422, detail="model must be a string or object")
-    normalized = dict(value)
-    model_id = normalized.get("id") or normalized.get("model")
-    if not isinstance(model_id, str) or not model_id.strip():
-        raise HTTPException(status_code=422, detail="model.id must be a non-empty string")
-    normalized["id"] = model_id.strip()
-    if "speed" in normalized and normalized["speed"] not in {None, "standard", "fast"}:
-        raise HTTPException(status_code=422, detail="model.speed must be standard or fast")
-    return normalized

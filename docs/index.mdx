@@ -10,13 +10,15 @@ LangGraph.
 
 <Callout title="Project maturity" type="warn">
 
-VMA is an early `0.1.0` project. It is not an Anthropic service and is not yet
-a drop-in behavioral replacement. Its REST surface is broader than its
-production execution surface.
+VMA is an early `0.1.0` public-beta foundation. It is not an Anthropic service
+or a drop-in behavioral replacement. When `VMA_PUBLIC_GA_ONLY=true`, the
+published API is intentionally limited to tenant-isolated resources ready for
+the controlled beta; the repository also contains deferred routes.
 
 Start with the [compatibility matrix](./compatibility-matrix.md) and
 [known incompatibilities](./known-incompatibilities.md) before using it for
-production workloads.
+real workloads. The checked-in Cloud Run shape remains single-instance and is
+not a high-availability or enterprise claim.
 
 </Callout>
 
@@ -25,6 +27,7 @@ production workloads.
 | Goal | Read |
 | --- | --- |
 | Evaluate SDK and API compatibility | [Compatibility matrix](./compatibility-matrix.md) |
+| Integrate with the native Python client | [Python SDK](./python-sdk.md) |
 | Understand control-plane boundaries | [Votrix core architecture](./votrix-core-architecture.md) |
 | Configure model access | [Model providers](./openai-compatible-providers.md) |
 | Run isolated tenant code | [Sandbox runtime](./sandbox-runtime.md) |
@@ -50,8 +53,15 @@ curl http://127.0.0.1:8080/health/db
 ```
 
 The local configuration permits anonymous requests when no API key is
-configured. Production must configure workspace authentication, durable
-Postgres, and object storage.
+configured. Hosted environments use database-backed workspace keys with
+scopes, expiration, independent rotation/revocation, and one-time plaintext
+secrets. They also require durable Postgres and private object storage.
+
+The public-beta platform enforces per-workspace request, active-work, daily
+model-token, and stored-byte limits. It records append-only raw audit and usage
+facts and exposes request IDs and stable error codes. The release is BYOK/free:
+usage supports quota enforcement and cost analysis, not pricing, balances,
+credits, payments, refunds, Stripe, or invoices.
 
 ## Documentation and API reference
 
@@ -63,13 +73,13 @@ authentication, schemas, and a browser-based request explorer.
 ## System shape
 
 ```text
-Anthropic SDK or HTTP client
-            |
-            v
+AsyncVotrix native SDK / AsyncAnthropic compatibility / HTTP client
+                              |
+                              v
 FastAPI compatibility and control plane
   |         |             |
-  |         |             +-- S3-compatible object storage
-  |         +---------------- Postgres resources, events, and work
+  |         |             +-- private S3-compatible object storage
+  |         +---------------- Postgres resources, events, work, quotas, ledgers
   +-------------------------- durable session and revision lookup
             |
             v

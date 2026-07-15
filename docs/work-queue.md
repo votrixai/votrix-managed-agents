@@ -10,20 +10,37 @@ This queue is visible state for session execution. It does not mean local develo
 ## Current MVP
 
 - User events enqueue a work item with `session_id`, trigger, attempt count, and queued timestamp.
-- `cloud` environments are consumed inline by the API process for the default local and hosted-provider path.
+- `cloud` environments can be consumed inline in local mode. The checked-in
+  hosted profile uses the embedded durable consumer in the one Cloud Run
+  process.
 - `local` environments are an explicit development/test escape hatch and are also consumed inline.
 - `self_hosted` environments only enqueue work. Workers use the environment work routes to lease and report progress.
-- `GET /v1/environments/{environment_id}/work/poll` leases one queued item.
-- `POST /work/{work_id}/ack` marks it running.
-- `POST /work/{work_id}/heartbeat` records progress and extends the lease.
-- `ack` and `heartbeat` require the caller's `worker_id` to match the current lease owner.
+- `GET /v1/environments/{environment_id}/work/poll` leases one queued item and
+  assigns a unique `lease_id` plus monotonically increasing generation.
+- `POST /work/{work_id}/ack` marks it running only for the current worker and
+  lease ID.
+- `POST /work/{work_id}/heartbeat` records progress and extends that same lease.
+- Ack, heartbeat, execution, and terminal completion verify the worker,
+  `lease_id`, and generation; an old worker cannot finalize a recovered attempt.
 - When `VMA_WORKER_TOKEN` is set, all work routes also require `x-worker-token`.
-- Expired `leased` or `running` work can be recovered by a later poll from another worker.
+- Expired `leased` or `running` work can be recovered by a later poll from
+  another worker, which receives a new lease ID/generation.
 - Transient runtime failures can mark work `rescheduling`; polling respects `retry_at` before leasing it again.
 - `POST /work/{work_id}/stop` marks it stopped.
-- `vma-worker` leases work before execution and passes its `worker_id` back into execution, so the CLI path follows the same lease ownership model as direct HTTP workers.
+- `vma-worker` leases work before execution, heartbeats for the full turn, and
+  passes its worker/lease/generation identity into execution, so the CLI and
+  embedded-consumer paths follow the same ownership model as direct HTTP workers.
+- Enqueue reserves one unit of the workspace active-work quota. Terminal
+  completion, error, or stop releases it idempotently; queued/rescheduling work
+  keeps its reservation.
 
-This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with stronger fencing locks, durable retry execution, and worker identity/RBAC when long-running async execution is required.
+This is a durable public-beta queue with attempt fencing, not a complete
+multi-replica execution platform. The lease protects one work item and its
+terminal writes; it is not yet a distributed per-Session mutex covering every
+checkpoint and external provider side effect. Dead-letter policy, strong
+worker identity/RBAC, managed queue integration, and a cross-process preview
+broker remain future work. Keep the hosted service at one web process and
+`maxScale=1` until those boundaries are validated.
 
 ## Optional Self-Hosted Worker
 

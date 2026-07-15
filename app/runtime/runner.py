@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -11,8 +12,23 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.governance import QuotaExceededError
+from app.governance_runtime import governance_service
+from app.runtime.agent_resolution import effective_agent_version
 from app.runtime.contracts import EffectiveAgentVersion, RuntimeEventEmitter, RuntimePreviewEmitter, RuntimeResult
+from app.runtime.model_credentials import (
+    MODEL_CREDENTIAL_BINDING_KEY,
+    ModelCredentialUnavailableError,
+    binding_from_status_details,
+    load_bound_model_credential,
+    resolve_model_credential_binding,
+    status_details_with_binding,
+    validate_binding_for_model,
+)
+from app.runtime.providers import runtime_provider_id
 from app.runtime.sandbox import sandbox_plan_from_environment
+from app.runtime.sandbox_outputs import persist_discovered_outputs
+from app.runtime.work_queue import WorkExecutionLease
 from app.secret_cipher import decrypt_secret_values
 from app.session_state import (
     SESSION_IDLE,
@@ -33,6 +49,7 @@ MAX_RETRY_AFTER_SECONDS = 300
 MAX_MEMORY_CONTEXT_STORES = 8
 MAX_MEMORY_CONTEXT_ITEMS_PER_STORE = 20
 MAX_MEMORY_CONTEXT_CONTENT_CHARS = 1000
+RUNTIME_HISTORY_PAGE_SIZE = 500
 
 
 class SessionRunStopped(RuntimeError):
@@ -43,30 +60,70 @@ def schedule_session_run(session_id: str, *, workspace_id: str | None = None) ->
     asyncio.create_task(run_session_turn(session_id, workspace_id=workspace_id))
 
 
-async def run_session_turn(session_id: str, *, workspace_id: str | None = None) -> None:
+async def run_session_turn(
+    session_id: str,
+    *,
+    workspace_id: str | None = None,
+    work_lease: WorkExecutionLease | None = None,
+) -> bool:
     scoped_workspace_id = workspace_id_or_default(workspace_id)
     run_key = f"{scoped_workspace_id}:{session_id}"
     async with _running_lock:
         if run_key in _running_sessions:
             logger.info("session_already_running", session_id=session_id, workspace_id=scoped_workspace_id)
-            return
+            return False
         _running_sessions.add(run_key)
 
     try:
-        await _run_session_turn(session_id, workspace_id=scoped_workspace_id)
+        return await _run_session_turn(
+            session_id,
+            workspace_id=scoped_workspace_id,
+            work_lease=work_lease,
+        )
     finally:
         async with _running_lock:
             _running_sessions.discard(run_key)
 
 
-async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
+async def _run_session_turn(
+    session_id: str,
+    *,
+    workspace_id: str,
+    work_lease: WorkExecutionLease | None = None,
+) -> bool:
     async with session_scope() as db:
         session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
         if session is None or session.deleted_at is not None:
-            return
-        if not can_start_work(session.status, session.stop_reason):
-            return
-        await sessions_q.update_session(db, session, status=SESSION_RUNNING, stop_reason={"type": "in_progress"})
+            return False
+        if work_lease is not None:
+            if not await _work_lease_is_current(db, work_lease):
+                return False
+            existing_lease = dict((session.status_details or {}).get("execution_lease") or {})
+            recovering_same_work = (
+                session.status == SESSION_RUNNING
+                and str(existing_lease.get("work_id") or "") == work_lease.work_id
+            )
+            if not can_start_work(session.status, session.stop_reason) and not recovering_same_work:
+                return False
+        elif not can_start_work(session.status, session.stop_reason):
+            return False
+        if get_settings().vma_governance_enabled:
+            token_decision = await governance_service().preflight_model_tokens_in_session(
+                db,
+                workspace_id=workspace_id,
+                source_type="session",
+                source_id=session.id,
+            )
+            if not token_decision.allowed:
+                raise QuotaExceededError(token_decision)
+        status_details = _status_details_with_execution_lease(session.status_details, work_lease)
+        await sessions_q.update_session(
+            db,
+            session,
+            status=SESSION_RUNNING,
+            status_details=status_details,
+            stop_reason={"type": "in_progress"},
+        )
         await events_q.append_event(
             db,
             session,
@@ -79,7 +136,7 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
         async with session_scope() as db:
             session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
             if session is None:
-                return
+                return False
             agent = await agents_q.get_agent(db, session.agent_id, workspace_id=workspace_id)
             if agent is None:
                 raise RuntimeError(f"Agent {session.agent_id} not found")
@@ -94,20 +151,25 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
             environment = await env_q.get_environment(db, session.environment_id, workspace_id=workspace_id)
             if environment is None or environment.deleted_at is not None:
                 raise RuntimeError(f"Environment {session.environment_id} not found")
-            history = await events_q.list_events(
+            history = await _list_runtime_history(
                 db,
                 session_id=session.id,
-                after_seq=0,
-                limit=500,
                 workspace_id=workspace_id,
             )
-            effective_version = _effective_agent_version(version, session.status_details)
+            effective_version = effective_agent_version(version, session.status_details)
             runtime_context = await _runtime_context_for_session(db, session, effective_version)
-            if await _append_runtime_context_events(db, session, runtime_context):
-                await db.commit()
+            await _append_runtime_context_events(db, session, runtime_context)
+            # Legacy Sessions may acquire their immutable model Credential binding
+            # while building runtime context. Commit it before making the model call.
+            await db.commit()
 
         async def emit_event(payload: dict[str, Any]) -> str:
-            return await _persist_runtime_event(session_id, workspace_id, payload)
+            return await _persist_runtime_event(
+                session_id,
+                workspace_id,
+                payload,
+                work_lease=work_lease,
+            )
 
         async def emit_preview(frame: dict[str, Any]) -> None:
             from app.runtime.vma_preview_bus import publish_vma_preview
@@ -125,12 +187,26 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
             emit_preview=emit_preview,
         )
 
+        usage_fence_current = await _record_model_usage_after_result(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            effective_version=effective_version,
+            history=history,
+            result=result,
+            work_lease=work_lease,
+        )
+        if not usage_fence_current:
+            return False
+
         async with session_scope() as db:
             session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
             if session is None:
-                return
+                return False
+            if work_lease is not None and not await _execution_lease_is_current(db, session, work_lease):
+                return False
             if session.status != SESSION_RUNNING or is_waiting_for_action(session.stop_reason):
-                return
+                return True
+            await persist_discovered_outputs(db, session, result.sandbox_outputs)
             blocking_event_ids: list[str] = list(result.blocking_event_ids)
             explicit_confirmation_events = any(event.get("requires_confirmation") for event in result.tool_events)
             if not result.events_persisted:
@@ -170,7 +246,7 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
                     },
                 )
                 await db.commit()
-                return
+                return True
             if (
                 result.final_text
                 and not result.events_persisted
@@ -218,9 +294,10 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
                 },
             )
             await db.commit()
+            return True
     except SessionRunStopped:
         logger.info("session_run_stopped", session_id=session_id, workspace_id=workspace_id)
-        return
+        return True
     except Exception as exc:
         if _is_transient_runtime_error(exc):
             logger.warning("session_run_transient_error", session_id=session_id, error_type=exc.__class__.__name__)
@@ -229,13 +306,21 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
         async with session_scope() as db:
             session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
             if session is None:
-                return
+                return False
+            if work_lease is not None and not await _execution_lease_is_current(db, session, work_lease):
+                return False
             if _is_transient_runtime_error(exc):
                 await _mark_transient_runtime_failure(db, session, exc)
                 await db.commit()
-                return
+                return True
             stop_reason = {"type": "error"}
-            await sessions_q.update_session(db, session, status=SESSION_TERMINATED, stop_reason=stop_reason)
+            await sessions_q.update_session(
+                db,
+                session,
+                status=SESSION_TERMINATED,
+                status_details=_status_details_without_runtime_retry(session.status_details),
+                stop_reason=stop_reason,
+            )
             await events_q.append_event(
                 db,
                 session,
@@ -253,12 +338,215 @@ async def _run_session_turn(session_id: str, *, workspace_id: str) -> None:
                 payload={"type": "session.status_terminated", "status": SESSION_TERMINATED, "stop_reason": stop_reason},
             )
             await db.commit()
+            return True
+
+
+async def _record_model_usage_after_result(
+    *,
+    session_id: str,
+    workspace_id: str,
+    effective_version: EffectiveAgentVersion,
+    history: list[Any],
+    result: RuntimeResult,
+    work_lease: WorkExecutionLease | None,
+) -> bool:
+    """Durably meter one provider result after verifying its execution fence.
+
+    The usage transaction commits before output/session finalization so a later
+    persistence failure cannot erase provider usage that has already occurred.
+    """
+    if not get_settings().vma_governance_enabled:
+        return True
+    dimensions, total_tokens = _model_usage_dimensions(result.usage)
+    if total_tokens is None:
+        return True
+
+    async with session_scope() as db:
+        session = await sessions_q.get_session(
+            db,
+            session_id,
+            workspace_id=workspace_id,
+            for_update=True,
+        )
+        if session is None:
+            return False
+        if work_lease is not None:
+            if not await _execution_lease_is_current(db, session, work_lease):
+                return False
+        elif session.status != SESSION_RUNNING:
+            return False
+
+        model_config = dict(effective_version.model or {})
+        provider = runtime_provider_id(
+            model_config,
+            runtime=effective_version.runtime,
+        )
+        model = str(model_config.get("id") or model_config.get("model") or "").strip() or None
+        idempotency_key = _model_usage_idempotency_key(
+            session_id=session_id,
+            history=history,
+            work_lease=work_lease,
+        )
+        decision = await governance_service().postflight_model_tokens_in_session(
+            db,
+            workspace_id=workspace_id,
+            total_tokens=total_tokens,
+            idempotency_key=idempotency_key,
+            provider=provider,
+            model=model,
+            source_type="session",
+            source_id=session_id,
+            dimensions=dimensions,
+            data={
+                "work_id": work_lease.work_id if work_lease is not None else None,
+                "lease_generation": work_lease.generation if work_lease is not None else None,
+            },
+        )
+        await db.commit()
+
+    if decision.over_limit_by:
+        logger.warning(
+            "model_token_quota_overrun_recorded",
+            workspace_id=workspace_id,
+            session_id=session_id,
+            total_tokens=total_tokens,
+            over_limit_by=decision.over_limit_by,
+        )
+    return True
+
+
+def _model_usage_dimensions(usage: dict[str, Any] | None) -> tuple[dict[str, Any], int | None]:
+    dimensions = _normalized_usage_mapping(usage)
+    if not dimensions:
+        return {}, None
+
+    total_tokens = _nonnegative_usage_int(dimensions.get("total_tokens"))
+    if total_tokens is None:
+        input_tokens = _first_usage_int(dimensions, "input_tokens", "prompt_tokens")
+        output_tokens = _first_usage_int(dimensions, "output_tokens", "completion_tokens")
+        if input_tokens is None and output_tokens is None:
+            return dimensions, None
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+        dimensions.setdefault("total_tokens", total_tokens)
+    return dimensions, total_tokens
+
+
+def _normalized_usage_mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        if isinstance(raw_value, bool):
+            continue
+        if isinstance(raw_value, int) and raw_value >= 0:
+            normalized[key] = raw_value
+        elif isinstance(raw_value, dict):
+            child = _normalized_usage_mapping(raw_value)
+            if child:
+                normalized[key] = child
+    return normalized
+
+
+def _first_usage_int(mapping: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = _nonnegative_usage_int(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _nonnegative_usage_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _model_usage_idempotency_key(
+    *,
+    session_id: str,
+    history: list[Any],
+    work_lease: WorkExecutionLease | None,
+) -> str:
+    if work_lease is not None:
+        return f"model_tokens:{work_lease.work_id}"
+    history_id = getattr(history[-1], "id", None) if history else None
+    return f"model_tokens:{session_id}:{history_id or 'initial'}"
+
+
+async def _list_runtime_history(
+    db,
+    *,
+    session_id: str,
+    workspace_id: str,
+) -> list[Any]:
+    """Load the complete ordered event history without a fixed first-page cap."""
+    history: list[Any] = []
+    after_seq = 0
+    while True:
+        page = await events_q.list_events(
+            db,
+            session_id=session_id,
+            after_seq=after_seq,
+            limit=RUNTIME_HISTORY_PAGE_SIZE,
+            workspace_id=workspace_id,
+        )
+        if not page:
+            return history
+        history.extend(page)
+        next_after_seq = int(page[-1].seq)
+        if next_after_seq <= after_seq:
+            raise RuntimeError("Session event pagination did not advance")
+        after_seq = next_after_seq
+        if len(page) < RUNTIME_HISTORY_PAGE_SIZE:
+            return history
+
+
+def _status_details_with_execution_lease(
+    status_details: dict[str, Any] | None,
+    work_lease: WorkExecutionLease | None,
+) -> dict[str, Any]:
+    details = dict(status_details or {})
+    if work_lease is None:
+        details.pop("execution_lease", None)
+    else:
+        details["execution_lease"] = {
+            "work_id": work_lease.work_id,
+            "worker_id": work_lease.worker_id,
+            "lease_id": work_lease.lease_id,
+            "generation": work_lease.generation,
+        }
+    return details
+
+
+async def _work_lease_is_current(db, work_lease: WorkExecutionLease) -> bool:
+    work = await res_q.get_work_item_for_worker(db, work_lease.work_id)
+    if work is None or work.status not in {"leased", "running"}:
+        return False
+    lease = dict((work.data or {}).get("lease") or {})
+    return (
+        str(lease.get("worker_id") or "") == work_lease.worker_id
+        and str(lease.get("lease_id") or "") == work_lease.lease_id
+        and int(lease.get("generation") or 0) == work_lease.generation
+    )
+
+
+async def _execution_lease_is_current(db, session, work_lease: WorkExecutionLease) -> bool:
+    if not await _work_lease_is_current(db, work_lease):
+        return False
+    lease = dict((session.status_details or {}).get("execution_lease") or {})
+    return (
+        str(lease.get("work_id") or "") == work_lease.work_id
+        and str(lease.get("worker_id") or "") == work_lease.worker_id
+        and str(lease.get("lease_id") or "") == work_lease.lease_id
+        and int(lease.get("generation") or 0) == work_lease.generation
+    )
 
 
 async def _persist_runtime_event(
     session_id: str,
     workspace_id: str,
     payload: dict[str, Any],
+    *,
+    work_lease: WorkExecutionLease | None = None,
 ) -> str:
     event_payload = dict(payload)
     event_type = str(event_payload.get("type") or "")
@@ -273,6 +561,8 @@ async def _persist_runtime_event(
         session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
         if session is None or session.deleted_at is not None:
             raise RuntimeError("Session disappeared while persisting a runtime event")
+        if work_lease is not None and not await _execution_lease_is_current(db, session, work_lease):
+            raise SessionRunStopped("Session execution lease was superseded")
         if session.status != SESSION_RUNNING:
             raise SessionRunStopped(f"Session is no longer running: {session.status}")
         event = await events_q.append_event(
@@ -288,6 +578,7 @@ async def _persist_runtime_event(
 
 async def _mark_transient_runtime_failure(db, session, exc: Exception) -> None:
     details = dict(session.status_details or {})
+    details.pop("execution_lease", None)
     retry_state = dict(details.get("runtime_retry") or {})
     attempt = int(retry_state.get("attempt") or 0) + 1
     retry_after_seconds = _retry_after_seconds(exc, attempt)
@@ -435,6 +726,7 @@ def _positive_int(value: Any) -> int | None:
 def _status_details_without_runtime_retry(status_details: dict[str, Any] | None) -> dict[str, Any]:
     details = dict(status_details or {})
     details.pop("runtime_retry", None)
+    details.pop("execution_lease", None)
     return details
 
 
@@ -471,29 +763,6 @@ async def _execute(
         session_id=session_id,
         emit_event=emit_event,
         emit_preview=emit_preview,
-    )
-
-
-def _effective_agent_version(version, status_details: dict[str, Any] | None) -> EffectiveAgentVersion:
-    overlay = {}
-    if isinstance(status_details, dict) and isinstance(status_details.get("agent"), dict):
-        overlay = status_details["agent"]
-    tools = overlay.get("tools", version.tools)
-    mcp_servers = overlay.get("mcp_servers", version.mcp_servers)
-    return EffectiveAgentVersion(
-        id=version.id,
-        agent_id=version.agent_id,
-        version=version.version,
-        name=version.name,
-        model=version.model,
-        system=version.system,
-        description=version.description,
-        tools=tools if isinstance(tools, list) else version.tools,
-        mcp_servers=mcp_servers if isinstance(mcp_servers, list) else version.mcp_servers,
-        skills=version.skills,
-        multiagent=version.multiagent,
-        metadata_=version.metadata_,
-        runtime=version.runtime,
     )
 
 
@@ -626,13 +895,16 @@ async def _runtime_context_for_session(db, session, version: EffectiveAgentVersi
             }
         )
     credentials = await _vault_credentials_for_session(db, session)
+    model_credential = await _model_credential_for_session(db, session, version)
     return {
         "workspace_id": session.workspace_id,
         "session_id": session.id,
         "checkpoint_thread_id": session.runtime_thread_id,
         "previous_run_state": dict(session.run_state or {}),
         "memory_stores": memory_stores,
-        "provider_secrets": _provider_secrets_from_credentials(credentials),
+        "provider_secrets": _provider_secrets_from_credentials(
+            [model_credential] if model_credential is not None else []
+        ),
         "mcp_auth": await _mcp_auth_context_for_session(db, session, version, credentials=credentials),
         "session_resource_types": sorted(
             {
@@ -647,9 +919,44 @@ async def _runtime_context_for_session(db, session, version: EffectiveAgentVersi
     }
 
 
+async def _model_credential_for_session(db, session, version: EffectiveAgentVersion):
+    details = dict(session.status_details or {})
+    binding = binding_from_status_details(details)
+    if binding is None:
+        if MODEL_CREDENTIAL_BINDING_KEY in details:
+            raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
+        # Compatibility for Sessions created before durable bindings existed:
+        # select once on their first runtime turn, then persist the same contract
+        # used by newly created Sessions.
+        binding = await resolve_model_credential_binding(
+            db,
+            model=version.model,
+            runtime=version.runtime,
+            vault_ids=details.get("vault_ids") or [],
+            workspace_id=session.workspace_id,
+        )
+        details = status_details_with_binding(details, binding)
+        await sessions_q.update_session(db, session, status_details=details)
+
+    validate_binding_for_model(binding, model=version.model, runtime=version.runtime)
+    return await load_bound_model_credential(
+        db,
+        binding=binding,
+        workspace_id=session.workspace_id,
+    )
+
+
 async def _vault_credentials_for_session(db, session) -> list[Any]:
     credentials: list[Any] = []
     for vault_id in (session.status_details or {}).get("vault_ids") or []:
+        vault = await res_q.get_resource(
+            db,
+            resource_id=str(vault_id),
+            resource_type="vault",
+            workspace_id=session.workspace_id,
+        )
+        if vault is None or vault.archived_at is not None:
+            continue
         credentials.extend(
             await res_q.list_resources(
                 db,
@@ -748,9 +1055,33 @@ async def _session_files_for_runtime(session_resources: list[Any]) -> list[dict[
         content = await storage.download_file(key)
         if len(content) > max_bytes:
             raise RuntimeError(f"Session file exceeds the runtime limit: {data.get('mount_path') or key}")
+        expected_size = (data.get("session_file") or {}).get("size_bytes")
+        if isinstance(expected_size, int) and len(content) != expected_size:
+            raise RuntimeError(
+                f"Session file size does not match its manifest: {data.get('mount_path') or key}"
+            )
+        expected_sha256 = str((data.get("session_file") or {}).get("sha256") or "")
+        if expected_sha256 and hashlib.sha256(content).hexdigest() != expected_sha256:
+            raise RuntimeError(
+                f"Session file sha256 does not match its manifest: {data.get('mount_path') or key}"
+            )
         files.append(
             {
+                "file_id": str(data.get("file_id") or ""),
+                "source_file_id": str(data.get("source_file_id") or ""),
                 "path": str(data.get("mount_path") or f"/mnt/session/uploads/{resource.id}"),
+                "filename": str(
+                    (data.get("session_file") or {}).get("filename")
+                    or data.get("filename")
+                    or resource.name
+                    or resource.id
+                ),
+                "mime_type": str(
+                    (data.get("session_file") or {}).get("mime_type")
+                    or "application/octet-stream"
+                ),
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
                 "content": content,
                 "read_only": bool(data.get("read_only", True)),
             }

@@ -409,6 +409,7 @@ def test_skill_archive_rejects_path_traversal():
 
 async def test_runner_persists_engine_events_once_with_reserved_id(client, monkeypatch):
     from app.runtime.contracts import RuntimeResult
+    from app.runtime.sandbox_outputs import DiscoveredSandboxOutput
     from tests.conftest import TEST_HEADERS
 
     async def fake_execute(
@@ -435,6 +436,13 @@ async def test_runner_persists_engine_events_once_with_reserved_id(client, monke
             events_persisted=True,
             run_state={"backend": "deepagents"},
             blocking_event_ids=[],
+            sandbox_outputs=[
+                DiscoveredSandboxOutput(
+                    path="/mnt/session/outputs/runner-result.txt",
+                    content=b"durable generated result",
+                    mime_type="text/plain",
+                )
+            ],
         )
 
     monkeypatch.setattr("app.runtime.deepagents_engine.execute_deep_agent", fake_execute)
@@ -468,5 +476,21 @@ async def test_runner_persists_engine_events_once_with_reserved_id(client, monke
     response = await client.get(f"/v1/sessions/{session_id}/events", headers=TEST_HEADERS)
     messages = [event for event in response.json()["data"] if event["type"] == "agent.message"]
     assert len(messages) == 1
+
+    files = await client.get(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        params={"scope_id": session_id},
+    )
+    assert files.status_code == 200, files.text
+    generated = next(
+        item for item in files.json()["data"] if item.get("filename") == "runner-result.txt"
+    )
+    assert generated["downloadable"] is True
+    downloaded = await client.get(
+        f"/v1/files/{generated['id']}/content",
+        headers=TEST_HEADERS,
+    )
+    assert downloaded.content == b"durable generated result"
     assert messages[0]["id"] == "evt_reserved"
     assert messages[0]["content"][0]["text"] == "engine result"

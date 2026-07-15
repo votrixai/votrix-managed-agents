@@ -53,14 +53,21 @@ VMA deliberately performs a narrow set of template privilege checks: the default
 The built-in E2B lifecycle has three invariants:
 
 1. One VMA Session is bound to exactly one opaque E2B `external_sandbox_id`.
-2. Skills and initial resources are materialized only during Session creation.
-3. A later turn reconnects that exact sandbox and never uploads or synchronizes control-plane files again.
+2. Skills, Memory Store seeds, and create-time files are materialized during
+   Session creation. A later file may only extend the immutable upload manifest
+   through the idle-only append API; no existing input is replaced or removed.
+3. A later turn reconnects that exact sandbox and verifies the latest seal. A
+   turn never re-uploads or repairs existing control-plane inputs.
 
 Session creation is therefore the provisioning boundary, not the first executable turn:
 
 1. VMA resolves the Session's pinned agent version, Skills, read-only input files, and initial Memory Store seed.
-2. It computes a deterministic identity for the entire create-time bundle, including the original read-write memory seed, plus a separate immutable-file manifest.
-3. It provisions one E2B sandbox, uploads the bundle once, makes control-plane-owned immutable files root-owned and non-writable to the guest, and writes a root-owned seal containing the expected digest.
+2. It computes a deterministic create identity for the bundle, including the
+   original read-write memory seed, plus revision `0` of the immutable-file
+   manifest.
+3. It provisions one E2B sandbox, uploads the bundle, makes control-plane-owned
+   immutable files root-owned and non-writable to the guest, and writes a
+   root-owned seal containing the expected digest, manifest, and revision.
 4. It records the opaque E2B ID, owner and policy fingerprints, template, and input digest as private database state.
 5. It pauses the sandbox with full-memory preservation until a turn needs it.
 
@@ -68,17 +75,49 @@ Provisioning failure aborts Session creation and attempts to kill the just-creat
 
 Alembic revision `20260711_0010` is a schema migration only: it creates the tenant-scoped one-to-one `session_sandboxes` binding table. It does not backfill, move, snapshot, or automatically migrate any sandbox data; a fresh database simply creates the table during normal schema setup.
 
+While the active Session is idle, `sessions.resources.add` may append one file.
+This includes an idle `requires_action` window in which `votrix-backend` is
+executing a custom tool. The file must use exactly
+`/mnt/session/uploads/<filename>` with no nested path. VMA locks the Session and
+sandbox binding, validates tenant ownership and the copied object's size and
+SHA-256, reconnects the same paused E2B sandbox, advances the sealed manifest
+by one revision, pauses it again, and then commits the resource and manifest.
+An exact retry of an already committed `(source file, mount path)` is
+idempotent. A different file at the same or overlapping path is rejected.
+
 For every subsequent turn, VMA:
 
-1. Recomputes the fixed create-time input identity from the pinned Session configuration, including the original read-write memory seed.
+1. Recomputes the latest input identity from the pinned Skills and Memory seed
+   plus every committed create-time or appended file.
 2. Loads the one stored external ID and reconnects that exact E2B sandbox.
-3. Verifies the provider ownership/policy metadata, configured template, root-owned seal, immutable paths, permissions, and content hashes.
+3. Verifies the provider ownership/policy metadata, configured template,
+   root-owned seal, latest manifest revision, immutable paths, permissions,
+   hardlink count, and content hashes.
 4. Passes the connected `AsyncE2BSandbox` to Deep Agents. The model invokes `execute` and filesystem operations through ordinary Deep Agents tool calls.
-5. Pauses the same sandbox with full-memory preservation when the turn exits.
+5. Before pausing, discovers eligible files directly below
+   `/mnt/session/outputs` and reads their bounded bytes and filesystem metadata.
+6. Pauses the same sandbox with full-memory preservation when the turn exits.
+7. The runner validates the discovered batch and snapshots new
+   `(path, SHA-256)` versions into R2-compatible storage as downloadable
+   Session-scoped Files before committing the terminal/interrupt state.
 
 VMA reconstructs the Python `AsyncSandbox`, `AsyncE2BSandbox`, and Deep Agents graph objects per run. It persists their identifiers and checkpoint state, not live Python objects.
 
-If a Skill, initial input, initial read-only or read-write memory source, mount identity, or configured template differs from the create-time identity, resume fails and the caller must create a new Session. Once a managed sandbox is bound, APIs that would mutate Session resources are rejected. There is no in-place reseed, migration, or replacement sandbox for the same Session.
+If a Skill, existing input, initial read-only or read-write memory source, mount
+identity, or configured template differs from the sealed identity, resume fails
+and the caller must create a new Session. File addition is the sole mutation
+exception: it must follow the append protocol above. Updates and deletion of
+mounted inputs remain rejected. Skills and memory cannot be appended or
+reseeded. There is no migration or replacement sandbox for the same Session.
+
+PostgreSQL and E2B cannot participate in one transaction. VMA therefore
+advances the provider seal before committing the database manifest. If the
+process fails between those operations, retrying the exact same file bytes and
+mount path can complete the compare-and-swap; the provider accepts either the
+expected old seal or the exact already-advanced seal. Until that exact retry
+repairs the database record, unrelated append and resume attempts fail closed.
+VMA does not add an outbox, operation lease, automatic orphan recovery,
+snapshot, or generation protocol for this window.
 
 Archive pauses and preserves the bound sandbox. Session deletion kills it. E2B provider auto-resume is disabled so all reconnects pass through VMA authorization; secure access is enabled, inbound public traffic is disabled, and timeout handling uses full-memory pause.
 
@@ -86,26 +125,55 @@ The in-process janitor performs best-effort cleanup of eligible paused sandboxes
 
 ## Filesystem contract
 
-The initial bundle has distinct immutable and mutable areas:
+The sandbox has distinct immutable and mutable areas:
 
-- Read-only uploaded inputs default below `/mnt/session/uploads`.
+- Read-only create-time and append-only uploaded inputs are direct files below
+  `/mnt/session/uploads`.
 - Custom Skills are materialized below `/skills/custom` and are immutable for the Session.
 - Read-only Memory Store seeds are immutable.
-- `/workspace` and Memory Stores mounted with `read_write` access remain mutable inside the sandbox.
+- `/workspace`, `/mnt/session/outputs`, and Memory Stores mounted with
+  `read_write` access remain mutable inside the sandbox. The output root is
+  guest-owned; it is not part of the immutable upload manifest.
 
-Initial Session files for E2B must be read-only and mounted below `/mnt/session`. An immutable input cannot overlap `/workspace` or a read-write memory root; the request is rejected instead of relying on path precedence. Path normalization, archive traversal checks, symlink rejection, and collision checks run before bootstrap. Other backends retain the broader public absolute-path contract; this E2B restriction is a documented runtime difference.
+Session files for E2B must be read-only and mounted as one normalized direct
+child of `/mnt/session/uploads`. An immutable input cannot overlap `/workspace`,
+`/mnt/session/outputs`, or a read-write memory root; the request is rejected
+instead of relying on path precedence. Path normalization, archive traversal
+checks, symlink and hardlink rejection, unmanaged-entry checks, and collision
+checks run before activation or resume. Other backends retain the broader
+public absolute-path contract; this E2B restriction is a documented runtime
+difference.
 
-Only the create path uploads files. Resume verifies the existing seal and contents but does not repair, replace, delete, or re-upload anything. If verification fails, the turn fails closed and a new Session is required.
+Only Session creation and explicit append upload control-plane inputs. Resume
+verifies the existing seal and contents but does not repair, replace, delete,
+or re-upload anything. If verification fails, the turn fails closed. A provider
+seal one revision ahead of PostgreSQL can only be recovered by the exact append
+retry described above; other mismatches require a new Session.
 
-Files changed under `/workspace` and read-write memory roots survive later turns while the same E2B sandbox remains resumable. They are not automatically exported to S3-compatible storage. In particular, edits to a read-write Memory Store seed are **not** written back to VMA's managed Memory Store records or versions.
+Files changed under `/workspace` and read-write memory roots survive later turns
+while the same E2B sandbox remains resumable, but they are not exported to
+S3-compatible storage. In particular, edits to a read-write Memory Store seed
+are **not** written back to VMA's managed Memory Store records or versions.
 
-R2 or another S3-compatible store remains the durable source used to resolve file and Skill content at Session creation. It is not continuously synchronized with the sandbox. VMA does not currently implement managed-file synchronization or automatic generated-artifact export.
+R2 or another S3-compatible store remains the durable source for uploaded file
+and Skill content. It is not continuously synchronized with the sandbox. At the
+end of each completed E2B graph execution, VMA exports only direct, regular,
+single-link files below `/mnt/session/outputs`, subject to bounded file-count and
+size limits. The current discovery boundary is 100 files, 50 MiB per file, and
+100 MiB aggregate; bytes currently cross the E2B command channel as base64 JSON
+until a streaming provider transfer is implemented. Exact `(Session, path,
+SHA-256)` rediscovery is idempotent; changed bytes at the same path create a new
+immutable File version. The Files API exposes these records through
+`files.list(scope_id=<session_id>)`, metadata, and download. Nested files,
+symlinks, hardlinks, directories, and files outside the approved output root
+cause discovery to fail closed. Production malware
+quarantine and content-disarm policy remain outside this implementation.
 
 ### Seal boundary
 
 The current bootstrap protects control-plane-owned immutable files with root ownership, non-writable permissions, protected parent directories, and digest verification before every turn. This is a narrow guarantee: it does not prove that the guest can write only to `/workspace` and approved read-write memory roots, and it does not turn all other template files into immutable mounts.
 
-The hardened E2B template removes unnecessary privilege-escalation paths and protects VMA's trusted roots, but E2B recreates provider-managed guest-writable paths such as `/usr/local`, `/code`, and `/home/user` when a sandbox starts. `/tmp` and `/var/tmp` also remain writable sticky scratch directories. These paths are Session-local and explicitly untrusted: VMA never executes root control code from them, and durable Agent work belongs under `/workspace` or an approved read-write memory root. VMA validates the trusted system interpreter and directories and fails closed; it does not scan or harden the whole Linux filesystem. The current seal protects VMA-owned immutable inputs, not the entire guest filesystem.
+The hardened E2B template removes unnecessary privilege-escalation paths and protects VMA's trusted roots, but E2B recreates provider-managed guest-writable paths such as `/usr/local`, `/code`, and `/home/user` when a sandbox starts. `/tmp` and `/var/tmp` also remain writable sticky scratch directories. These paths are Session-local and explicitly untrusted: VMA never executes root control code from them. Persistent private Agent work belongs under `/workspace` or an approved read-write memory root; generated files intended for object-storage export belong directly under `/mnt/session/outputs`. VMA validates the trusted system interpreter and directories and fails closed; it does not scan or harden the whole Linux filesystem. The current seal protects VMA-owned immutable inputs, not the entire guest filesystem.
 
 ## Network, packages, and resources
 
@@ -185,7 +253,10 @@ Before enabling `execute` for tenants, verify:
 5. Resource and command timeouts terminate work as expected.
 6. Session create fails cleanly, and operators can detect any remote sandbox left by a crash between E2B creation and database commit.
 7. Archive preserves the one sandbox, delete kills it, and best-effort 30-day cleanup is monitored.
-8. Workloads do not rely on generated files or Memory Store edits being exported from the sandbox.
+8. Generated files are written as direct files below `/mnt/session/outputs`,
+   stay within export size/count limits, and appear through scoped Files list
+   and download; workloads do not rely on `/workspace` or Memory Store edits
+   being exported.
 9. Logs, traces, previews, and errors redact secrets and external provider identifiers.
 10. Provider outages produce visible, retryable errors rather than silent reseeding or replacement.
 

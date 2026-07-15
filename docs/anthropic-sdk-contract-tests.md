@@ -47,7 +47,7 @@ Current passing coverage:
 - `client.beta.memory_stores.memory_versions.retrieve/list/redact`, including `api_key_id`, `session_id`, `operation`, `view` list filters, and deleted-version null content/hash/size semantics.
 - `client.beta.deployments.create/retrieve/update/list/archive/pause/unpause/run`, including deployment `system.message` initial-event ordering and local `resources`/`vault_ids` limit coverage.
 - `client.beta.deployment_runs.retrieve/list`.
-- `client.beta.user_profiles.create/retrieve/update/list/create_enrollment_url`, including `external` and `resold` relationships.
+- `client.beta.user_profiles.create/retrieve/update/list`, including `external` and `resold` relationships.
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.
 - SDK `after_id` and `before_id` pagination for files.
 - Representative list filters and sort options: `include_archived`, `source`, `scope_id`, session `agent_id`/`agent_version`/`statuses`, deployment `agent_id`/`status` and `status` vs `include_archived` validation, memory `path_prefix`/`depth`, memory path validation, `order/order_by`, `deployment_id`, memory-version `api_key_id`/`session_id`/`operation`/`view`, `trigger_type`, and `has_error` success/error semantics.
@@ -55,6 +55,7 @@ Current passing coverage:
 
 Important remaining coverage gaps:
 
+- The SDK exposes `user_profiles.create_enrollment_url`, but VMA intentionally does not expose that route without a real hosted enrollment and trust-grant flow.
 - Exhaustive pagination edge cases across every route group.
 - Full filter semantics for every list endpoint, especially less common filters.
 - Production runtime semantics behind the validated response shapes.

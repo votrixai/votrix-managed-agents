@@ -21,14 +21,17 @@ async def run_worker(
     once: bool,
     worker_id: str = "vma-worker",
     lease_seconds: int = 60,
+    stop_event: asyncio.Event | None = None,
 ) -> None:
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass
+    owns_stop_event = stop_event is None
+    stop_event = stop_event or asyncio.Event()
+    if owns_stop_event:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop_event.set)
+            except NotImplementedError:
+                pass
 
     while not stop_event.is_set():
         work = await _next_runnable_work(
@@ -42,7 +45,13 @@ async def run_worker(
             await asyncio.sleep(poll_interval_seconds)
             continue
         logger.info("worker_executing_work", work_id=work["id"], session_id=work.get("session_id"))
-        await execute_work_item(work["id"], worker_id=worker_id)
+        await execute_work_item(
+            work["id"],
+            worker_id=worker_id,
+            lease_id=str(work["lease"]["lease_id"]),
+            lease_generation=int(work["lease"]["generation"]),
+            lease_seconds=lease_seconds,
+        )
         if once:
             return
 

@@ -14,6 +14,7 @@ class RuntimeResult:
     events_persisted: bool = False
     run_state: dict[str, Any] | None = None
     sandbox_state: dict[str, Any] | None = None
+    sandbox_outputs: list[Any] = field(default_factory=list)
     usage: dict[str, Any] | None = None
 
 

@@ -2,39 +2,67 @@
 
 Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control plane for long-running agents. It targets the public resource, lifecycle, and SDK shape of [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) while running agents with [Deep Agents 0.6.12](https://github.com/langchain-ai/deepagents) and LangGraph.
 
-VMA is not an Anthropic service and is not yet a drop-in behavioral replacement. The REST surface is substantially broader than the production execution surface. Start with the [compatibility matrix](docs/compatibility-matrix.md) and [known incompatibilities](docs/known-incompatibilities.md) before deploying it for real workloads.
+VMA is not an Anthropic service and is not a drop-in behavioral replacement.
+The current release is a **public-beta foundation**: its GA schema is deliberately
+smaller than the repository's experimental route inventory, and it is suitable
+for a controlled BYOK/free beta rather than a high-availability or enterprise
+launch. Start with the [compatibility matrix](docs/compatibility-matrix.md) and
+[known incompatibilities](docs/known-incompatibilities.md) before deploying it
+for real workloads.
 
 ## What is here
 
 Implemented in the Votrix core:
 
-- FastAPI routes under `/v1` for agents, immutable agent versions, environments, sessions, events, files, skills, vaults, credentials, memory stores, deployments, deployment runs, and user profiles.
-- Workspace-scoped API-key authentication and database queries.
+- A public-beta `/v1` surface for API keys, agents and immutable versions,
+  environments, sessions and events, files, Skills, Vaults, native model
+  Credentials, and the model-provider catalog. Additional repository routes
+  remain explicitly deferred when `VMA_PUBLIC_GA_ONLY=true`.
+- Postgres-backed workspace API keys with one-time secrets, independent
+  create/list/retrieve/revoke/rotate lifecycle, expiration, and the `api`,
+  `api_keys:manage`, and `worker` scopes.
+- Request correlation through echoed/generated `request-id` and `x-request-id`
+  headers, plus stable machine-readable `error.code` values.
 - Contract tests that exercise covered routes through the official Anthropic Python SDK with strict response validation.
-- Append-only session events, monotonic sequence numbers, SSE replay, and durable work records.
+- A separately packaged native Python SDK, `votrix`, with `AsyncVotrix` for the
+  full GA client and `Votrix` for synchronous API-key, provider, Vault, and
+  native model-Credential administration. The SDK includes cursor pagination,
+  true streamed downloads, reconnecting SSE, bounded retries, and typed errors.
+- Append-only session events, monotonic sequence numbers, SSE replay, and
+  durable work records with unique leases, generations, heartbeats, expired
+  lease recovery, and stale-worker fencing.
+- Tenant request-rate, active-work, daily model-token, and stored-byte quotas;
+  append-only audit and raw-usage ledgers; and tenant idempotency used by
+  Session creation. Event submission retains its dedicated transactional
+  idempotency record.
 - A Deep Agents runtime adapter with server-controlled Anthropic, OpenAI, DeepSeek, and custom model-provider configuration.
 - LangGraph checkpoint selection for Postgres, SQLite, and explicit in-memory development mode.
-- S3-compatible object storage for files and skill archives.
+- Private S3-compatible object storage for files and skill archives.
 - An optional E2B sandbox provider for isolated session command and filesystem execution.
 - An optional self-hosted work-queue worker and an importable deployment scheduler tick.
 
 Important partial areas:
 
-- Streaming previews are process-local; separate web and worker processes need Redis Streams, NATS, or another tenant-scoped broker.
+- Streaming previews are process-local; separate web and worker processes need Redis Streams, NATS, or another tenant-scoped broker. Durable work fencing does not remove this topology constraint.
 - The safe default has checkpointed file state but no shell execution. Isolated execution requires the optional E2B provider or an operator-supplied `VMA_SANDBOX_FACTORY`.
 - MCP connections, restart-safe custom-tool/approval resume, skills, seeded memory files, and synchronous subagents are mapped to Deep Agents but do not yet reproduce every Claude semantic.
-- Deployment scheduling, webhook delivery, OAuth token refresh, distributed run locking, and enterprise controls need additional production services.
+- Organization RBAC/SSO, Postgres RLS, a multi-replica preview broker and
+  complete per-Session/checkpoint ownership, enterprise audit export/retention,
+  deployment scheduling, webhook delivery, and OAuth refresh remain deferred.
+- The beta is BYOK/free. Raw provider/model token usage is recorded for quota
+  enforcement and cost analysis only; price books, monetary balances, credits,
+  top-ups, refunds, Stripe, invoices, and paid plans are not part of this release.
 
 ## Architecture
 
 ```text
-Anthropic SDK or HTTP client
-            |
-            v
+AsyncVotrix native SDK / AsyncAnthropic compatibility / HTTP client
+                              |
+                              v
 FastAPI compatibility and control plane
   |         |             |
-  |         |             +-- S3-compatible files and skill archives
-  |         +---------------- Postgres/SQLite resources, events, and work
+  |         |             +-- private S3-compatible files and skill archives
+  |         +---------------- Postgres/SQLite resources, events, work, quotas, ledgers
   +-------------------------- durable session/revision lookup
             |
             v
@@ -73,7 +101,25 @@ missing documentation dependencies, chooses an available docs port starting at
 bash run.sh --migrate
 ```
 
-The local configuration permits anonymous requests when no API key is configured. Production should set `APP_ENV=production`, configure `VMA_API_KEY` or an injected auth provider, and use Postgres. Production vault credentials also require `VMA_ENCRYPTION_KEY` unless an injected secret provider replaces database-backed secrets.
+The local configuration permits anonymous requests when no API key is configured.
+Hosted environments use Postgres-backed tenant API keys and fail closed until
+the first administrator key is created with
+`python -m scripts.bootstrap_api_key`; they do not share a static
+`VMA_API_KEY`. Production Vault credentials also require `VMA_ENCRYPTION_KEY`
+unless an injected secret provider replaces database-backed secrets.
+
+After migrations, create the first key from a trusted administrator environment:
+
+```bash
+uv run python -m scripts.bootstrap_api_key \
+  --workspace-id wrkspc_acme \
+  --workspace-slug acme \
+  --workspace-name "Acme"
+```
+
+The command writes one JSON object containing the plaintext secret exactly
+once; send it directly to the intended secret manager. Subsequent key creation,
+rotation, and revocation should use the authenticated `/v1/api_keys` lifecycle.
 
 Check the service:
 
@@ -89,6 +135,17 @@ application under `website/` combines the guides and interactive API reference.
 ## Configure a model provider
 
 Agent definitions choose a provider and model, but connection URLs and credentials remain server-controlled.
+
+Session creation also accepts Claude-compatible `agent_with_overrides` for a
+one-Session replacement of model, system, tools, MCP servers, or Skills. Native
+clients discover the server-approved registry through `model_providers` and
+create BYOK credentials with a stable provider ID such as `openrouter`; callers
+never need to know an internal environment-variable name. At Session creation,
+VMA reads the requested `vault_ids` in order and fixes the first matching model
+Credential as that Session's payer. Later turns use the same Credential and fail
+closed if it is revoked rather than switching to another Vault or server key.
+The key is used only by the control-plane model client and is never copied into
+E2B.
 
 The maintained local and Cloud Run profile uses OpenRouter's native LangChain
 integration, pins `deepseek/deepseek-v4-pro` to Fireworks with Together as its
@@ -142,17 +199,48 @@ S3_SECRET_ACCESS_KEY=...
 S3_BUCKET_NAME=...
 ```
 
+Keep the bucket private. VMA reads and writes it with server credentials and
+serves downloads through the authenticated Files API; neither
+`S3_PUBLIC_URL` nor an R2 public/custom domain is required. Direct
+presign/complete upload routes remain outside the public GA surface, so public
+beta clients use the bounded authenticated upload route.
+
 VMA derives the LangGraph checkpoint connection from `DATABASE_URL`. Set the
 optional `VMA_CHECKPOINT_DATABASE_URL` only when checkpoints intentionally use
 a different database.
 
 Run migrations once per release. Production must use a VMA-owned Postgres database or schema rather than sharing the `votrix-backend` schema. Google Cloud Run is the only maintained hosted deployment target; follow the [Cloud Run deployment guide](scripts/gcloud/README.md) and the [deployment topology notes](docs/deployment-platforms.md).
 
+## Public-beta governance
+
+Governance is enabled by default and can be tuned globally with:
+
+```dotenv
+VMA_GOVERNANCE_ENABLED=true
+VMA_REQUESTS_PER_MINUTE=120
+VMA_MAX_ACTIVE_WORK=5
+VMA_DAILY_MODEL_TOKENS=1000000
+VMA_WORKSPACE_STORAGE_BYTES=5368709120
+```
+
+Workspace overrides are stored in Postgres. Request limits return
+`X-RateLimit-*`; resource quotas return `X-Quota-*`; denials are `429` errors
+with stable codes. Provider-reported model usage is appended exactly once to the raw usage
+ledger. Because provider usage is only known after a turn, a turn admitted
+below the daily limit may cross it; all of that turn's tokens are recorded and
+later turns are denied until the UTC-day window resets. This deliberate
+one-turn overrun is a quota semantic, not billing or a monetary balance.
+
+The audit and usage ledgers are append-only at both ORM and database-trigger
+layers. They provide a beta operational record, not enterprise retention,
+export, legal hold, tamper-evident external anchoring, or an authoritative
+priced billing ledger.
+
 ## Deploy to Google Cloud Run
 
 The checked-in hosted configuration targets GCP Cloud Run exclusively. It provides production and staging service manifests, a Cloud Build pipeline, Artifact Registry setup, Secret Manager integration, and release scripts under [`scripts/gcloud`](scripts/gcloud/README.md). Other hosted platforms are not maintained.
 
-The current Cloud Run MVP deliberately runs one web process in at most one service instance. Live preview delivery and per-session execution ownership are still process-local, so increasing `WEB_CONCURRENCY` or Cloud Run `maxScale` would introduce correctness gaps until a distributed lock and preview broker exist. This is a production deployment shape for the current MVP, not an HA claim.
+The current Cloud Run MVP deliberately runs one web process in at most one service instance. Durable work leases fence stale workers, but live preview delivery and parts of per-Session/checkpoint ownership are still process-local, so increasing `WEB_CONCURRENCY` or Cloud Run `maxScale` would introduce correctness gaps until shared ownership and a preview broker exist. This is a public-beta deployment shape, not an HA claim.
 
 Each release runs Alembic once through a dedicated Cloud Run migration Job before the new service revision receives traffic. The web service connects to durable Postgres and object storage; it must not rely on Cloud Run's ephemeral filesystem for control-plane state. When E2B is enabled, the sandboxes remain external E2B resources—Cloud Run hosts only the VMA control plane.
 
@@ -176,11 +264,11 @@ VMA_E2B_GUEST_USER=user
 VMA_E2B_TEMPLATE_RESOURCES={"cpu":2,"memory_mb":2048}
 ```
 
-The extra pins `langchain-e2b==0.0.5` and `e2b==2.31.0`. Creating a Session immediately provisions exactly one E2B sandbox, uploads its fixed Skills, read-only inputs, and initial memory seed once, seals the immutable files, and pauses the sandbox. Every turn reconnects the same private `external_sandbox_id`, verifies the seal and input digest, and gives Deep Agents an `AsyncE2BSandbox`; the control plane never re-uploads or synchronizes Session files on resume. Changing a Skill, initial input, initial memory source, configured template, or Session resource after the seal is rejected and requires a new Session.
+The extra pins `langchain-e2b==0.0.5` and `e2b==2.31.0`. Creating a Session immediately provisions exactly one E2B sandbox, uploads its fixed Skills, read-only inputs, and initial memory seed once, seals revision 0, and pauses the sandbox. An active idle Session may later append one new read-only file at `/mnt/session/uploads/<filename>` through `sessions.resources.add`; existing inputs, Skills, and Memory seeds remain immutable. Every turn reconnects the same private `external_sandbox_id`, verifies the latest committed digest, manifest, and revision, and gives Deep Agents an `AsyncE2BSandbox`; the control plane never re-uploads or synchronizes existing Session files on resume.
 
 `VMA_E2B_TEMPLATE` is required and must name an operator-owned hardened template. At bootstrap and before every turn, VMA checks that the template's default execution user matches `VMA_E2B_GUEST_USER`, is not root, cannot complete `sudo -n true`, and cannot modify the trusted `/usr/bin` and `/usr/lib` roots used by VMA. Root bootstrap and seal verification use isolated `/usr/bin/python3 -I -S`, never the E2B guest-writable `/usr/local` tree. All remaining Linux filesystem and privilege hardening belongs to the trusted template.
 
-`/workspace` and read-write memory remain mutable and persist with that sandbox, but edits are not written back to VMA Memory Store versions and generated artifacts are not automatically exported. Read-only uploads default below `/mnt/session/uploads` and cannot overlap mutable workspace or memory roots. The seal protects VMA-owned immutable files. `/tmp`, `/var/tmp`, and E2B provider-managed paths such as `/usr/local`, `/code`, and `/home/user` are untrusted Session-local storage rather than VMA trust roots; durable Agent work belongs under `/workspace` or read-write memory.
+`/workspace` and read-write memory remain mutable and persist with that sandbox, but edits are not written back to VMA Memory Store versions or exported. Eligible direct regular files written under `/mnt/session/outputs` are snapshotted into object storage as downloadable Session-scoped Files. Read-only uploads live below `/mnt/session/uploads` and cannot overlap mutable workspace or memory roots. The seal protects VMA-owned immutable files. `/tmp`, `/var/tmp`, and E2B provider-managed paths such as `/usr/local`, `/code`, and `/home/user` are untrusted Session-local storage rather than VMA trust roots; durable Agent work belongs under `/workspace` or read-write memory.
 
 Provider auto-resume is disabled, secure access is enabled, public traffic is disabled, and turn exit uses full-memory pause. Archive preserves the sandbox, deletion kills it, and the in-process janitor provides best-effort cleanup after 30 days by default. Limited networking is passed through E2B's `allow_out` setting without a separate deny-all rule. Packages and CPU/memory/disk sizing must be built into and match the operator-owned template. VMA has no sandbox generations, provider snapshots, Daytona migration, operation leases/heartbeats, durable lifecycle outbox, orphan recovery, or managed-file sync. VMA does not return the external sandbox ID in its public API, although E2B may expose runtime identifiers inside the sandbox itself. See the detailed [sandbox runtime](docs/sandbox-runtime.md) and [E2B persistence](https://e2b.dev/docs/sandbox/persistence).
 
@@ -209,13 +297,58 @@ Native clients may instead send:
 votrix-managed-agents-beta: votrix-managed-agents-2026-04-01
 ```
 
-Authentication accepts `x-api-key` or a bearer token. API keys resolve to workspaces without putting workspace IDs into public paths. The official SDK contract suite demonstrates how to point `AsyncAnthropic` at the VMA base URL; route coverage is documented in [Managed Agents API coverage](docs/managed-agents-api-coverage.md).
+Authentication accepts `x-api-key` or a bearer token. API keys resolve to
+workspaces without putting workspace IDs into public paths, and callers cannot
+select a tenant with an untrusted workspace header. Hosted keys are hashed at
+rest, return plaintext only on create/rotate, and are independently revocable.
+Every response carries its request ID; errors expose a stable code suitable for
+programmatic handling. The official SDK contract suite demonstrates how to
+point `AsyncAnthropic` at the VMA base URL; route coverage is documented in
+[Managed Agents API coverage](docs/managed-agents-api-coverage.md).
+
+For new VMA integrations, use the native SDK. `AsyncVotrix` preserves the
+familiar resource-oriented Managed Agents shape while exposing VMA-only
+features such as API-key administration, the model-provider catalog, and
+provider-based model credentials. `Votrix` provides the synchronous
+administrative subset:
+
+After the first PyPI release:
+
+```bash
+pip install votrix
+```
+
+Until then, install the project directly from `sdks/python`.
+
+```python
+from votrix import AsyncVotrix
+
+client = AsyncVotrix(
+    api_key="vma_...",
+    base_url="https://managed-agents.votrixai.com",
+)
+
+providers = [provider async for provider in client.model_providers.list()]
+credential = await client.vaults.model_credentials.create(
+    vault_id="vault_...",
+    provider="openrouter",
+    api_key="sk-...",
+)
+```
+
+`AsyncAnthropic` remains the compatibility channel for overlapping Claude
+Managed Agents calls. `AsyncVotrix` is the recommended interface for native
+multi-provider and BYOK functionality. The SDK is an independent project under
+[`sdks/python`](sdks/python/README.md); it does not replace the server's existing
+`votrix_managed_agents` embedding package.
 
 ## Tests
 
 ```bash
 uv run pytest
 uv run pytest -m contract
+./scripts/test-backend-contract-matrix.sh
+cd sdks/python && uv run pytest && uv run pyright && uv build
 ```
 
 The contract extra installs the official client:
@@ -232,6 +365,7 @@ Strict SDK parsing proves the covered response shapes are accepted by the pinned
 - [Known incompatibilities](docs/known-incompatibilities.md)
 - [Claude Managed Agents alignment](docs/claude-managed-agents-alignment.md)
 - [Managed Agents API coverage](docs/managed-agents-api-coverage.md)
+- [Python SDK](docs/python-sdk.md)
 - [Agent versioning](docs/agent-versioning.md)
 - [Sandbox runtime](docs/sandbox-runtime.md)
 - [Model providers](docs/openai-compatible-providers.md)
@@ -241,6 +375,8 @@ Strict SDK parsing proves the covered response shapes are accepted by the pinned
 - [Deployments](docs/deployments.md)
 - [Webhooks](docs/webhooks.md)
 - [Votrix core architecture](docs/votrix-core-architecture.md)
+- [Public-beta readiness handoff](docs/handoffs/2026-07-15-public-beta-readiness.md)
+- [Changelog](CHANGELOG.md)
 
 ## Votrix core embedding
 
@@ -252,7 +388,12 @@ from votrix_managed_agents import create_app
 app = create_app(auth_provider=HostedAuthProvider())
 ```
 
-The Votrix core intentionally stops at workspace-scoped resources. Organization membership, SSO, RBAC, billing, quotas, metering, audit retention, managed sandbox fleets, and hosted secret policy belong in an injected private layer. See [Votrix core architecture](docs/votrix-core-architecture.md).
+The Votrix core intentionally stops at workspace-scoped resources. It includes
+the baseline tenant quotas and append-only raw audit/usage ledgers needed for a
+public beta. Organization membership, SSO, RBAC, Postgres RLS, paid billing and
+pricing, enterprise audit export/retention, managed sandbox fleets, and hosted
+secret policy still belong in an injected private layer. See
+[Votrix core architecture](docs/votrix-core-architecture.md).
 
 ## Security and maturity
 

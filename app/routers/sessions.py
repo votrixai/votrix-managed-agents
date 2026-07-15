@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
@@ -8,16 +9,25 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_contract import normalize_agent_tools, validate_mcp_bindings
+from app.agent_contract import (
+    normalize_agent_tools,
+    validate_mcp_bindings,
+)
 from app.auth import require_api_access
 from app.config import get_settings
 from app.db.engine import get_session, session_scope
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
+from app.db.queries import event_idempotency as idempotency_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from app.event_validation import validate_system_message_batch, validate_user_define_outcome_event
+from app.governance import (
+    TenantIdempotencyClaim,
+    claim_tenant_idempotency,
+    complete_tenant_idempotency,
+)
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse
 from app.models.events import (
@@ -29,31 +39,52 @@ from app.models.events import (
 )
 from app.models.sessions import (
     AgentReference,
+    AgentWithOverrides,
     SessionCreateRequest,
+    SessionDeletedResponse,
+    SessionFileResourceCreateRequest,
+    SessionResourceDeletedResponse,
+    SessionResourceResponse,
+    SessionResourceTokenRotateRequest,
     SessionResponse,
     SessionUpdateRequest,
     session_to_response,
 )
-from app.models.resources import GenericBody
+from app.runtime.agent_resolution import effective_agent_version, resolve_session_agent_config
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.runtime.sandbox_lifecycle import (
+    SandboxInputMismatchError,
     SandboxLifecycleConfigurationError,
+    SandboxLifecycleStateError,
+    append_session_file_to_sandbox,
+    build_appended_session_input_bundle,
+    build_session_input_bundle,
     delete_session_sandbox,
+    lock_session_sandbox_for_file_append,
     pause_session_sandbox,
     provision_session_sandbox,
     session_has_managed_sandbox,
 )
 from app.runtime.sandbox_providers import SandboxProviderError
-from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
+from app.runtime.work_queue import (
+    enqueue_session_run,
+    execute_work_item,
+    get_active_session_work,
+    should_execute_inline,
+    stop_work,
+)
 from app.runtime.vma_preview_bus import vma_preview_bus
 from app.session_resources import (
     create_session_resource,
     delete_session_resource_file,
     ensure_session_resource_deletable,
+    find_existing_file_session_resource,
     rotate_session_resource_token,
     session_has_memory_store,
     session_resource_response,
     session_resources_response,
+    validate_e2b_file_mount_path,
+    validate_user_message_file_references,
 )
 from app.session_state import (
     ACTIVE_STATUSES,
@@ -69,9 +100,58 @@ from app.session_state import (
     pending_action_ids,
     starts_work,
 )
+from app.workspace import workspace_id_or_default
 
 SESSION_LIST_STATUSES = {SESSION_IDLE, SESSION_RUNNING, SESSION_RESCHEDULING, SESSION_TERMINATED}
 VMA_PREVIEWABLE_EVENT_TYPES = frozenset({"agent.message", "agent.thinking"})
+IDEMPOTENCY_KEY_MAX_BYTES = 255
+
+
+def _event_submission_identity(
+    session_id: str,
+    body: SendEventsRequest,
+    idempotency_key: str,
+) -> tuple[str, str]:
+    _validate_idempotency_key(idempotency_key)
+    encoded_key = idempotency_key.encode("utf-8")
+    canonical_body = json.dumps(
+        body.model_dump(mode="json", exclude_none=False),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    request_material = f"vma.send_events.v1\0{session_id}\0{canonical_body}".encode("utf-8")
+    return (
+        hashlib.sha256(encoded_key).hexdigest(),
+        hashlib.sha256(request_material).hexdigest(),
+    )
+
+
+def _validate_idempotency_key(idempotency_key: str) -> None:
+    encoded_key = idempotency_key.encode("utf-8")
+    if (
+        not encoded_key
+        or len(encoded_key) > IDEMPOTENCY_KEY_MAX_BYTES
+        or idempotency_key.strip() != idempotency_key
+        or any(ord(character) < 32 or ord(character) == 127 for character in idempotency_key)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Idempotency-Key must be 1-255 bytes without surrounding whitespace or control characters",
+        )
+
+
+def _idempotency_error(claim: TenantIdempotencyClaim) -> HTTPException:
+    if claim.disposition == "conflict":
+        return HTTPException(
+            status_code=422,
+            detail="Idempotency-Key was already used with a different request",
+        )
+    return HTTPException(
+        status_code=409,
+        detail="A request with this Idempotency-Key is still in progress",
+    )
 
 router = APIRouter(
     prefix="/v1/sessions",
@@ -83,9 +163,32 @@ router = APIRouter(
 @router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(
     body: SessionCreateRequest,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description=(
+            "Optional tenant-scoped identity for safely retrying Session creation. "
+            "The native SDK supplies one automatically."
+        ),
+    ),
     db: AsyncSession = Depends(get_session),
 ):
-    agent_id, version = _resolve_agent_ref(body.agent)
+    idempotency_claim: TenantIdempotencyClaim | None = None
+    if idempotency_key is not None:
+        _validate_idempotency_key(idempotency_key)
+        idempotency_claim = await claim_tenant_idempotency(
+            db,
+            workspace_id=workspace_id_or_default(),
+            operation="sessions.create",
+            idempotency_key=idempotency_key,
+            request_payload=body.model_dump(mode="json", exclude_none=False),
+        )
+        if idempotency_claim.disposition == "replay":
+            return SessionResponse.model_validate(idempotency_claim.response_body)
+        if not idempotency_claim.acquired:
+            raise _idempotency_error(idempotency_claim)
+
+    agent_id, version, overrides = _resolve_agent_ref(body.agent)
     agent = await agents_q.get_agent(db, agent_id)
     if agent is None or agent.archived_at is not None:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -93,6 +196,12 @@ async def create_session(
     agent_version = await agents_q.get_agent_version(db, agent_id=agent.id, version=pinned_version)
     if agent_version is None:
         raise HTTPException(status_code=404, detail="Agent version not found")
+    agent_config = await resolve_session_agent_config(
+        db,
+        agent_version,
+        overrides,
+        workspace_id=agent.workspace_id,
+    )
 
     environment = await env_q.get_environment(db, body.environment_id)
     if environment is None or environment.deleted_at is not None or environment.archived_at is not None:
@@ -108,6 +217,7 @@ async def create_session(
         metadata=normalize_metadata(body.metadata),
         resources=[],
         vault_ids=vault_ids,
+        agent_config=agent_config,
     )
     for resource_data in body.resources:
         await create_session_resource(db, session, resource_data, allowed_types={"file", "github_repository", "memory_store"})
@@ -129,8 +239,16 @@ async def create_session(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SandboxProviderError as exc:
         raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
+    response = await _session_response(db, session)
+    if idempotency_claim is not None:
+        await complete_tenant_idempotency(
+            db,
+            idempotency_claim,
+            response_status=201,
+            response_body=response.model_dump(mode="json"),
+        )
     await db.commit()
-    return await _session_response(db, session)
+    return response
 
 
 @router.get("", response_model=ListResponse[SessionResponse])
@@ -194,7 +312,7 @@ async def retrieve_session(
     session_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    session = await sessions_q.get_session(db, session_id)
+    session = await sessions_q.get_session(db, session_id, for_update=True)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     return await _session_response(db, session)
@@ -207,7 +325,7 @@ async def update_session(
     body: SessionUpdateRequest,
     db: AsyncSession = Depends(get_session),
 ):
-    session = await sessions_q.get_session(db, session_id)
+    session = await sessions_q.get_session(db, session_id, for_update=True)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     if blocks_mutation(session.status):
@@ -244,15 +362,17 @@ async def archive_session(
     session_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    session = await sessions_q.get_session(db, session_id)
+    session = await sessions_q.get_session(db, session_id, for_update=True)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     if blocks_mutation(session.status):
         raise HTTPException(status_code=409, detail=f"Cannot archive a {session.status} session")
+    await _stop_active_session_work(db, session, reason="session.archived")
     try:
         await pause_session_sandbox(
             workspace_id=session.workspace_id,
             session_id=session.id,
+            db=db,
         )
     except SandboxProviderError as exc:
         raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
@@ -261,20 +381,22 @@ async def archive_session(
     return await _session_response(db, session)
 
 
-@router.delete("/{session_id}")
+@router.delete("/{session_id}", response_model=SessionDeletedResponse)
 async def delete_session(
     session_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    session = await sessions_q.get_session(db, session_id)
+    session = await sessions_q.get_session(db, session_id, for_update=True)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     if blocks_mutation(session.status):
         raise HTTPException(status_code=409, detail=f"Cannot delete a {session.status} session")
+    await _stop_active_session_work(db, session, reason="session.deleted")
     try:
         await delete_session_sandbox(
             workspace_id=session.workspace_id,
             session_id=session.id,
+            db=db,
         )
     except SandboxProviderError as exc:
         raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
@@ -294,16 +416,18 @@ async def cancel_session(
     session_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    session = await sessions_q.get_session(db, session_id)
+    session = await sessions_q.get_session(db, session_id, for_update=True)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
         await pause_session_sandbox(
             workspace_id=session.workspace_id,
             session_id=session.id,
+            db=db,
         )
     except SandboxProviderError as exc:
         raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
+    await _stop_active_session_work(db, session, reason="session.cancelled")
     stop_reason = {"type": "cancelled"}
     await sessions_q.update_session(db, session, status=SESSION_TERMINATED, stop_reason=stop_reason)
     await events_q.append_event(
@@ -334,6 +458,8 @@ async def resume_session(
     environment = await env_q.get_environment(db, session.environment_id)
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
+    if await get_active_session_work(db, session) is not None:
+        raise HTTPException(status_code=409, detail="Session already has active work")
     work = await enqueue_session_run(db, session, trigger="session.resume")
     await db.commit()
     if should_execute_inline(environment.config):
@@ -346,11 +472,41 @@ async def send_events(
     session_id: str,
     body: SendEventsRequest,
     background_tasks: BackgroundTasks,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description=(
+            "Optional identity for this event batch. Reusing the key with the same request "
+            "replays the original successful response without appending events or work."
+        ),
+    ),
     db: AsyncSession = Depends(get_session),
 ):
-    session = await sessions_q.get_session(db, session_id)
+    # Serialize submissions for one Session in Postgres. Besides making the
+    # idempotency lookup race-safe, this prevents concurrent requests from both
+    # validating against the same stale Session state.
+    session = await sessions_q.get_session(db, session_id, for_update=True)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    idempotency_identity: tuple[str, str] | None = None
+    if idempotency_key is not None:
+        idempotency_identity = _event_submission_identity(session_id, body, idempotency_key)
+        key_hash, request_sha256 = idempotency_identity
+        existing = await idempotency_q.get_submission(
+            db,
+            workspace_id=session.workspace_id,
+            session_id=session.id,
+            key_hash=key_hash,
+        )
+        if existing is not None:
+            if existing.request_sha256 != request_sha256:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Idempotency-Key was already used with a different request",
+                )
+            return SendEventsResponse.model_validate(existing.response_body)
+
     if session.archived_at is not None:
         raise HTTPException(status_code=409, detail="Session is archived")
     if session.status == SESSION_TERMINATED:
@@ -361,6 +517,9 @@ async def send_events(
 
     event_inputs = list(body.events)
     await _validate_event_batch(db, session, event_inputs)
+    if any(starts_work(event.type) or is_action_result(event.type) for event in event_inputs):
+        if await get_active_session_work(db, session) is not None:
+            raise HTTPException(status_code=409, detail="Session already has active work")
 
     appended = []
     should_run = False
@@ -385,6 +544,7 @@ async def send_events(
 
     work = None
     if should_interrupt:
+        await _stop_active_session_work(db, session, reason="session.interrupted")
         stop_reason = {"type": "interrupted"}
         await sessions_q.update_session(db, session, status=SESSION_IDLE, stop_reason=stop_reason)
         await events_q.append_event(
@@ -396,18 +556,49 @@ async def send_events(
     elif should_run:
         if resolved_required_actions:
             await sessions_q.update_session(db, session, status=SESSION_IDLE, stop_reason={"type": "action_submitted"})
+        work_metadata: dict[str, Any] = {"event_ids": [event.id for event in appended]}
+        if idempotency_identity is not None:
+            work_metadata["idempotency_key_hash"] = idempotency_identity[0]
         work = await enqueue_session_run(
             db,
             session,
             trigger="session.events",
-            metadata={"event_ids": [event.id for event in appended]},
+            metadata=work_metadata,
+        )
+    response = SendEventsResponse(data=appended)
+    if idempotency_identity is not None:
+        key_hash, request_sha256 = idempotency_identity
+        await idempotency_q.create_submission(
+            db,
+            workspace_id=session.workspace_id,
+            session_id=session.id,
+            key_hash=key_hash,
+            request_sha256=request_sha256,
+            work_id=work.id if work is not None else None,
+            response_status=200,
+            response_body=response.model_dump(mode="json"),
         )
     await db.commit()
 
     if work is not None and should_execute_inline(environment.config):
         background_tasks.add_task(execute_work_item, work.id)
 
-    return SendEventsResponse(data=appended)
+    return response
+
+
+async def _stop_active_session_work(
+    db: AsyncSession,
+    session,
+    *,
+    reason: str,
+) -> None:
+    work = await get_active_session_work(db, session, for_update=True)
+    if work is not None:
+        await stop_work(
+            db,
+            work,
+            payload={"type": reason, "session_id": session.id},
+        )
 
 
 @router.get("/{session_id}/events", response_model=ListResponse[SessionEventResponse])
@@ -450,7 +641,7 @@ async def list_session_events(
 async def stream_session_events(
     session_id: str,
     request: Request,
-    after_seq: int = Query(default=0, ge=0),
+    after_seq: int | None = Query(default=None, ge=0),
     event_deltas: list[str] | None = Query(default=None),
     event_deltas_brackets: list[str] | None = Query(default=None, alias="event_deltas[]"),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
@@ -468,7 +659,7 @@ async def stream_session_events(
 async def stream_session_events_alias(
     session_id: str,
     request: Request,
-    after_seq: int = Query(default=0, ge=0),
+    after_seq: int | None = Query(default=None, ge=0),
     event_deltas: list[str] | None = Query(default=None),
     event_deltas_brackets: list[str] | None = Query(default=None, alias="event_deltas[]"),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
@@ -482,21 +673,88 @@ async def stream_session_events_alias(
     )
 
 
-@router.post("/{session_id}/resources", status_code=201)
+@router.post(
+    "/{session_id}/resources",
+    response_model=SessionResourceResponse,
+    status_code=201,
+)
 async def add_session_resource(
     session_id: str,
-    body: GenericBody,
+    body: SessionFileResourceCreateRequest,
     db: AsyncSession = Depends(get_session),
 ):
-    session = await _must_get_session(db, session_id)
-    await _ensure_session_inputs_mutable(db, session)
     data = body.model_dump(mode="json")
+    session = await _must_get_session(db, session_id, for_update=True)
+    if session.archived_at is not None or session.status != SESSION_IDLE:
+        raise HTTPException(
+            status_code=409,
+            detail="Session file resources can only be added while the Session is idle and active",
+        )
+    existing = await find_existing_file_session_resource(db, session, data)
+    if existing is not None:
+        return session_resource_response(existing)
+
+    try:
+        has_managed_sandbox = await lock_session_sandbox_for_file_append(
+            db,
+            session=session,
+        )
+    except (SandboxInputMismatchError, SandboxLifecycleStateError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SandboxLifecycleConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    previous_bundle = None
+    environment = None
+    if has_managed_sandbox:
+        mount_path = str(
+            data.get("mount_path")
+            or f"/mnt/session/uploads/{str(data.get('file_id') or '')}"
+        )
+        validate_e2b_file_mount_path(mount_path)
+        agent_version = await agents_q.get_agent_version(
+            db,
+            agent_id=session.agent_id,
+            version=session.agent_version,
+            workspace_id=session.workspace_id,
+        )
+        if agent_version is None:
+            raise HTTPException(status_code=404, detail="Agent version not found")
+        environment = await env_q.get_environment(
+            db,
+            session.environment_id,
+            workspace_id=session.workspace_id,
+        )
+        if environment is None or environment.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Environment not found")
+        previous_bundle = await build_session_input_bundle(db, session, agent_version)
+
     resource = await create_session_resource(db, session, data, allowed_types={"file"})
+    if has_managed_sandbox:
+        assert previous_bundle is not None and environment is not None
+        try:
+            next_bundle = await build_appended_session_input_bundle(previous_bundle, resource)
+            await append_session_file_to_sandbox(
+                db,
+                session=session,
+                environment_config=environment.config,
+                previous_bundle=previous_bundle,
+                next_bundle=next_bundle,
+                new_path=str((resource.data or {}).get("mount_path") or ""),
+            )
+        except (SandboxInputMismatchError, SandboxLifecycleStateError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SandboxLifecycleConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except SandboxProviderError as exc:
+            raise HTTPException(status_code=503, detail="Sandbox provider is unavailable") from exc
     await db.commit()
     return session_resource_response(resource)
 
 
-@router.get("/{session_id}/resources")
+@router.get(
+    "/{session_id}/resources",
+    response_model=ListResponse[SessionResourceResponse],
+)
 async def list_session_resources(
     session_id: str,
     limit: int = 50,
@@ -513,7 +771,10 @@ async def list_session_resources(
     return paginate([session_resource_response(resource) for resource in resources], limit=limit, page=page)
 
 
-@router.get("/{session_id}/resources/{resource_id}")
+@router.get(
+    "/{session_id}/resources/{resource_id}",
+    response_model=SessionResourceResponse,
+)
 async def retrieve_session_resource(
     session_id: str,
     resource_id: str,
@@ -531,15 +792,28 @@ async def retrieve_session_resource(
     return session_resource_response(resource)
 
 
-@router.post("/{session_id}/resources/{resource_id}")
+async def _mutable_session_resource_dependency(
+    session_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Reject sealed Session inputs before FastAPI validates a mutation body."""
+
+    session = await _must_get_session(db, session_id)
+    await _ensure_session_inputs_mutable(db, session)
+    return session
+
+
+@router.post(
+    "/{session_id}/resources/{resource_id}",
+    response_model=SessionResourceResponse,
+)
 async def update_session_resource(
     session_id: str,
     resource_id: str,
-    body: GenericBody,
+    body: SessionResourceTokenRotateRequest,
+    session=Depends(_mutable_session_resource_dependency),
     db: AsyncSession = Depends(get_session),
 ):
-    session = await _must_get_session(db, session_id)
-    await _ensure_session_inputs_mutable(db, session)
     resource = await res_q.get_resource(
         db,
         resource_id=resource_id,
@@ -554,7 +828,10 @@ async def update_session_resource(
     return session_resource_response(resource)
 
 
-@router.delete("/{session_id}/resources/{resource_id}")
+@router.delete(
+    "/{session_id}/resources/{resource_id}",
+    response_model=SessionResourceDeletedResponse,
+)
 async def delete_session_resource(
     session_id: str,
     resource_id: str,
@@ -668,7 +945,7 @@ async def stream_session_thread_events(
     session_id: str,
     thread_id: str,
     request: Request,
-    after_seq: int = Query(default=0, ge=0),
+    after_seq: int | None = Query(default=None, ge=0),
     event_deltas: list[str] | None = Query(default=None),
     event_deltas_brackets: list[str] | None = Query(default=None, alias="event_deltas[]"),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
@@ -708,6 +985,8 @@ async def _validate_event_batch(db: AsyncSession, session, event_inputs: list) -
 
     if any(event_type in ACTION_RESULT_EVENTS for event_type in event_types):
         raise HTTPException(status_code=409, detail="Session is not waiting for action results")
+
+    await validate_user_message_file_references(db, session, event_inputs)
 
 async def _validate_action_results(db: AsyncSession, session, event_inputs: list) -> None:
     pending_ids = pending_action_ids(session.stop_reason)
@@ -797,19 +1076,25 @@ async def _merge_session_agent_overlay(db: AsyncSession, session, update: dict[s
     overlay = dict(details.get("agent") or {})
     tools = overlay.get("tools", version.tools)
     mcp_servers = overlay.get("mcp_servers", version.mcp_servers)
+    skills = overlay.get("skills", version.skills)
 
     if "tools" in update:
-        tools = update["tools"] or []
+        tools = update["tools"]
         if not isinstance(tools, list):
-            raise HTTPException(status_code=422, detail="agent.tools must be an array or null")
+            raise HTTPException(status_code=422, detail="agent.tools must be an array")
         tools = normalize_agent_tools(tools)
         overlay["tools"] = tools
     if "mcp_servers" in update:
-        mcp_servers = update["mcp_servers"] or []
+        mcp_servers = update["mcp_servers"]
         if not isinstance(mcp_servers, list):
-            raise HTTPException(status_code=422, detail="agent.mcp_servers must be an array or null")
+            raise HTTPException(status_code=422, detail="agent.mcp_servers must be an array")
         overlay["mcp_servers"] = mcp_servers
 
+    if not tools and skills:
+        raise HTTPException(
+            status_code=400,
+            detail="agent.tools cannot be cleared while the effective agent has skills",
+        )
     validate_mcp_bindings(mcp_servers, tools)
     details["agent"] = overlay
     return details
@@ -828,18 +1113,18 @@ async def _session_response(db: AsyncSession, session) -> SessionResponse:
 
 
 def _session_agent_snapshot(version, details: dict[str, Any]) -> dict[str, Any]:
-    overlay = dict(details.get("agent") or {})
+    effective = effective_agent_version(version, details)
     return {
         "id": version.agent_id,
         "type": "agent",
         "name": version.name,
         "version": version.version,
-        "model": version.model,
-        "system": version.system,
+        "model": effective.model,
+        "system": effective.system,
         "description": version.description,
-        "tools": overlay.get("tools", version.tools),
-        "mcp_servers": overlay.get("mcp_servers", version.mcp_servers),
-        "skills": version.skills,
+        "tools": effective.tools,
+        "mcp_servers": effective.mcp_servers,
+        "skills": effective.skills,
         "multiagent": version.multiagent,
     }
 
@@ -884,11 +1169,16 @@ async def _session_thread_response(db: AsyncSession, session, thread, *, archive
     status = data.get("status") or session.status
     if status not in {"running", "idle", "rescheduling", "terminated"}:
         status = "idle"
+    fallback_agent = None
+    if version is not None:
+        fallback_agent = _session_thread_agent_snapshot(
+            effective_agent_version(version, session.status_details or {})
+        )
     return {
         "id": getattr(thread, "id", _primary_thread_id(session)),
         "type": "session_thread",
         "session_id": session.id,
-        "agent": data.get("agent") or (_session_thread_agent_snapshot(version) if version is not None else None),
+        "agent": data.get("agent") or fallback_agent,
         "status": status,
         "parent_thread_id": data.get("parent_thread_id"),
         "stats": data.get("stats") or {},
@@ -994,14 +1284,23 @@ def _event_thread_id(event) -> str | None:
     return None
 
 
-def _resolve_agent_ref(agent: str | AgentReference) -> tuple[str, int | None]:
+def _resolve_agent_ref(
+    agent: str | AgentReference | AgentWithOverrides,
+) -> tuple[str, int | None, AgentWithOverrides | None]:
     if isinstance(agent, str):
-        return agent, None
-    return agent.id, agent.version
+        return agent, None, None
+    if isinstance(agent, AgentWithOverrides):
+        return agent.id, agent.version, agent
+    return agent.id, agent.version, None
 
 
-async def _must_get_session(db: AsyncSession, session_id: str):
-    session = await sessions_q.get_session(db, session_id)
+async def _must_get_session(
+    db: AsyncSession,
+    session_id: str,
+    *,
+    for_update: bool = False,
+):
+    session = await sessions_q.get_session(db, session_id, for_update=for_update)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
@@ -1022,15 +1321,30 @@ async def _ensure_session_inputs_mutable(db: AsyncSession, session) -> None:
 async def _stream_response(
     session_id: str,
     request: Request,
-    after_seq: int,
+    after_seq: int | None,
     thread_id: str | None = None,
     event_deltas: frozenset[str] = frozenset(),
 ) -> StreamingResponse:
-    async def event_generator():
+    workspace = getattr(request.state, "current_workspace", None)
+    workspace_id = getattr(workspace, "id", None)
+    if after_seq is None:
+        # The official SDK does not send a cursor for a newly opened stream.
+        # Snapshot the durable head before returning the streaming response so
+        # callers that open the stream and then send a turn only receive events
+        # created after the connection. Native callers can still request full
+        # replay explicitly with ``after_seq=0``.
+        async with session_scope() as db:
+            current_seq = await events_q.get_latest_event_seq(
+                db,
+                session_id=session_id,
+                workspace_id=workspace_id,
+            )
+    else:
         current_seq = after_seq
+
+    async def event_generator():
+        nonlocal current_seq
         interval = max(float(get_settings().vma_event_poll_interval_seconds), 0.05)
-        workspace = getattr(request.state, "current_workspace", None)
-        workspace_id = getattr(workspace, "id", None)
         preview_event_types: dict[str, str] = {}
         durable_preview_event_ids: set[str] = set()
 
@@ -1131,7 +1445,7 @@ def _requested_event_deltas(
     return requested
 
 
-def _resume_after_seq(after_seq: int, last_event_id: str | None) -> int:
+def _resume_after_seq(after_seq: int | None, last_event_id: str | None) -> int | None:
     if last_event_id is None:
         return after_seq
     try:
@@ -1140,7 +1454,7 @@ def _resume_after_seq(after_seq: int, last_event_id: str | None) -> int:
         raise HTTPException(status_code=400, detail="Last-Event-ID must be an event sequence number") from exc
     if header_seq < 0:
         raise HTTPException(status_code=400, detail="Last-Event-ID must be an event sequence number")
-    return max(after_seq, header_seq)
+    return max(after_seq or 0, header_seq)
 
 
 def _preview_frame_requested(

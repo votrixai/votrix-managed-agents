@@ -3,21 +3,21 @@ from __future__ import annotations
 import json
 import re
 import stat
+from decimal import Decimal
 from pathlib import Path
+
+from app.config import Settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET_BASES = {
-    "api-key",
     "database-url",
     "e2b-api-key",
     "encryption-key",
     "openrouter-api-key",
-    "public-base-url",
     "s3-access-key-id",
     "s3-bucket-name",
     "s3-endpoint-url",
-    "s3-public-url",
     "s3-secret-access-key",
 }
 
@@ -67,7 +67,7 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         )
 
 
-def test_cloud_run_manifests_enforce_single_instance_and_health_probes() -> None:
+def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> None:
     for environment in ("production", "staging"):
         manifest = _read(f"service.{environment}.yaml")
         flat = _flatten(manifest)
@@ -85,9 +85,8 @@ def test_cloud_run_manifests_enforce_single_instance_and_health_probes() -> None
         assert "VMA_RUNTIME_BACKEND" not in manifest
         assert "sqlite" not in manifest.lower()
 
-        expected_min_scale = "1" if environment == "production" else "0"
         assert re.search(
-            rf'autoscaling\.knative\.dev/minScale:\s*["\']?{expected_min_scale}["\']?',
+            r'autoscaling\.knative\.dev/minScale:\s*["\']?1["\']?',
             manifest,
         )
 
@@ -101,6 +100,43 @@ def test_cloud_run_secret_names_are_isolated_from_votrix_backend() -> None:
         suffix = "-staging" if environment == "staging" else ""
         expected_names = {f"vma-{base}{suffix}" for base in SECRET_BASES}
         assert set(names) == expected_names
+
+
+def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
+    expected = {
+        "VMA_EMBEDDED_WORKER_ENABLED": "true",
+        "VMA_WORKER_CONCURRENCY": "2",
+        "VMA_WORKER_POLL_INTERVAL_SECONDS": "0.5",
+        "VMA_WORKER_LEASE_SECONDS": "120",
+        "VMA_PUBLIC_GA_ONLY": "true",
+        "VMA_CORS_ORIGINS": "https://docs.votrixai.com",
+    }
+    for environment in ("production", "staging"):
+        flat = _flatten(_read(f"service.{environment}.yaml"))
+        for name, value in expected.items():
+            assert re.search(
+                rf'name:\s*{re.escape(name)}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                flat,
+            ), f"{name} is not pinned for {environment}"
+
+
+def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() -> None:
+    deployment_files = (
+        ".env.production.example",
+        ".env.staging.example",
+        "service.production.yaml",
+        "service.staging.yaml",
+        "scripts/gcloud/1-create-secrets.sh",
+        "scripts/gcloud/README.md",
+    )
+    for relative_path in deployment_files:
+        content = _read(relative_path)
+        assert "VMA_API_KEY=" not in content
+        assert "vma-api-key" not in content
+
+    assert (ROOT / "scripts/bootstrap_api_key.py").is_file()
+    readme = _read("scripts/gcloud/README.md")
+    assert "python -m scripts.bootstrap_api_key" in readme
 
 
 def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
@@ -143,6 +179,32 @@ def test_cloud_e2b_template_resources_match_the_built_profile() -> None:
         assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
 
 
+def test_e2b_cost_estimate_defaults_are_pinned_consistently() -> None:
+    expected = {
+        "VMA_E2B_COST_ESTIMATION_ENABLED": "true",
+        "VMA_E2B_VCPU_SECOND_USD": "0.000014",
+        "VMA_E2B_GIB_SECOND_USD": "0.0000045",
+    }
+    fields = Settings.model_fields
+    assert fields["vma_e2b_cost_estimation_enabled"].default is True
+    assert fields["vma_e2b_vcpu_second_usd"].default == Decimal(
+        expected["VMA_E2B_VCPU_SECOND_USD"]
+    )
+    assert fields["vma_e2b_gib_second_usd"].default == Decimal(
+        expected["VMA_E2B_GIB_SECOND_USD"]
+    )
+
+    dotenv = _read(".env.example")
+    for name, value in expected.items():
+        assert re.search(rf"^{name}={re.escape(value)}$", dotenv, re.MULTILINE)
+        for environment in ("production", "staging"):
+            manifest = _read(f"service.{environment}.yaml")
+            assert re.search(
+                rf'- name: {name}\s+value: ["\']{re.escape(value)}["\']',
+                manifest,
+            )
+
+
 def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
     cloudbuild = _flatten(_read("cloudbuild.yaml"))
     migration_deploy = cloudbuild.find("gcloud run jobs deploy")
@@ -172,6 +234,25 @@ def test_checkpoint_database_url_is_an_optional_application_override() -> None:
     example = _read(".env.example")
     assert "VMA_CHECKPOINT_DATABASE_URL=" in example
     assert "derive" in example.lower()
+
+
+def test_object_storage_has_no_public_bucket_url_configuration() -> None:
+    from app.config import Settings
+
+    deployment_files = (
+        ".env.example",
+        ".env.production.example",
+        ".env.staging.example",
+        "service.production.yaml",
+        "service.staging.yaml",
+        "scripts/gcloud/1-create-secrets.sh",
+    )
+    for relative_path in deployment_files:
+        content = _read(relative_path)
+        assert "S3_PUBLIC_URL" not in content
+        assert "vma-s3-public-url" not in content
+
+    assert "s3_public_url" not in Settings.model_fields
 
 
 def test_env_examples_separate_required_values_from_optional_overrides() -> None:
