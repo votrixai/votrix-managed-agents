@@ -189,7 +189,6 @@ PARAMETER_DESCRIPTIONS = {
     "version": "Version number of the resource addressed by this request.",
     "Last-Event-ID": "Last received event sequence. The stream resumes after this event.",
     "Anthropic-Worker-ID": "Compatibility header containing the stable identifier of a self-hosted worker.",
-    "x-worker-token": "Secret token used to authenticate a self-hosted environment worker.",
     "votrix-managed-agents-beta": (
         "Required Votrix Managed Agents preview selector. "
         f"Use `{VOTRIX_MANAGED_AGENTS_BETA}`."

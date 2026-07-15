@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 
 
@@ -29,11 +30,9 @@ def test_asgi_entrypoint_exposes_app():
     assert isinstance(app, FastAPI)
 
 
-def test_vma_settings_parse_tenant_and_provider_configuration(monkeypatch):
+def test_vma_settings_parse_provider_configuration(monkeypatch):
     from app.config import Settings
 
-    monkeypatch.setenv("VMA_API_KEYS", "key-a,key-b")
-    monkeypatch.setenv("VMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
     monkeypatch.setenv(
         "VMA_MODEL_PROVIDERS",
         '{"gateway":{"adapter":"openai","base_url":"https://models.example/v1"}}',
@@ -44,8 +43,6 @@ def test_vma_settings_parse_tenant_and_provider_configuration(monkeypatch):
 
     settings = Settings(_env_file=None)
 
-    assert settings.vma_api_keys == ["key-a", "key-b"]
-    assert settings.vma_api_key_workspaces == {"key-a": "ws_a", "key-b": "ws_b"}
     assert settings.vma_model_providers["gateway"]["adapter"] == "openai"
     assert settings.vma_checkpoint_database_url == "memory://"
     assert settings.vma_allow_unsafe_local_sandbox is True
@@ -71,16 +68,34 @@ class _HostedAuthProvider:
         return CurrentWorkspace(id="ws_test", slug="test", source="test")
 
 
-async def test_default_auth_fails_closed_outside_local_mode(client, monkeypatch):
+@pytest.mark.parametrize("app_env", ["local", "test", "production"])
+async def test_default_auth_uses_database_keys_and_ignores_legacy_environment_auth(
+    client,
+    monkeypatch,
+    app_env,
+):
     from app.config import get_settings
-    from tests.conftest import TEST_HEADERS
+    from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("VMA_API_KEY", "")
-    monkeypatch.setenv("VMA_API_KEYS", "")
+    monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.setenv("VMA_API_KEY", "legacy-single-key")
+    monkeypatch.setenv("VMA_API_KEYS", "legacy-list-key")
+    monkeypatch.setenv(
+        "VMA_API_KEY_WORKSPACES",
+        '{"legacy-single-key":"legacy_ws","legacy-list-key":"legacy_ws"}',
+    )
+    monkeypatch.setenv("VMA_ALLOW_ANONYMOUS_LOCAL", "true")
     get_settings.cache_clear()
 
-    response = await client.get("/v1/agents", headers=TEST_HEADERS)
+    missing = await client.get("/v1/agents", headers=UNAUTHENTICATED_TEST_HEADERS)
+    assert missing.status_code == 401
 
-    assert response.status_code == 401
-    assert "not configured" in response.json()["error"]["message"]
+    for token in ("legacy-single-key", "legacy-list-key"):
+        legacy = await client.get(
+            "/v1/agents",
+            headers={**UNAUTHENTICATED_TEST_HEADERS, "x-api-key": token},
+        )
+        assert legacy.status_code == 401
+
+    authenticated = await client.get("/v1/agents", headers=TEST_HEADERS)
+    assert authenticated.status_code == 200, authenticated.text

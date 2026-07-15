@@ -90,6 +90,10 @@ Set up a local SQLite instance:
 cp .env.example .env
 uv sync
 uv run alembic upgrade head
+uv run python -m scripts.bootstrap_api_key \
+  --workspace-id wrkspc_acme \
+  --workspace-slug acme \
+  --workspace-name "Acme"
 uv run uvicorn votrix_managed_agents:create_app --factory --reload
 ```
 
@@ -101,14 +105,15 @@ missing documentation dependencies, chooses an available docs port starting at
 bash run.sh --migrate
 ```
 
-The local configuration permits anonymous requests when no API key is configured.
-Hosted environments use Postgres-backed tenant API keys and fail closed until
-the first administrator key is created with
-`python -m scripts.bootstrap_api_key`; they do not share a static
-`VMA_API_KEY`. Production Vault credentials also require `VMA_ENCRYPTION_KEY`
-unless an injected secret provider replaces database-backed secrets.
+Local, development, staging, and production environments all require a
+database-backed workspace API key. They fail closed until the first
+administrator key is created with `python -m scripts.bootstrap_api_key`; there
+is no process-global or anonymous authentication mode. Production Vault
+credentials also require `VMA_ENCRYPTION_KEY` unless an injected secret
+provider replaces database-backed secrets.
 
-After migrations, create the first key from a trusted administrator environment:
+After migrations, create the first key from a trusted administrator environment
+if the quick-start command above has not already done so:
 
 ```bash
 uv run python -m scripts.bootstrap_api_key \
@@ -118,8 +123,28 @@ uv run python -m scripts.bootstrap_api_key \
 ```
 
 The command writes one JSON object containing the plaintext secret exactly
-once; send it directly to the intended secret manager. Subsequent key creation,
-rotation, and revocation should use the authenticated `/v1/api_keys` lifecycle.
+once; send it directly to the intended secret manager. Local and development
+clients may supply that workspace secret as `VOTRIX_API_KEY`, while the VMA
+service itself reads authentication keys only from the database. Subsequent key
+creation, rotation, and revocation should use the authenticated `/v1/api_keys`
+lifecycle.
+
+For the local SDK or pilot script, place the returned plaintext in the client
+environment as `VOTRIX_API_KEY` (not in the VMA service `.env`). In the API
+Playground, enter the same value in the `x-api-key` authentication field. Raw
+HTTP clients may use either supported header:
+
+```bash
+export VOTRIX_API_KEY='<secret from bootstrap output>'
+curl http://127.0.0.1:8080/v1/capabilities \
+  --header "x-api-key: $VOTRIX_API_KEY" \
+  --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
+
+# Equivalent authentication header:
+curl http://127.0.0.1:8080/v1/capabilities \
+  --header "Authorization: Bearer $VOTRIX_API_KEY" \
+  --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
+```
 
 Check the service:
 
@@ -299,8 +324,9 @@ votrix-managed-agents-beta: votrix-managed-agents-2026-04-01
 
 Authentication accepts `x-api-key` or a bearer token. API keys resolve to
 workspaces without putting workspace IDs into public paths, and callers cannot
-select a tenant with an untrusted workspace header. Hosted keys are hashed at
-rest, return plaintext only on create/rotate, and are independently revocable.
+select a tenant with an untrusted workspace header. Database-backed keys are
+hashed at rest, return plaintext only on create/rotate, and are independently
+revocable in every environment.
 Every response carries its request ID; errors expose a stable code suitable for
 programmatic handling. The official SDK contract suite demonstrates how to
 point `AsyncAnthropic` at the VMA base URL; route coverage is documented in

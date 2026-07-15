@@ -1,5 +1,4 @@
 import asyncio
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -7,7 +6,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
-from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import environments as env_q
 from app.db.queries import resources as res_q
@@ -157,22 +155,10 @@ async def delete_environment(
 
 async def require_worker_access(
     request: Request,
-    x_worker_token: str | None = Header(default=None, alias="x-worker-token"),
 ) -> None:
     workspace = getattr(request.state, "current_workspace", None)
     if workspace is None or WORKER_SCOPE not in workspace.scopes:
         raise HTTPException(status_code=403, detail="API key is missing required scope: worker")
-
-    # Database API keys carry a tenant-bound worker scope and are sufficient on
-    # their own. Keep the legacy process-wide token only for local/env-key
-    # deployments while they migrate to scoped keys.
-    if workspace.source == "database_api_key":
-        return None
-    expected = get_settings().vma_worker_token
-    if not expected:
-        return None
-    if not x_worker_token or not secrets.compare_digest(x_worker_token, expected):
-        raise HTTPException(status_code=401, detail="Invalid worker token")
     return None
 
 

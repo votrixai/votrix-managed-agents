@@ -96,8 +96,6 @@ spec:
               value: "true"
             - name: VMA_E2B_ALLOW_PUBLIC_TRAFFIC
               value: "false"
-            - name: VMA_ALLOW_ANONYMOUS_LOCAL
-              value: "false"
             - name: VMA_ALLOW_PLAINTEXT_SECRETS_LOCAL
               value: "false"
             - name: VMA_REQUIRE_BETA_HEADER

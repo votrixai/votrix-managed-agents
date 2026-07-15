@@ -14,8 +14,9 @@ Release channel: public beta
 The repository now contains the minimum platform foundation for a controlled
 multi-tenant public beta:
 
-- Hosted requests fail closed through database-backed workspace API keys with
-  lifecycle, expiration, revocation, rotation, and small scopes.
+- Requests in local, development, staging, and production fail closed through
+  database-backed workspace API keys with lifecycle, expiration, revocation,
+  rotation, and small scopes.
 - Request IDs, stable error codes, and quota headers provide a supportable
   client contract.
 - Hosted Session execution uses durable Postgres work leases with generations,
@@ -70,8 +71,9 @@ Explicitly deferred:
 
 ### API keys
 
-- Hosted environments select `DatabaseApiKeyAuthProvider`; local/test retains
-  the explicit environment-key/anonymous developer path.
+- Local, development, staging, and production select
+  `DatabaseApiKeyAuthProvider`; the trusted CLI creates the first workspace and
+  administrator key after migrations.
 - Key plaintext appears only in create/rotate output. The database stores a
   SHA-256 digest and non-secret metadata.
 - `api` grants normal API access, `api_keys:manage` protects key lifecycle, and
@@ -154,7 +156,7 @@ Explicitly deferred:
 
 | Area | Primary files |
 | --- | --- |
-| Hosted auth and scopes | `app/auth.py`, `app/workspace.py`, `app/db/queries/api_keys.py` |
+| Workspace auth and scopes | `app/auth.py`, `app/workspace.py`, `app/db/queries/api_keys.py` |
 | API-key HTTP lifecycle and bootstrap | `app/routers/api_keys.py`, `app/models/api_keys.py`, `scripts/bootstrap_api_key.py` |
 | Request IDs and error contract | `app/factory.py`, `app/errors.py`, `app/models/status.py` |
 | Governance service and headers | `app/governance.py`, `app/governance_runtime.py`, `app/db/queries/governance.py` |
@@ -191,18 +193,19 @@ the final revision:
    idempotency, indexes, constraints, and PostgreSQL/SQLite append-only
    triggers.
 
-Deploy/migrate before enabling hosted database auth or the new application
-revision. The GCP scripts run a dedicated migration Job and replace the service
-only after it succeeds. A downgrade from `0015` drops governance ledgers and
-their data; treat rollback as a data-loss decision, not a routine retry.
+Deploy/migrate before starting the new application revision, then bootstrap the
+first workspace key before sending authenticated traffic. The GCP scripts run a
+dedicated migration Job and replace the service only after it succeeds. A
+downgrade from `0015` drops governance ledgers and their data; treat rollback as
+a data-loss decision, not a routine retry.
 
 ## Configuration knobs
 
 | Purpose | Settings |
 | --- | --- |
-| Environment/auth | `APP_ENV`, `VMA_ALLOW_ANONYMOUS_LOCAL`, local-only `VMA_API_KEY`/`VMA_API_KEYS`, `VMA_REQUIRE_BETA_HEADER`, `VMA_REQUIRE_ANTHROPIC_VERSION_HEADER` |
+| Environment/protocol | `APP_ENV`, `VMA_REQUIRE_BETA_HEADER`, `VMA_REQUIRE_ANTHROPIC_VERSION_HEADER`; authentication keys are database records created through the bootstrap/API lifecycle |
 | Governance | `VMA_GOVERNANCE_ENABLED`, `VMA_REQUESTS_PER_MINUTE`, `VMA_MAX_ACTIVE_WORK`, `VMA_DAILY_MODEL_TOKENS`, `VMA_WORKSPACE_STORAGE_BYTES` |
-| Durable consumer | `VMA_EMBEDDED_WORKER_ENABLED`, `VMA_WORKER_CONCURRENCY`, `VMA_WORKER_POLL_INTERVAL_SECONDS`, `VMA_WORKER_LEASE_SECONDS`, `VMA_WORKER_TOKEN` |
+| Durable consumer | `VMA_EMBEDDED_WORKER_ENABLED`, `VMA_WORKER_CONCURRENCY`, `VMA_WORKER_POLL_INTERVAL_SECONDS`, `VMA_WORKER_LEASE_SECONDS`; external workers use tenant-bound database API keys with `worker` scope |
 | Public surface/browser | `VMA_PUBLIC_GA_ONLY`, `VMA_CORS_ORIGINS` |
 | Database/checkpoints | `DATABASE_URL`, optional `VMA_CHECKPOINT_DATABASE_URL` |
 | Private object storage | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `S3_REGION` |
@@ -216,7 +219,6 @@ Hosted public beta should keep:
 
 ```dotenv
 APP_ENV=production
-VMA_ALLOW_ANONYMOUS_LOCAL=false
 VMA_GOVERNANCE_ENABLED=true
 VMA_EMBEDDED_WORKER_ENABLED=true
 VMA_PUBLIC_GA_ONLY=true
@@ -245,7 +247,9 @@ uv run python -m scripts.bootstrap_api_key \
 The last command writes the plaintext API key once. Run it in a trusted
 administrator environment and move the output directly to the intended secret
 store. Do not write it into the repository or service logs. Use the
-authenticated API for later keys and rotations.
+authenticated API for later keys and rotations. Local/development clients may
+read the stored workspace secret through `VOTRIX_API_KEY`; the service does not
+use that client variable as a process-global authentication setting.
 
 ### Checked-in Cloud Run path
 
@@ -306,7 +310,7 @@ credentials.
 
 | Gate | Command | Final result |
 | --- | --- | --- |
-| Server suite | `.venv/bin/pytest -q` | `PASS — 435 passed, 3 PostgreSQL tests skipped` |
+| Server suite | `.venv/bin/pytest -q` | `PASS — 439 passed, 3 PostgreSQL tests skipped` |
 | Anthropic consumer matrix | `./scripts/test-backend-contract-matrix.sh` | `PASS — 4 passed on anthropic 0.97.0 and 4 passed on 0.116.0` |
 | Migration head/check | isolated SQLite `alembic upgrade head` and `alembic check` | `PASS — full 0001–0015 upgrade; no new operations detected` |
 | PostgreSQL migration/concurrency | PostgreSQL-marked tests and production-like `alembic` gate | `NOT RUN — VMA_TEST_POSTGRES_URL was unavailable` |

@@ -12,7 +12,6 @@ from tests.conftest import TEST_HEADERS
 @pytest.fixture
 def public_ga_app(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
-    monkeypatch.setenv("VMA_ALLOW_ANONYMOUS_LOCAL", "true")
     monkeypatch.setenv("VMA_PUBLIC_GA_ONLY", "true")
     get_settings.cache_clear()
     app = create_app()

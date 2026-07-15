@@ -24,9 +24,6 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_api_base: str = ""
 
-    vma_api_key: str = ""
-    vma_api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    vma_allow_anonymous_local: bool = True
     vma_require_beta_header: bool = True
     vma_require_anthropic_version_header: bool = True
     vma_default_model_provider: str = "anthropic"
@@ -60,13 +57,10 @@ class Settings(BaseSettings):
     vma_web_fetch_max_bytes: int = 1_000_000
     vma_web_search_endpoint: str = ""
     vma_web_allow_private_networks: bool = False
-    vma_default_workspace_id: str = "wrkspc_default"
-    vma_api_key_workspaces: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
     vma_event_poll_interval_seconds: float = 0.5
     vma_max_file_upload_bytes: int = 50 * 1024 * 1024
     vma_max_session_input_bytes: int = 512 * 1024 * 1024
     vma_max_skill_archive_bytes: int = 25 * 1024 * 1024
-    vma_worker_token: str = ""
     vma_embedded_worker_enabled: bool = False
     vma_worker_concurrency: int = 1
     vma_worker_poll_interval_seconds: float = 0.5
@@ -96,15 +90,6 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     log_level: str = "INFO"
 
-    @field_validator("vma_api_keys", mode="before")
-    @classmethod
-    def parse_api_keys(cls, value):
-        if value is None or value == "":
-            return []
-        if isinstance(value, str):
-            return [part.strip() for part in value.split(",") if part.strip()]
-        return value
-
     @field_validator("vma_cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):
@@ -117,15 +102,6 @@ class Settings(BaseSettings):
     @field_validator("vma_model_providers", mode="before")
     @classmethod
     def parse_model_providers(cls, value):
-        if value is None or value == "":
-            return {}
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
-
-    @field_validator("vma_api_key_workspaces", mode="before")
-    @classmethod
-    def parse_api_key_workspaces(cls, value):
         if value is None or value == "":
             return {}
         if isinstance(value, str):

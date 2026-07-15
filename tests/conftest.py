@@ -5,18 +5,58 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.config import get_settings
-from app.db.engine import get_engine, reset_engine_for_tests
-from app.db.models import Base
-from app.workspace import default_workspace, set_current_workspace
+from app.db.engine import get_engine, reset_engine_for_tests, session_scope
+from app.db.models import Base, Workspace
+from app.db.queries import api_keys as api_keys_q
+from app.workspace import DEFAULT_WORKSPACE_ID, default_workspace, set_current_workspace
 
-TEST_HEADERS = {
+UNAUTHENTICATED_TEST_HEADERS = {
     "anthropic-beta": "managed-agents-2026-04-01",
     "anthropic-version": "2023-06-01",
+}
+TEST_API_KEY = "vma_test_bootstrap_default_workspace_key"
+TEST_HEADERS = {
+    **UNAUTHENTICATED_TEST_HEADERS,
+    "x-api-key": TEST_API_KEY,
 }
 
 VOTRIX_MANAGED_AGENTS_HEADERS = {
     "votrix-managed-agents-beta": "votrix-managed-agents-2026-04-01",
+    "x-api-key": TEST_API_KEY,
 }
+
+
+async def _seed_database_api_key(
+    *,
+    token: str,
+    workspace_id: str,
+    scopes: tuple[str, ...] = (
+        api_keys_q.API_SCOPE,
+        api_keys_q.API_KEYS_MANAGE_SCOPE,
+        api_keys_q.WORKER_SCOPE,
+    ),
+) -> str:
+    async with session_scope() as db:
+        workspace = await db.get(Workspace, workspace_id)
+        if workspace is None:
+            db.add(
+                Workspace(
+                    id=workspace_id,
+                    slug=workspace_id,
+                    name=f"Test workspace {workspace_id}",
+                    metadata_={"provisioned_by": "test_bootstrap"},
+                )
+            )
+        await api_keys_q.create_api_key(
+            db,
+            workspace_id=workspace_id,
+            name="Test bootstrap key",
+            token=token,
+            scopes=scopes,
+            created_by="test_bootstrap",
+        )
+        await db.commit()
+    return token
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +152,10 @@ async def test_database(tmp_path, monkeypatch):
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _seed_database_api_key(
+        token=TEST_API_KEY,
+        workspace_id=DEFAULT_WORKSPACE_ID,
+    )
     yield
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -119,6 +163,11 @@ async def test_database(tmp_path, monkeypatch):
     get_settings.cache_clear()
     set_current_workspace(default_workspace())
     os.environ.pop("DATABASE_URL", None)
+
+
+@pytest.fixture
+def database_api_key_factory():
+    return _seed_database_api_key
 
 
 @pytest.fixture

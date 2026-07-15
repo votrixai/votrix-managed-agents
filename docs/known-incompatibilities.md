@@ -521,12 +521,11 @@ Applications must poll or stream session events until a webhook delivery service
 
 ### Authentication is workspace-level only
 
-Hosted VMA uses database-backed API keys that resolve to exactly one workspace.
-Keys are hashed at rest, return plaintext only during create/rotate, can expire
-or be revoked independently, and use the small `api`, `api_keys:manage`, and
-`worker` scope set. A trusted CLI bootstraps the first management key without a
-permanent global hosted key. Local/test mode retains the explicitly configured
-environment-key or anonymous developer path.
+Every supported VMA environment uses database-backed API keys that resolve to
+exactly one workspace. Keys are hashed at rest, return plaintext only during
+create/rotate, can expire or be revoked independently, and use the small `api`,
+`api_keys:manage`, and `worker` scope set. A trusted CLI bootstraps the first
+management key without a process-global key or anonymous authentication path.
 
 This does not add users, organizations, memberships, invitations, human/service
 account identity, roles, SSO, SCIM, support access, or policy evaluation.

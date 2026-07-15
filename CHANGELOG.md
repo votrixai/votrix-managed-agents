@@ -55,9 +55,13 @@ or paid billing readiness. The beta is BYOK/free.
 
 ### Changed
 
-- Hosted staging/production authentication now fails closed through tenant
-  database keys instead of a shared static `VMA_API_KEY`; local/test retains
-  the explicit environment-key or anonymous development path.
+- Authentication now fails closed through database-backed workspace keys in
+  local, development, staging, and production. The environment-key and
+  anonymous development paths were removed; the trusted CLI bootstraps the
+  first key.
+- External HTTP workers now use tenant-bound database API keys with `worker`
+  scope through the standard `x-api-key` or Bearer schemes; the separate static
+  worker-authentication secret was removed.
 - Hosted execution uses embedded durable consumers while the reference Cloud
   Run topology remains one warm instance, one web process, and `maxScale=1`.
 - Object storage is private. VMA serves authenticated downloads and requires no

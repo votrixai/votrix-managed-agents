@@ -14,6 +14,7 @@ from anthropic._streaming import SSEDecoder  # noqa: E402
 from anthropic.types.beta.sessions.beta_managed_agents_stream_session_events import (  # noqa: E402
     BetaManagedAgentsStreamSessionEvents,
 )
+from tests.conftest import TEST_API_KEY  # noqa: E402
 
 pytestmark = pytest.mark.contract
 
@@ -38,7 +39,7 @@ async def anthropic_client():
         base_url="http://testserver",
     ) as http_client:
         sdk = AsyncAnthropic(
-            api_key="test-contract-key",
+            api_key=TEST_API_KEY,
             base_url="http://testserver",
             default_headers={
                 "anthropic-beta": MANAGED_AGENTS_BETA,
@@ -52,7 +53,7 @@ async def anthropic_client():
 
 
 def test_anthropic_sdk_exposes_expected_managed_agents_surface():
-    client = AsyncAnthropic(api_key="test-contract-key")
+    client = AsyncAnthropic(api_key=TEST_API_KEY)
 
     expected = {
         "agents": {"create", "retrieve", "update", "list", "archive", "versions"},

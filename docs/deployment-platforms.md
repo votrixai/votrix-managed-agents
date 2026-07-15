@@ -49,12 +49,13 @@ S3-compatible bucket for uploaded bytes and Skill archives. No public bucket
 URL is required; authenticated VMA endpoints serve downloads. Public GA hides
 the presign/complete upload routes.
 
-Hosted authentication is database-backed and fails closed until a trusted
-administrator runs `python -m scripts.bootstrap_api_key` after migrations. The
-service enforces request, active-work, daily model-token, and stored-byte
-limits and writes append-only raw audit/usage facts. These are public-beta
-governance controls, not Organization RBAC/SSO, Postgres RLS, priced billing,
-or enterprise audit export/retention.
+Authentication is database-backed in local, development, staging, and
+production, and fails closed until a trusted administrator runs
+`python -m scripts.bootstrap_api_key` after migrations. The service enforces
+request, active-work, daily model-token, and stored-byte limits and writes
+append-only raw audit/usage facts. These are public-beta governance controls,
+not Organization RBAC/SSO, Postgres RLS, priced billing, or enterprise audit
+export/retention.
 
 ## Release flow
 

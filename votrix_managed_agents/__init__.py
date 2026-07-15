@@ -1,6 +1,10 @@
 from importlib.metadata import PackageNotFoundError, version
 
-from app.auth import AuthProvider, DatabaseApiKeyAuthProvider, EnvApiKeyAuthProvider, RequestCredentials
+from app.auth import (
+    AuthProvider,
+    DatabaseApiKeyAuthProvider,
+    RequestCredentials,
+)
 from app.factory import create_app
 from app.workspace import CurrentWorkspace, default_workspace
 
@@ -13,7 +17,6 @@ __all__ = [
     "AuthProvider",
     "CurrentWorkspace",
     "DatabaseApiKeyAuthProvider",
-    "EnvApiKeyAuthProvider",
     "RequestCredentials",
     "__version__",
     "create_app",

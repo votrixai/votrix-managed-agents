@@ -1,5 +1,5 @@
 #!/bin/sh
-# Make both APIs reachable publicly. VMA API-key authentication still applies.
+# Make both APIs reachable publicly. Database-backed tenant API-key auth still applies.
 
 set -e
 
@@ -22,4 +22,4 @@ gcloud run services add-iam-policy-binding "$STAGING_SERVICE" \
   --role="roles/run.invoker" \
   --quiet
 
-echo "Both VMA services are publicly reachable; application API-key auth remains enabled."
+echo "Both VMA services are publicly reachable; database-backed tenant API-key auth remains enabled."

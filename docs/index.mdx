@@ -42,6 +42,10 @@ VMA requires Python 3.12 or newer and
 cp .env.example .env
 uv sync
 uv run alembic upgrade head
+uv run python -m scripts.bootstrap_api_key \
+  --workspace-id wrkspc_local \
+  --workspace-slug local \
+  --workspace-name "Local development"
 ./run.sh
 ```
 
@@ -52,10 +56,28 @@ curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/health/db
 ```
 
-The local configuration permits anonymous requests when no API key is
-configured. Hosted environments use database-backed workspace keys with
-scopes, expiration, independent rotation/revocation, and one-time plaintext
-secrets. They also require durable Postgres and private object storage.
+Local, development, staging, and production all fail closed through
+database-backed workspace keys with scopes, expiration, independent
+rotation/revocation, and one-time plaintext secrets. The bootstrap command
+creates the first workspace and administrator key; there is no anonymous or
+process-global authentication path. Supply its returned secret to local and
+development clients as `VOTRIX_API_KEY`; the service still resolves it from the
+database. Hosted environments also require durable Postgres and private object
+storage.
+
+For the local SDK or pilot script, save the one-time plaintext in the client
+environment as `VOTRIX_API_KEY`. In the API Playground, enter the same value in
+the `x-api-key` authentication field. Raw HTTP clients may use either standard
+authentication header:
+
+```bash
+export VOTRIX_API_KEY='<secret from bootstrap output>'
+curl http://127.0.0.1:8080/v1/capabilities \
+  --header "x-api-key: $VOTRIX_API_KEY" \
+  --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
+```
+
+An `Authorization: Bearer $VOTRIX_API_KEY` header is equivalent.
 
 The public-beta platform enforces per-workspace request, active-work, daily
 model-token, and stored-byte limits. It records append-only raw audit and usage

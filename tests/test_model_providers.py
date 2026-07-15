@@ -5,7 +5,7 @@ from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
 from app.secret_cipher import ENCRYPTED_PREFIX, decrypt_secret
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
 
 async def test_model_provider_catalog_is_stable_and_secret_free(client, monkeypatch):
@@ -108,15 +108,17 @@ async def test_retrieve_model_provider_and_not_found(client, monkeypatch):
 
 async def test_model_provider_catalog_requires_auth_and_is_in_openapi(client, monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("VMA_API_KEY", "catalog-test-key")
     get_settings.cache_clear()
 
-    unauthenticated = await client.get("/v1/model_providers", headers=TEST_HEADERS)
+    unauthenticated = await client.get(
+        "/v1/model_providers",
+        headers=UNAUTHENTICATED_TEST_HEADERS,
+    )
     assert unauthenticated.status_code == 401
 
     authenticated = await client.get(
         "/v1/model_providers",
-        headers={**TEST_HEADERS, "x-api-key": "catalog-test-key"},
+        headers=TEST_HEADERS,
     )
     assert authenticated.status_code == 200, authenticated.text
 

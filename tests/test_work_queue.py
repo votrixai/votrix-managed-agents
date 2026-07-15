@@ -1,11 +1,11 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from app.config import get_settings
 from app.db.engine import session_scope
+from app.db.queries import api_keys as api_keys_q
 from app.db.queries import resources as res_q
 from app.runtime.work_queue import lease_next_work_for_worker
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
 
 async def _create_agent(client):
@@ -397,9 +397,20 @@ async def test_rescheduled_work_is_not_leased_until_retry_at(client):
     assert leased["lease"]["worker_id"] == "worker-2"
 
 
-async def test_worker_token_is_required_when_configured(client, monkeypatch):
-    monkeypatch.setenv("VMA_WORKER_TOKEN", "worker-secret")
-    get_settings.cache_clear()
+async def test_work_routes_require_database_api_key_worker_scope(
+    client,
+    database_api_key_factory,
+):
+    api_token = await database_api_key_factory(
+        token="api-only-key",
+        workspace_id="wrkspc_default",
+        scopes=(api_keys_q.API_SCOPE,),
+    )
+    worker_token = await database_api_key_factory(
+        token="worker-only-key",
+        workspace_id="wrkspc_default",
+        scopes=(api_keys_q.WORKER_SCOPE,),
+    )
 
     agent = await _create_agent(client)
     environment = await _create_environment(client, "self_hosted")
@@ -414,21 +425,22 @@ async def test_worker_token_is_required_when_configured(client, monkeypatch):
 
     response = await client.get(
         f"/v1/environments/{environment['id']}/work/poll",
-        headers=TEST_HEADERS,
+        headers=UNAUTHENTICATED_TEST_HEADERS,
         params={"worker_id": "worker-1", "lease_seconds": 30},
     )
     assert response.status_code == 401
 
     response = await client.get(
         f"/v1/environments/{environment['id']}/work/poll",
-        headers={**TEST_HEADERS, "x-worker-token": "wrong"},
+        headers={**TEST_HEADERS, "x-api-key": api_token},
         params={"worker_id": "worker-1", "lease_seconds": 30},
     )
-    assert response.status_code == 401
+    assert response.status_code == 403
+    assert "worker" in response.json()["error"]["message"]
 
     response = await client.get(
         f"/v1/environments/{environment['id']}/work/poll",
-        headers={**TEST_HEADERS, "x-worker-token": "worker-secret"},
+        headers={**TEST_HEADERS, "x-api-key": worker_token},
         params={"worker_id": "worker-1", "lease_seconds": 30},
     )
     assert response.status_code == 200, response.text

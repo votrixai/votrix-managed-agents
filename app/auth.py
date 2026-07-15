@@ -8,9 +8,7 @@ from app.config import get_settings
 from app.db.queries.api_keys import API_KEYS_MANAGE_SCOPE, API_SCOPE, WORKER_SCOPE
 from app.workspace import (
     CurrentWorkspace,
-    DEFAULT_WORKSPACE_ID,
     current_workspace,
-    default_workspace,
     reset_current_workspace,
     set_current_workspace,
 )
@@ -42,31 +40,6 @@ class AuthProvider(Protocol):
         ...
 
 
-class EnvApiKeyAuthProvider:
-    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
-        settings = get_settings()
-        workspace = default_workspace()
-        api_keys = _configured_api_keys(settings.vma_api_key, settings.vma_api_keys)
-        if not api_keys:
-            if settings.vma_allow_anonymous_local and settings.app_env.lower() in {"local", "test"}:
-                return workspace
-            raise HTTPException(status_code=401, detail="API key authentication is not configured")
-
-        token = credentials.x_api_key or _bearer_token(credentials.authorization)
-        if token not in api_keys:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        workspace_id = (
-            settings.vma_api_key_workspaces.get(token)
-            or settings.vma_default_workspace_id
-            or DEFAULT_WORKSPACE_ID
-        )
-        return CurrentWorkspace(
-            id=workspace_id,
-            slug="default" if workspace_id == DEFAULT_WORKSPACE_ID else workspace_id,
-            source="api_key",
-        )
-
-
 class DatabaseApiKeyAuthProvider:
     async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
         from app.db.engine import session_scope
@@ -96,13 +69,7 @@ class DatabaseApiKeyAuthProvider:
 
 
 def default_auth_provider() -> AuthProvider:
-    """Choose fail-closed database auth for hosted environments.
-
-    Local/test retain the environment-key provider so existing development and
-    embedded deployments can opt into anonymous local access.
-    """
-    if get_settings().app_env.strip().lower() in {"local", "test"}:
-        return EnvApiKeyAuthProvider()
+    """Use the same fail-closed tenant-key authentication in every environment."""
     return DatabaseApiKeyAuthProvider()
 
 
@@ -154,7 +121,11 @@ async def require_api_access(
             detail=f"Missing required Anthropic API version header: {ANTHROPIC_API_VERSION}",
         )
 
-    provider: AuthProvider = getattr(request.app.state, "auth_provider", EnvApiKeyAuthProvider())
+    provider: AuthProvider = getattr(
+        request.app.state,
+        "auth_provider",
+        DatabaseApiKeyAuthProvider(),
+    )
     workspace = await provider.authenticate(
         request,
         RequestCredentials(x_api_key=x_api_key, authorization=authorization),
@@ -222,12 +193,6 @@ def _bearer_token(value: str | None) -> str | None:
     if value.startswith(prefix):
         return value[len(prefix) :]
     return None
-
-
-def _configured_api_keys(primary: str, configured: list[str]) -> set[str]:
-    keys = {primary.strip()} if primary.strip() else set()
-    keys.update(key.strip() for key in configured if key.strip())
-    return keys
 
 
 def required_scope_for_request(request: Request) -> str:

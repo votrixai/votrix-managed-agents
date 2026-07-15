@@ -273,10 +273,10 @@ identity and organization hierarchy remain deferred.
 - An Organization/Workspace may own multiple API keys for different callers,
   such as a production backend, developer laptop, CI, and third-party
   integration.
-- Keep `VMA_API_KEY` only for local development or deliberate embedded use.
-  Staging and production authenticate with database-backed workspace keys;
-  the trusted bootstrap CLI emits the first secret once without installing a
-  permanent global production key.
+- Local, development, staging, and production all authenticate with
+  database-backed workspace keys. The trusted bootstrap CLI emits the first
+  secret once without installing a process-global key or enabling anonymous
+  access.
 
 ### Existing foundations
 
@@ -296,8 +296,9 @@ identity and organization hierarchy remain deferred.
   - `expires_at`
   - `created_by`
   - explicit revocation metadata if archival is insufficient
-- [x] Make database-backed authentication the default for staging and
-  production while preserving local anonymous/bootstrap behavior.
+- [x] Make database-backed authentication mandatory in local, development,
+  staging, and production, with the trusted CLI as the first-key bootstrap
+  path.
 - [x] Add authenticated API key management endpoints:
   - `POST /v1/api_keys`
   - `GET /v1/api_keys`
@@ -358,7 +359,8 @@ keys. Do not trust an unsigned tenant identifier forwarded by another service.
 
 ### Acceptance criteria
 
-- Production can run without a permanent global `VMA_API_KEY`.
+- No supported environment accepts a permanent process-global authentication
+  key or anonymous requests.
 - Every authenticated request resolves exactly one trusted workspace context.
 - Every API key belongs to one workspace; a workspace can own many keys.
 - Plaintext API keys are shown once, hashed at rest, redacted from logs, and

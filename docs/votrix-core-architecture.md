@@ -50,7 +50,7 @@ The Votrix core owns:
   quotas with append-only raw audit/usage ledgers.
 - Generic tenant idempotency for Session creation plus transactional event
   submission idempotency.
-- A default single-workspace local experience.
+- A bootstrapped workspace experience for local development.
 
 The core may expose extension interfaces, but it must stay useful without a private repository.
 
@@ -87,11 +87,11 @@ VMA core request:
   AuthProvider -> CurrentWorkspace(id=...) -> scoped resources and execution
 ```
 
-Self-hosted local mode defaults to:
+Local self-hosting bootstraps an explicit workspace and database-backed key:
 
 ```text
-workspace_id = wrkspc_default
-workspace_slug = default
+bootstrap CLI -> workspace record + one-time administrator key
+request API key -> authenticated workspace_id
 ```
 
 Public resource paths remain workspace-free:
@@ -120,7 +120,6 @@ An auth provider implements the public `AuthProvider` protocol and returns `Curr
 
 The repository includes:
 
-- `EnvApiKeyAuthProvider` for configured self-hosted keys.
 - `DatabaseApiKeyAuthProvider` for keys stored in the core database.
 - The injectable `AuthProvider` path for hosted identity.
 

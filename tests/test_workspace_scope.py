@@ -1,15 +1,13 @@
 from httpx import ASGITransport, AsyncClient
 
-from app.config import get_settings
 from app.workspace import CurrentWorkspace
 from votrix_managed_agents import AuthProvider, create_app
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
 
-async def test_api_keys_scope_resources_to_workspaces(client, monkeypatch):
-    monkeypatch.setenv("VMA_API_KEYS", "key-a,key-b")
-    monkeypatch.setenv("VMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
-    get_settings.cache_clear()
+async def test_api_keys_scope_resources_to_workspaces(client, database_api_key_factory):
+    await database_api_key_factory(token="key-a", workspace_id="ws_a")
+    await database_api_key_factory(token="key-b", workspace_id="ws_b")
 
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -44,28 +42,29 @@ async def test_api_keys_scope_resources_to_workspaces(client, monkeypatch):
     assert response.status_code == 201, response.text
 
 
-async def test_single_api_key_authorizes_bearer_token(client, monkeypatch):
-    monkeypatch.setenv("VMA_API_KEY", "single-key")
-    get_settings.cache_clear()
+async def test_database_api_key_authorizes_bearer_token(client, database_api_key_factory):
+    await database_api_key_factory(token="single-key", workspace_id="ws_single")
 
     response = await client.post(
         "/v1/agents",
-        headers={**TEST_HEADERS, "authorization": "Bearer single-key"},
+        headers={**UNAUTHENTICATED_TEST_HEADERS, "authorization": "Bearer single-key"},
         json={"name": "Single Key Agent", "model": {"id": "gpt-5.5"}},
     )
     assert response.status_code == 201, response.text
 
     response = await client.get(
         "/v1/agents",
-        headers={**TEST_HEADERS, "authorization": "Bearer wrong-key"},
+        headers={**UNAUTHENTICATED_TEST_HEADERS, "authorization": "Bearer wrong-key"},
     )
     assert response.status_code == 401
 
 
-async def test_api_keys_scope_generic_resource_families_to_workspaces(client, monkeypatch):
-    monkeypatch.setenv("VMA_API_KEYS", "key-a,key-b")
-    monkeypatch.setenv("VMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
-    get_settings.cache_clear()
+async def test_api_keys_scope_generic_resource_families_to_workspaces(
+    client,
+    database_api_key_factory,
+):
+    await database_api_key_factory(token="key-a", workspace_id="ws_a")
+    await database_api_key_factory(token="key-b", workspace_id="ws_b")
 
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -198,10 +197,12 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(client, mo
     assert response.status_code == 404
 
 
-async def test_api_keys_scope_deployments_and_runs_to_workspaces(client, monkeypatch):
-    monkeypatch.setenv("VMA_API_KEYS", "key-a,key-b")
-    monkeypatch.setenv("VMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
-    get_settings.cache_clear()
+async def test_api_keys_scope_deployments_and_runs_to_workspaces(
+    client,
+    database_api_key_factory,
+):
+    await database_api_key_factory(token="key-a", workspace_id="ws_a")
+    await database_api_key_factory(token="key-b", workspace_id="ws_b")
 
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -257,16 +258,12 @@ async def test_api_keys_scope_deployments_and_runs_to_workspaces(client, monkeyp
     assert response.status_code == 404
 
 
-async def test_create_app_accepts_hosted_auth_provider(monkeypatch):
+async def test_create_app_accepts_hosted_auth_provider():
     class HostedAuthProvider:
         async def authenticate(self, request, credentials):
             return CurrentWorkspace(id="ws_hosted", slug="hosted", source="hosted_test")
 
     assert isinstance(HostedAuthProvider(), AuthProvider)
-
-    monkeypatch.delenv("VMA_API_KEY", raising=False)
-    monkeypatch.delenv("VMA_API_KEYS", raising=False)
-    get_settings.cache_clear()
 
     app = create_app(auth_provider=HostedAuthProvider())
     transport = ASGITransport(app=app)

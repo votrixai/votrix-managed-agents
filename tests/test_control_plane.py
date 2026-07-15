@@ -625,6 +625,7 @@ async def test_votrix_managed_agents_beta_alias_is_accepted(client):
     response = await client.post(
         "/v1/agents",
         headers={
+            **TEST_HEADERS,
             "anthropic-version": "2023-06-01",
             "anthropic-beta": "votrix-managed-agents-2026-04-01",
         },
@@ -637,6 +638,7 @@ async def test_anthropic_agent_memory_beta_is_accepted(client):
     response = await client.post(
         "/v1/memory_stores",
         headers={
+            **TEST_HEADERS,
             "anthropic-version": "2023-06-01",
             "anthropic-beta": "agent-memory-2026-07-22",
         },

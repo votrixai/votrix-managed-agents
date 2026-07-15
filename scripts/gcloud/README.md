@@ -143,9 +143,9 @@ Alembic themselves.
 
 ## Bootstrap the first tenant API key
 
-Hosted authentication is database-backed. After the first successful migration,
-run the bootstrap CLI once from a trusted operator machine using the matching
-untracked environment file:
+Authentication is database-backed in every environment. After the first
+successful migration, run the bootstrap CLI once from a trusted operator
+machine using the matching untracked environment file:
 
 ```bash
 set -a
@@ -189,8 +189,8 @@ After both services exist:
 ./scripts/gcloud/5-allow-public.sh
 ```
 
-This exposes the Cloud Run URLs. VMA still requires a database-backed tenant
-API key; anonymous local access is explicitly disabled in both cloud manifests.
+This exposes the Cloud Run URLs. VMA still requires a database-backed workspace
+API key; public ingress does not add an anonymous authentication path.
 
 ## Status
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.auth import DatabaseApiKeyAuthProvider, EnvApiKeyAuthProvider, default_auth_provider
+from app.auth import DatabaseApiKeyAuthProvider, default_auth_provider
 from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.models import Workspace
@@ -230,12 +231,9 @@ async def test_worker_scope_is_separate_and_tenant_bound():
         assert other_worker_cannot_see_environment.status_code == 404
 
 
-def test_hosted_default_auth_provider_is_database_backed(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
+@pytest.mark.parametrize("app_env", ["local", "test", "production"])
+def test_default_auth_provider_is_database_backed_in_every_environment(monkeypatch, app_env):
+    monkeypatch.setenv("APP_ENV", app_env)
     get_settings.cache_clear()
     assert isinstance(default_auth_provider(), DatabaseApiKeyAuthProvider)
     assert isinstance(create_app().state.auth_provider, DatabaseApiKeyAuthProvider)
-
-    monkeypatch.setenv("APP_ENV", "local")
-    get_settings.cache_clear()
-    assert isinstance(default_auth_provider(), EnvApiKeyAuthProvider)

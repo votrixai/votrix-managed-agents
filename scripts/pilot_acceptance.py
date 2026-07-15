@@ -317,11 +317,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("VMA_SMOKE_API_KEY") or os.environ.get("VMA_API_KEY") or "local-pilot-smoke",
+        default=(
+            os.environ.get("VMA_SMOKE_API_KEY")
+            or os.environ.get("VOTRIX_API_KEY")
+        ),
     )
     parser.add_argument("--model", default=os.environ.get("VMA_SMOKE_MODEL", DEFAULT_MODEL))
     parser.add_argument("--timeout", type=float, default=900)
     args = parser.parse_args()
+    if not args.api_key:
+        parser.error(
+            "--api-key, VMA_SMOKE_API_KEY, or VOTRIX_API_KEY is required"
+        )
     asyncio.run(
         run(
             base_url=args.base_url,

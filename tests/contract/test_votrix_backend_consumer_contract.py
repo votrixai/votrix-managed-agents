@@ -19,6 +19,7 @@ import pytest
 import uvicorn
 from anthropic import AsyncAnthropic
 from httpx import ASGITransport
+from tests.conftest import TEST_API_KEY
 
 
 pytestmark = pytest.mark.contract
@@ -55,7 +56,7 @@ async def backend_consumer_client():
         base_url="http://testserver",
     ) as http_client:
         sdk = AsyncAnthropic(
-            api_key="test-contract-key",
+            api_key=TEST_API_KEY,
             base_url="http://testserver",
             default_headers={
                 "anthropic-version": "2023-06-01",
@@ -70,7 +71,7 @@ async def backend_consumer_client():
 def test_backend_sdk_public_surface_is_available():
     """Fail before HTTP if an SDK release removes a backend dependency."""
 
-    client = AsyncAnthropic(api_key="test-contract-key")
+    client = AsyncAnthropic(api_key=TEST_API_KEY)
     assert anthropic.__version__ in {"0.97.0", "0.116.0"}
     expected = {
         "agents": {"create", "retrieve", "update", "versions"},
@@ -373,7 +374,7 @@ async def test_backend_opens_stream_before_send_and_only_receives_new_turns():
 
     async with _loopback_server() as base_url:
         client = AsyncAnthropic(
-            api_key="test-contract-key",
+            api_key=TEST_API_KEY,
             base_url=base_url,
             max_retries=0,
             _strict_response_validation=True,
@@ -488,7 +489,7 @@ async def _assert_backend_sse_parser_accepts_event(event_payload: dict):
         base_url="http://stream.test",
     ) as http_client:
         client = AsyncAnthropic(
-            api_key="test-contract-key",
+            api_key=TEST_API_KEY,
             base_url="http://stream.test",
             default_headers={
                 "anthropic-version": "2023-06-01",

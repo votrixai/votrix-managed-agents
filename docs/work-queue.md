@@ -22,7 +22,9 @@ This queue is visible state for session execution. It does not mean local develo
 - `POST /work/{work_id}/heartbeat` records progress and extends that same lease.
 - Ack, heartbeat, execution, and terminal completion verify the worker,
   `lease_id`, and generation; an old worker cannot finalize a recovered attempt.
-- When `VMA_WORKER_TOKEN` is set, all work routes also require `x-worker-token`.
+- Direct HTTP workers authenticate with a database-issued API key that belongs
+  to the target workspace and includes the `worker` scope. They use the same
+  `x-api-key` or Bearer authentication schemes as other API clients.
 - Expired `leased` or `running` work can be recovered by a later poll from
   another worker, which receives a new lease ID/generation.
 - Transient runtime failures can mark work `rescheduling`; polling respects `retry_at` before leasing it again.
@@ -52,8 +54,7 @@ vma-worker --poll-interval 1
 
 Use `--environment-id env_...` to constrain the worker to one environment, `--worker-id worker-...` to set a stable lease owner, or `--once` for one-shot execution in tests and maintenance jobs.
 
-If `VMA_WORKER_TOKEN` is configured, direct HTTP workers must send:
-
-```text
-x-worker-token: ...
-```
+Before connecting a direct HTTP worker, use the authenticated `/v1/api_keys`
+lifecycle to issue a separate, tenant-bound key with `worker` scope. Store its
+one-time plaintext result in the worker's secret manager and rotate or revoke it
+independently of user-facing API keys.

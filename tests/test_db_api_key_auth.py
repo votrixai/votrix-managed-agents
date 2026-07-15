@@ -6,7 +6,7 @@ from app.db.engine import session_scope
 from app.db.models import Agent
 from app.db.queries import api_keys as api_keys_q
 from app.factory import create_app
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
 
 async def test_database_api_key_provider_scopes_workspace():
@@ -52,7 +52,7 @@ async def test_database_api_key_provider_rejects_archived_key():
         await db.commit()
 
     app = create_app(auth_provider=DatabaseApiKeyAuthProvider())
-    headers = {**TEST_HEADERS, "authorization": f"Bearer {token}"}
+    headers = {**UNAUTHENTICATED_TEST_HEADERS, "authorization": f"Bearer {token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         response = await client.get("/v1/agents", headers=headers)
 

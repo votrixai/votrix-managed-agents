@@ -117,9 +117,13 @@ async def test_storage_quota_can_be_disabled_for_local_compatibility(client, mon
     assert response.status_code == 201, response.text
 
 
-async def test_storage_accounting_is_cumulative_and_workspace_scoped(client, monkeypatch):
-    monkeypatch.setenv("VMA_API_KEYS", "key-a,key-b")
-    monkeypatch.setenv("VMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
+async def test_storage_accounting_is_cumulative_and_workspace_scoped(
+    client,
+    monkeypatch,
+    database_api_key_factory,
+):
+    await database_api_key_factory(token="key-a", workspace_id="ws_a")
+    await database_api_key_factory(token="key-b", workspace_id="ws_b")
     monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", "4")
     get_settings.cache_clear()
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
