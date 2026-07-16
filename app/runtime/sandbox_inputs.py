@@ -22,6 +22,8 @@ from typing import Any
 SESSION_ROOT = "/mnt/session"
 SESSION_UPLOAD_ROOT = f"{SESSION_ROOT}/uploads"
 SESSION_OUTPUT_ROOT = f"{SESSION_ROOT}/outputs"
+INPUT_DESCRIPTOR_VERSION = "vma-session-inputs-v1"
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class SandboxInputError(RuntimeError):
@@ -37,36 +39,52 @@ class SandboxInputFile:
 
 
 @dataclass(frozen=True, slots=True)
-class SandboxInputBundle:
-    files: tuple[SandboxInputFile, ...]
+class SandboxInputDescriptorFile:
+    """Content-free identity for one materialized sandbox input."""
+
+    path: str
+    sha256: str
+    size_bytes: int
+    read_only: bool
+    source: str
+
+    @classmethod
+    def from_input_file(cls, item: SandboxInputFile) -> SandboxInputDescriptorFile:
+        return cls(
+            path=item.path,
+            sha256=hashlib.sha256(item.content).hexdigest(),
+            size_bytes=len(item.content),
+            read_only=item.read_only,
+            source=item.source,
+        )
+
+    def digest_data(self) -> dict[str, Any]:
+        """Return the exact v1 digest shape used before descriptors were persisted."""
+        return {
+            "path": self.path,
+            "sha256": self.sha256,
+            "read_only": self.read_only,
+            "source": self.source,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.digest_data(), "size_bytes": self.size_bytes}
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxInputDescriptor:
+    """Canonical persisted identity for a bundle without retaining its bytes."""
+
+    files: tuple[SandboxInputDescriptorFile, ...]
     skill_sources: tuple[str, ...]
     memory_sources: tuple[str, ...]
     mutable_roots: tuple[str, ...]
 
     @property
-    def immutable_files(self) -> tuple[SandboxInputFile, ...]:
-        return tuple(item for item in self.files if item.read_only)
-
-    @property
     def input_digest(self) -> str:
-        """Identify every create-time input without tracking later sandbox edits.
-
-        Read-write memory seeds participate in this identity even though their
-        sandbox copies remain mutable.  The digest is recomputed from the
-        control-plane source, so an Agent editing its sandbox memory does not
-        change it, while changing the source seed makes resume fail closed.
-        """
         descriptor = {
-            "version": "vma-session-inputs-v1",
-            "files": [
-                {
-                    "path": item.path,
-                    "sha256": hashlib.sha256(item.content).hexdigest(),
-                    "read_only": item.read_only,
-                    "source": item.source,
-                }
-                for item in self.files
-            ],
+            "version": INPUT_DESCRIPTOR_VERSION,
+            "files": [item.digest_data() for item in self.files],
             "skill_sources": list(self.skill_sources),
             "memory_sources": list(self.memory_sources),
             "mutable_roots": list(self.mutable_roots),
@@ -81,10 +99,124 @@ class SandboxInputBundle:
 
     @property
     def immutable_manifest(self) -> dict[str, str]:
+        return {item.path: item.sha256 for item in self.files if item.read_only}
+
+    @property
+    def total_size_bytes(self) -> int:
+        return sum(item.size_bytes for item in self.files)
+
+    def with_appended_file(self, item: SandboxInputFile) -> SandboxInputDescriptor:
+        by_path = {current.path: current for current in self.files}
+        _add_descriptor_file(by_path, SandboxInputDescriptorFile.from_input_file(item))
+        return SandboxInputDescriptor(
+            files=tuple(by_path[path] for path in sorted(by_path)),
+            skill_sources=self.skill_sources,
+            memory_sources=self.memory_sources,
+            mutable_roots=self.mutable_roots,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
         return {
-            item.path: hashlib.sha256(item.content).hexdigest()
-            for item in self.immutable_files
+            "version": INPUT_DESCRIPTOR_VERSION,
+            "files": [item.to_dict() for item in self.files],
+            "skill_sources": list(self.skill_sources),
+            "memory_sources": list(self.memory_sources),
+            "mutable_roots": list(self.mutable_roots),
         }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> SandboxInputDescriptor:
+        if not isinstance(value, dict) or value.get("version") != INPUT_DESCRIPTOR_VERSION:
+            raise SandboxInputError("Sandbox input descriptor version is invalid")
+        raw_files = value.get("files")
+        if not isinstance(raw_files, list):
+            raise SandboxInputError("Sandbox input descriptor files are invalid")
+        by_path: dict[str, SandboxInputDescriptorFile] = {}
+        for raw in raw_files:
+            if not isinstance(raw, dict):
+                raise SandboxInputError("Sandbox input descriptor file is invalid")
+            path = _safe_virtual_path(str(raw.get("path") or ""))
+            sha256 = str(raw.get("sha256") or "")
+            size_bytes = raw.get("size_bytes")
+            read_only = raw.get("read_only")
+            source = raw.get("source")
+            if not _SHA256_RE.fullmatch(sha256):
+                raise SandboxInputError("Sandbox input descriptor sha256 is invalid")
+            if (
+                not isinstance(size_bytes, int)
+                or isinstance(size_bytes, bool)
+                or size_bytes < 0
+            ):
+                raise SandboxInputError("Sandbox input descriptor size is invalid")
+            if not isinstance(read_only, bool):
+                raise SandboxInputError("Sandbox input descriptor read_only is invalid")
+            if not isinstance(source, str) or not source:
+                raise SandboxInputError("Sandbox input descriptor source is invalid")
+            _add_descriptor_file(
+                by_path,
+                SandboxInputDescriptorFile(
+                    path=path,
+                    sha256=sha256,
+                    size_bytes=size_bytes,
+                    read_only=read_only,
+                    source=source,
+                ),
+            )
+
+        skill_sources = _string_paths(
+            value.get("skill_sources"),
+            name="skill_sources",
+            allow_trailing_slash=True,
+        )
+        memory_sources = _string_paths(value.get("memory_sources"), name="memory_sources")
+        mutable_roots = _string_paths(value.get("mutable_roots"), name="mutable_roots")
+        descriptor = cls(
+            files=tuple(by_path[path] for path in sorted(by_path)),
+            skill_sources=skill_sources,
+            memory_sources=memory_sources,
+            mutable_roots=mutable_roots,
+        )
+        return descriptor
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxInputBundle:
+    files: tuple[SandboxInputFile, ...]
+    skill_sources: tuple[str, ...]
+    memory_sources: tuple[str, ...]
+    mutable_roots: tuple[str, ...]
+
+    @property
+    def immutable_files(self) -> tuple[SandboxInputFile, ...]:
+        return tuple(item for item in self.files if item.read_only)
+
+    @property
+    def descriptor(self) -> SandboxInputDescriptor:
+        return SandboxInputDescriptor(
+            files=tuple(SandboxInputDescriptorFile.from_input_file(item) for item in self.files),
+            skill_sources=self.skill_sources,
+            memory_sources=self.memory_sources,
+            mutable_roots=self.mutable_roots,
+        )
+
+    @property
+    def input_digest(self) -> str:
+        """Identify every create-time input without tracking later sandbox edits.
+
+        Read-write memory seeds participate in this identity even though their
+        sandbox copies remain mutable.  The digest is recomputed from the
+        control-plane source, so an Agent editing its sandbox memory does not
+        change it, while changing the source seed makes resume fail closed.
+        """
+        return self.descriptor.input_digest
+
+    @property
+    def immutable_manifest(self) -> dict[str, str]:
+        return self.descriptor.immutable_manifest
+
+    @property
+    def total_size_bytes(self) -> int:
+        return self.descriptor.total_size_bytes
 
     def upload_pairs(self) -> list[tuple[str, bytes]]:
         return [(item.path, item.content) for item in self.files]
@@ -227,6 +359,39 @@ def _add_file(target: dict[str, SandboxInputFile], item: SandboxInputFile) -> No
     target[item.path] = item
 
 
+def _add_descriptor_file(
+    target: dict[str, SandboxInputDescriptorFile],
+    item: SandboxInputDescriptorFile,
+) -> None:
+    existing = target.get(item.path)
+    if existing is not None:
+        raise SandboxInputError(f"Managed sandbox input is duplicated at {item.path}")
+    for path in target:
+        if path.startswith(item.path + "/") or item.path.startswith(path + "/"):
+            raise SandboxInputError(
+                f"Managed sandbox input is both a file and directory: {item.path}"
+            )
+    target[item.path] = item
+
+
+def _string_paths(
+    value: Any,
+    *,
+    name: str,
+    allow_trailing_slash: bool = False,
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise SandboxInputError(f"Sandbox input descriptor {name} are invalid")
+    normalized: list[str] = []
+    for item in value:
+        trailing = allow_trailing_slash and item.endswith("/")
+        path = _safe_virtual_path(item.rstrip("/") if trailing else item)
+        normalized.append(path + "/" if trailing else path)
+    if normalized != sorted(set(normalized)):
+        raise SandboxInputError(f"Sandbox input descriptor {name} are not canonical")
+    return tuple(normalized)
+
+
 def _extract_skill_archive(content: bytes) -> list[tuple[str, bytes]]:
     extracted: list[tuple[str, bytes]] = []
     total = 0
@@ -276,10 +441,13 @@ def _file_data(content: bytes) -> dict[str, Any]:
 
 
 __all__ = [
+    "INPUT_DESCRIPTOR_VERSION",
     "SESSION_OUTPUT_ROOT",
     "SESSION_ROOT",
     "SESSION_UPLOAD_ROOT",
     "SandboxInputBundle",
+    "SandboxInputDescriptor",
+    "SandboxInputDescriptorFile",
     "SandboxInputError",
     "SandboxInputFile",
     "sandbox_input_bundle",

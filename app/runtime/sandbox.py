@@ -118,7 +118,7 @@ def sandbox_plan_from_environment(
 @asynccontextmanager
 async def open_backend(
     *,
-    workspace_id: str,
+    organization_id: str,
     session_id: str,
     environment_config: dict[str, Any] | None,
     input_bundle: SandboxInputBundle | None = None,
@@ -127,7 +127,7 @@ async def open_backend(
     from app.runtime.sandbox_lifecycle import bound_session_sandbox_provider
 
     bound_provider = await bound_session_sandbox_provider(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
     )
     plan = sandbox_plan_from_environment(
@@ -138,12 +138,10 @@ async def open_backend(
     factory_path = str(settings.vma_sandbox_factory or "").strip()
 
     if plan.backend == "e2b":
-        if input_bundle is None:
-            raise SandboxConfigurationError("E2B resume requires the sealed input identity")
         from app.runtime.sandbox_lifecycle import open_e2b_session_backend
 
         async with open_e2b_session_backend(
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             environment_config=environment_config,
             input_bundle=input_bundle,
@@ -169,7 +167,7 @@ async def open_backend(
     if factory_path:
         factory = _load_factory(factory_path)
         produced = factory(
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             environment_config=dict(environment_config or {}),
         )
@@ -190,7 +188,7 @@ async def open_backend(
     if plan.backend == "unsafe_local_shell":
         from deepagents.backends import LocalShellBackend
 
-        root = _local_root(workspace_id, session_id)
+        root = _local_root(organization_id, session_id)
         root.mkdir(parents=True, exist_ok=True)
         backend = LocalShellBackend(
             root_dir=root,
@@ -217,10 +215,10 @@ def _load_factory(path: str):
     return factory
 
 
-def _local_root(workspace_id: str, session_id: str) -> Path:
+def _local_root(organization_id: str, session_id: str) -> Path:
     settings = get_settings()
     base = Path(str(settings.vma_sandbox_root or "./.vma-sandboxes")).resolve()
-    tenant = hashlib.sha256(workspace_id.encode()).hexdigest()[:20]
+    tenant = hashlib.sha256(organization_id.encode()).hexdigest()[:20]
     session = hashlib.sha256(session_id.encode()).hexdigest()[:24]
     candidate = (base / tenant / session).resolve()
     candidate.relative_to(base)

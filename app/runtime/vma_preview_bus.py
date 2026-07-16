@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Any
 
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 VMA_PREVIEW_FRAME_TYPES = frozenset({"event_start", "event_delta"})
 
@@ -33,11 +33,11 @@ class VmaProcessLocalPreviewBus:
         session_id: str,
         frame: Mapping[str, Any],
         *,
-        workspace_id: str | None = None,
+        organization_id: str | None = None,
     ) -> int:
         """Publish one exact runtime frame and return the subscriber delivery count."""
         payload = _validated_frame(frame)
-        topic = (workspace_id_or_default(workspace_id), session_id)
+        topic = (resolve_organization_id(organization_id), session_id)
         async with self._lock:
             subscribers = tuple(self._subscribers.get(topic, ()))
 
@@ -57,10 +57,10 @@ class VmaProcessLocalPreviewBus:
         self,
         session_id: str,
         *,
-        workspace_id: str | None = None,
+        organization_id: str | None = None,
     ) -> AsyncIterator[asyncio.Queue[dict[str, Any]]]:
         """Subscribe to frames published after this context is entered."""
-        topic = (workspace_id_or_default(workspace_id), session_id)
+        topic = (resolve_organization_id(organization_id), session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._subscriber_queue_size)
         async with self._lock:
             self._subscribers.setdefault(topic, set()).add(queue)
@@ -78,10 +78,10 @@ class VmaProcessLocalPreviewBus:
         self,
         session_id: str,
         *,
-        workspace_id: str | None = None,
+        organization_id: str | None = None,
     ) -> int:
         """Return the number of live subscribers for diagnostics and tests."""
-        topic = (workspace_id_or_default(workspace_id), session_id)
+        topic = (resolve_organization_id(organization_id), session_id)
         async with self._lock:
             return len(self._subscribers.get(topic, ()))
 
@@ -101,10 +101,10 @@ async def publish_vma_preview(
     session_id: str,
     frame: Mapping[str, Any],
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> int:
     """Publish a runtime preview through the shared process-local VMA bus."""
-    return await vma_preview_bus.publish(session_id, frame, workspace_id=workspace_id)
+    return await vma_preview_bus.publish(session_id, frame, organization_id=organization_id)
 
 
 __all__ = [

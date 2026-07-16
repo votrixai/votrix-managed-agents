@@ -19,7 +19,9 @@ The operational walkthrough, one-time GCP setup, secret loading, manual deploys,
 
 ## Cloud Run MVP topology
 
-The current production manifest is intentionally constrained to one Cloud Run instance and one Uvicorn worker:
+The current production manifest is intentionally constrained to one Cloud Run
+instance and one Uvicorn worker. That process hosts five embedded durable-work
+consumers:
 
 ```text
 Cloud Run web/API + embedded durable worker (minScale=1, maxScale=1, WEB_CONCURRENCY=1)
@@ -36,6 +38,18 @@ Do not increase `WEB_CONCURRENCY` or `maxScale` until the remaining
 per-Session/checkpoint ownership and cross-process preview delivery have been
 validated under the same tenant-isolation contract. The single-instance shape
 is an explicit public-beta rollout constraint, not an availability guarantee.
+
+The checked-in vertical baseline uses one vCPU, 4 GiB memory,
+`containerConcurrency=40`, five turn consumers, a bounded 10+5 PostgreSQL
+application pool, one-second event polling, and a 64 MiB aggregate
+Session-input cap. The cap limits create-time materialization and one-time E2B
+injection; subsequent E2B turns use the persisted seal and hydrate only files
+explicitly referenced by the current model message.
+
+The hosted Organization defaults admit 20 active queued/running turns and 600 API
+requests per minute, so a ten-Session burst queues behind the five consumers
+instead of failing at admission. These values support an initial trusted-user
+rollout; they are not an HA or unlimited-throughput claim.
 
 Cloud Run hosts the control plane and Deep Agents runtime. It does not host tenant shell sandboxes. With `VMA_SANDBOX_PROVIDER=e2b`, every cloud Session remains bound to its external E2B sandbox and reconnects that sandbox through the E2B API.
 
@@ -69,11 +83,23 @@ The supported release sequence is:
    URL with staging credentials. This provisions and deletes one real E2B
    Session while verifying Postgres, R2, model execution, append-only files,
    pause/resume, generated outputs, scoped listing, and download.
+6. Run `scripts/performance_smoke.py` with ten independent Sessions and retain
+   its latency/failure summary with the release evidence.
 
 ```bash
 VMA_SMOKE_BASE_URL=https://staging-managed-agents.votrixai.com \
 VMA_SMOKE_API_KEY=... \
 uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
+```
+
+Then run the concurrent gate with a staging Vault that already contains the
+model Credential:
+
+```bash
+VMA_PERF_BASE_URL=https://staging-managed-agents.votrixai.com \
+VMA_PERF_API_KEY=... \
+VMA_PERF_VAULT_IDS=vault_... \
+uv run python scripts/performance_smoke.py
 ```
 
 Migrations are a once-per-release operation. They are not an implicit side effect of every web container start.

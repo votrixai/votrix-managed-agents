@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_workspace, require_api_access
+from app.auth import get_current_organization, require_api_access
 from app.db.engine import get_session
 from app.db.queries import api_keys as api_keys_q
 from app.metadata import normalize_metadata
@@ -20,7 +20,7 @@ from app.models.api_keys import (
 )
 from app.models.common import ListResponse
 from app.pagination import paginate
-from app.workspace import CurrentWorkspace
+from app.organization import CurrentOrganization
 
 router = APIRouter(
     prefix="/v1/api_keys",
@@ -32,17 +32,17 @@ router = APIRouter(
 @router.post("", response_model=ApiKeyCreatedResponse, status_code=201)
 async def create_api_key(
     body: ApiKeyCreateRequest,
-    workspace: CurrentWorkspace = Depends(get_current_workspace),
+    organization: CurrentOrganization = Depends(get_current_organization),
     db: AsyncSession = Depends(get_session),
 ):
     _validate_future_expiration(body.expires_at)
     api_key, secret = await api_keys_q.create_api_key(
         db,
         name=body.name,
-        workspace_id=workspace.id,
+        organization_id=organization.id,
         scopes=body.scopes,
         expires_at=body.expires_at,
-        created_by=_actor_id(workspace),
+        created_by=_actor_id(organization),
         metadata=normalize_metadata(body.metadata),
     )
     await db.commit()
@@ -75,7 +75,7 @@ async def retrieve_api_key(
 async def revoke_api_key(
     key_id: str,
     body: ApiKeyRevokeRequest | None = None,
-    workspace: CurrentWorkspace = Depends(get_current_workspace),
+    organization: CurrentOrganization = Depends(get_current_organization),
     db: AsyncSession = Depends(get_session),
 ):
     api_key = await api_keys_q.get_api_key(db, key_id, for_update=True)
@@ -84,7 +84,7 @@ async def revoke_api_key(
     await api_keys_q.revoke_api_key(
         db,
         api_key,
-        revoked_by=_actor_id(workspace),
+        revoked_by=_actor_id(organization),
         reason=body.reason if body is not None else None,
     )
     await db.commit()
@@ -95,7 +95,7 @@ async def revoke_api_key(
 async def rotate_api_key(
     key_id: str,
     body: ApiKeyRotateRequest | None = None,
-    workspace: CurrentWorkspace = Depends(get_current_workspace),
+    organization: CurrentOrganization = Depends(get_current_organization),
     db: AsyncSession = Depends(get_session),
 ):
     api_key = await api_keys_q.get_api_key(db, key_id, for_update=True)
@@ -110,17 +110,17 @@ async def rotate_api_key(
     replacement, secret = await api_keys_q.create_api_key(
         db,
         name=api_key.name,
-        workspace_id=api_key.workspace_id,
+        organization_id=api_key.organization_id,
         scopes=api_key.scopes,
         expires_at=expires_at,
-        created_by=_actor_id(workspace),
+        created_by=_actor_id(organization),
         replaces_key_id=api_key.id,
         metadata=dict(api_key.metadata_ or {}),
     )
     await api_keys_q.revoke_api_key(
         db,
         api_key,
-        revoked_by=_actor_id(workspace),
+        revoked_by=_actor_id(organization),
         reason=request.reason,
         replaced_by_key_id=replacement.id,
     )
@@ -128,8 +128,8 @@ async def rotate_api_key(
     return api_key_to_created_response(replacement, secret)
 
 
-def _actor_id(workspace: CurrentWorkspace) -> str:
-    return workspace.api_key_id or workspace.source
+def _actor_id(organization: CurrentOrganization) -> str:
+    return organization.api_key_id or organization.source
 
 
 def _validate_future_expiration(expires_at: datetime | None) -> None:

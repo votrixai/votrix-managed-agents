@@ -18,7 +18,7 @@ def upgrade() -> None:
     op.create_table(
         "session_event_idempotency",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("session_id", sa.String(length=64), nullable=False),
         sa.Column("key_hash", sa.String(length=64), nullable=False),
         sa.Column("request_sha256", sa.String(length=64), nullable=False),
@@ -38,30 +38,30 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["workspace_id", "session_id"],
-            ["sessions.workspace_id", "sessions.id"],
-            name="fk_session_event_idempotency_workspace_session",
+            ["organization_id", "session_id"],
+            ["sessions.organization_id", "sessions.id"],
+            name="fk_session_event_idempotency_organization_session",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "session_id",
             "key_hash",
-            name="uq_session_event_idempotency_workspace_session_key",
+            name="uq_session_event_idempotency_organization_session_key",
         ),
     )
     op.create_index(
-        "ix_session_event_idempotency_workspace_session_created",
+        "ix_session_event_idempotency_organization_session_created",
         "session_event_idempotency",
-        ["workspace_id", "session_id", "created_at"],
+        ["organization_id", "session_id", "created_at"],
         unique=False,
     )
 
 
 def downgrade() -> None:
     op.drop_index(
-        "ix_session_event_idempotency_workspace_session_created",
+        "ix_session_event_idempotency_organization_session_created",
         table_name="session_event_idempotency",
     )
     op.drop_table("session_event_idempotency")

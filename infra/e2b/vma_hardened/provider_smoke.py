@@ -32,7 +32,7 @@ async def main(template_name: str) -> None:
         command_timeout=60,
         guest_user="user",
     )
-    owner = SandboxOwner("wrkspc_e2b_smoke", "session_e2b_smoke")
+    owner = SandboxOwner("org_e2b_smoke", "session_e2b_smoke")
     policy = SandboxPolicy(
         network_access="none",
         timeout_seconds=300,

@@ -12,8 +12,8 @@ from app.db.models import (
     AuditLedgerEntry,
     TenantIdempotencyRecord,
     UsageLedgerEntry,
-    WorkspaceQuotaCounter,
-    WorkspaceQuotaReservation,
+    OrganizationQuotaCounter,
+    OrganizationQuotaReservation,
 )
 from app.db.queries import governance as governance_q
 from app.db.queries import resources as resources_q
@@ -37,12 +37,12 @@ async def test_request_rate_limit_is_atomic_per_tenant_and_window() -> None:
     service = GovernanceService(GovernanceLimits(requests_per_minute=2))
     first_window = datetime(2026, 7, 15, 12, 0, 20, tzinfo=UTC)
 
-    first = await service.authorize_request("ws_a", now=first_window, audit=False)
-    second = await service.authorize_request("ws_a", now=first_window, audit=False)
-    denied = await service.authorize_request("ws_a", now=first_window, audit=False)
-    other_tenant = await service.authorize_request("ws_b", now=first_window, audit=False)
+    first = await service.authorize_request("org_a", now=first_window, audit=False)
+    second = await service.authorize_request("org_a", now=first_window, audit=False)
+    denied = await service.authorize_request("org_a", now=first_window, audit=False)
+    other_tenant = await service.authorize_request("org_b", now=first_window, audit=False)
     next_window = await service.authorize_request(
-        "ws_a",
+        "org_a",
         now=first_window + timedelta(minutes=1),
         audit=False,
     )
@@ -59,7 +59,7 @@ async def test_concurrent_rate_limit_never_crosses_limit() -> None:
     service = GovernanceService(GovernanceLimits(requests_per_minute=5))
     now = datetime(2026, 7, 15, 12, 0, 0, tzinfo=UTC)
     decisions = await asyncio.gather(
-        *(service.authorize_request("ws", now=now, audit=False) for _ in range(10))
+        *(service.authorize_request("org_test", now=now, audit=False) for _ in range(10))
     )
 
     assert sum(decision.allowed for decision in decisions) == 5
@@ -67,7 +67,7 @@ async def test_concurrent_rate_limit_never_crosses_limit() -> None:
     async with session_scope() as db:
         stored = await governance_q.get_counter_value(
             db,
-            workspace_id="ws",
+            organization_id="org_test",
             metric=governance_q.REQUESTS_METRIC,
             window_start=now,
         )
@@ -79,55 +79,55 @@ async def test_active_work_in_session_acquire_release_and_idempotency() -> None:
     async with session_scope() as db:
         first = await acquire_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_1",
             defaults=defaults,
         )
         replay = await acquire_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_1",
             defaults=defaults,
         )
         second = await acquire_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_2",
             defaults=defaults,
         )
         denied = await acquire_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_3",
             defaults=defaults,
         )
         isolated = await acquire_active_work_in_session(
             db,
-            workspace_id="ws_b",
+            organization_id="org_b",
             reference_id="work_1",
             defaults=defaults,
         )
         released = await release_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_1",
             defaults=defaults,
         )
         released_again = await release_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_1",
             defaults=defaults,
         )
         reacquire_released = await acquire_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="work_1",
             defaults=defaults,
         )
         missing = await release_active_work_in_session(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             reference_id="does_not_exist",
             defaults=defaults,
         )
@@ -148,8 +148,8 @@ async def test_active_work_in_session_acquire_release_and_idempotency() -> None:
     async with session_scope() as db:
         reservations = (
             await db.execute(
-                select(WorkspaceQuotaReservation).where(
-                    WorkspaceQuotaReservation.workspace_id == "ws_a"
+                select(OrganizationQuotaReservation).where(
+                    OrganizationQuotaReservation.organization_id == "org_a"
                 )
             )
         ).scalars().all()
@@ -162,8 +162,8 @@ async def test_active_work_in_session_acquire_release_and_idempotency() -> None:
 async def test_concurrent_active_work_same_reference_counts_once() -> None:
     service = GovernanceService(GovernanceLimits(max_active_work=1))
     first, second = await asyncio.gather(
-        service.acquire_active_work("ws", "same_work"),
-        service.acquire_active_work("ws", "same_work"),
+        service.acquire_active_work("org_test", "same_work"),
+        service.acquire_active_work("org_test", "same_work"),
     )
 
     assert first.allowed and second.allowed
@@ -171,8 +171,8 @@ async def test_concurrent_active_work_same_reference_counts_once() -> None:
     assert first.used == second.used == 1
 
     released = await asyncio.gather(
-        service.release_active_work("ws", "same_work"),
-        service.release_active_work("ws", "same_work"),
+        service.release_active_work("org_test", "same_work"),
+        service.release_active_work("org_test", "same_work"),
     )
     assert sum(result.released for result in released) == 1
     assert sum(result.idempotent for result in released) == 1
@@ -182,8 +182,8 @@ async def test_concurrent_active_work_same_reference_counts_once() -> None:
 async def test_concurrent_active_work_different_references_respects_limit() -> None:
     service = GovernanceService(GovernanceLimits(max_active_work=1))
     decisions = await asyncio.gather(
-        service.acquire_active_work("ws", "work_a"),
-        service.acquire_active_work("ws", "work_b"),
+        service.acquire_active_work("org_test", "work_a"),
+        service.acquire_active_work("org_test", "work_b"),
     )
     assert sum(decision.allowed for decision in decisions) == 1
     assert {decision.used for decision in decisions} == {1}
@@ -195,26 +195,26 @@ async def test_storage_quota_counts_inline_external_and_live_tenant_resources() 
         await resources_q.create_resource(
             db,
             resource_type="file",
-            workspace_id="ws_a",
+            organization_id="org_a",
             content=b"1234",
             size_bytes=1,
             name="inline",
         )
-        allowed = await enforce_storage_quota(db, "ws_a", 6, defaults=defaults)
+        allowed = await enforce_storage_quota(db, "org_a", 6, defaults=defaults)
         external = await resources_q.create_resource(
             db,
             resource_type="file",
-            workspace_id="ws_a",
+            organization_id="org_a",
             size_bytes=6,
             storage_backend="s3",
             storage_key="files/external",
             name="external",
         )
         with pytest.raises(QuotaExceededError) as exc_info:
-            await enforce_storage_quota(db, "ws_a", 1, defaults=defaults)
-        isolated = await enforce_storage_quota(db, "ws_b", 10, defaults=defaults)
+            await enforce_storage_quota(db, "org_a", 1, defaults=defaults)
+        isolated = await enforce_storage_quota(db, "org_b", 10, defaults=defaults)
         external.deleted_at = datetime.now(UTC)
-        after_delete = await enforce_storage_quota(db, "ws_a", 6, defaults=defaults)
+        after_delete = await enforce_storage_quota(db, "org_a", 6, defaults=defaults)
         await db.commit()
 
     assert (allowed.allowed, allowed.used, allowed.remaining) == (True, 4, 6)
@@ -234,9 +234,9 @@ async def test_model_token_preflight_postflight_records_one_turn_overrun() -> No
         "reasoning_tokens": 0,
     }
 
-    initial = await service.preflight_model_tokens("ws", now=now, audit=False)
+    initial = await service.preflight_model_tokens("org_test", now=now, audit=False)
     first = await service.postflight_model_tokens(
-        "ws",
+        "org_test",
         8,
         idempotency_key="turn_1",
         provider="openai",
@@ -245,11 +245,11 @@ async def test_model_token_preflight_postflight_records_one_turn_overrun() -> No
         now=now,
     )
     estimated_denied = await service.preflight_model_tokens(
-        "ws", estimated_tokens=3, now=now, audit=False
+        "org_test", estimated_tokens=3, now=now, audit=False
     )
-    unknown_actual_allowed = await service.preflight_model_tokens("ws", now=now, audit=False)
+    unknown_actual_allowed = await service.preflight_model_tokens("org_test", now=now, audit=False)
     overrun = await service.postflight_model_tokens(
-        "ws",
+        "org_test",
         5,
         idempotency_key="turn_2",
         provider="openai",
@@ -258,9 +258,9 @@ async def test_model_token_preflight_postflight_records_one_turn_overrun() -> No
         dimensions=turn_2_dimensions,
         now=now,
     )
-    subsequent = await service.preflight_model_tokens("ws", now=now, audit=False)
+    subsequent = await service.preflight_model_tokens("org_test", now=now, audit=False)
     replay = await service.postflight_model_tokens(
-        "ws",
+        "org_test",
         5,
         idempotency_key="turn_2",
         provider="openai",
@@ -299,12 +299,12 @@ async def test_model_token_preflight_postflight_records_one_turn_overrun() -> No
             await db.execute(
                 select(func.sum(UsageLedgerEntry.quantity), func.count())
                 .select_from(UsageLedgerEntry)
-                .where(UsageLedgerEntry.workspace_id == "ws")
+                .where(UsageLedgerEntry.organization_id == "org_test")
             )
         ).one()
         stored_turn_2 = await governance_q.get_usage_by_idempotency_key(
             db,
-            workspace_id="ws",
+            organization_id="org_test",
             idempotency_key="turn_2",
         )
     assert (total, entries) == (13, 2)
@@ -313,7 +313,7 @@ async def test_model_token_preflight_postflight_records_one_turn_overrun() -> No
 
     with pytest.raises(UsageIdempotencyConflictError):
         await service.postflight_model_tokens(
-            "ws",
+            "org_test",
             6,
             idempotency_key="turn_2",
             provider="openai",
@@ -328,19 +328,19 @@ async def test_model_token_windows_are_daily_and_tenant_isolated() -> None:
     service = GovernanceService(GovernanceLimits(daily_model_tokens=5))
     first_day = datetime(2026, 7, 15, 23, 59, tzinfo=UTC)
     second_day = first_day + timedelta(minutes=2)
-    await service.postflight_model_tokens("ws_a", 5, idempotency_key="a-1", now=first_day)
+    await service.postflight_model_tokens("org_a", 5, idempotency_key="a-1", now=first_day)
 
-    assert not (await service.preflight_model_tokens("ws_a", now=first_day, audit=False)).allowed
-    assert (await service.preflight_model_tokens("ws_a", now=second_day, audit=False)).allowed
-    assert (await service.preflight_model_tokens("ws_b", now=first_day, audit=False)).allowed
+    assert not (await service.preflight_model_tokens("org_a", now=first_day, audit=False)).allowed
+    assert (await service.preflight_model_tokens("org_a", now=second_day, audit=False)).allowed
+    assert (await service.preflight_model_tokens("org_b", now=first_day, audit=False)).allowed
 
 
 async def test_concurrent_model_token_postflight_records_usage_event_once() -> None:
     service = GovernanceService(GovernanceLimits(daily_model_tokens=100))
     now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
     first, second = await asyncio.gather(
-        service.postflight_model_tokens("ws", 7, idempotency_key="provider-usage", now=now),
-        service.postflight_model_tokens("ws", 7, idempotency_key="provider-usage", now=now),
+        service.postflight_model_tokens("org_test", 7, idempotency_key="provider-usage", now=now),
+        service.postflight_model_tokens("org_test", 7, idempotency_key="provider-usage", now=now),
     )
     assert {first.idempotent, second.idempotent} == {False, True}
     assert first.used == second.used == 7
@@ -352,14 +352,14 @@ async def test_concurrent_model_token_postflight_records_usage_event_once() -> N
 async def test_usage_and_audit_are_tenant_scoped_idempotent_and_append_only() -> None:
     service = GovernanceService()
     audit = await service.record_audit(
-        "ws_a",
+        "org_a",
         actor_type="api_key",
         actor_id="key_1",
         action="agent.create",
         outcome="success",
     )
     first = await service.record_usage(
-        "ws_a",
+        "org_a",
         metric="sandbox_seconds",
         quantity=12,
         unit="second",
@@ -368,7 +368,7 @@ async def test_usage_and_audit_are_tenant_scoped_idempotent_and_append_only() ->
         source_id="sbx_1",
     )
     replay = await service.record_usage(
-        "ws_a",
+        "org_a",
         metric="sandbox_seconds",
         quantity=12,
         unit="second",
@@ -377,7 +377,7 @@ async def test_usage_and_audit_are_tenant_scoped_idempotent_and_append_only() ->
         source_id="sbx_1",
     )
     await service.record_usage(
-        "ws_b",
+        "org_b",
         metric="sandbox_seconds",
         quantity=99,
         unit="second",
@@ -389,7 +389,7 @@ async def test_usage_and_audit_are_tenant_scoped_idempotent_and_append_only() ->
 
     with pytest.raises(UsageIdempotencyConflictError):
         await service.record_usage(
-            "ws_a",
+            "org_a",
             metric="sandbox_seconds",
             quantity=13,
             unit="second",
@@ -399,8 +399,8 @@ async def test_usage_and_audit_are_tenant_scoped_idempotent_and_append_only() ->
         )
 
     async with session_scope() as db:
-        audit_rows = await governance_q.list_audit_entries(db, workspace_id="ws_a")
-        usage_rows = await governance_q.list_usage_entries(db, workspace_id="ws_a")
+        audit_rows = await governance_q.list_audit_entries(db, organization_id="org_a")
+        usage_rows = await governance_q.list_usage_entries(db, organization_id="org_a")
     assert [entry.id for entry in audit_rows] == [audit.id]
     assert [(entry.id, entry.quantity) for entry in usage_rows] == [(first.id, 12)]
 
@@ -430,7 +430,7 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
     async with session_scope() as db:
         acquired = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             operation="session.create",
             idempotency_key="customer-request-1",
             request_payload=payload,
@@ -454,35 +454,35 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
     async with session_scope() as db:
         replay = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             operation="session.create",
             idempotency_key="customer-request-1",
             request_payload={"input": {"a": 1, "b": 2}, "agent_id": "agent_1"},
         )
         conflict = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             operation="session.create",
             idempotency_key="customer-request-1",
             request_payload={"agent_id": "different"},
         )
         other_operation = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             operation="agent.create",
             idempotency_key="customer-request-1",
             request_payload=payload,
         )
         other_tenant = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_b",
+            organization_id="org_b",
             operation="session.create",
             idempotency_key="customer-request-1",
             request_payload=payload,
         )
         in_progress_owner = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             operation="session.create",
             idempotency_key="customer-request-2",
             request_payload=payload,
@@ -492,7 +492,7 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
     async with session_scope() as db:
         in_progress = await claim_tenant_idempotency(
             db,
-            workspace_id="ws_a",
+            organization_id="org_a",
             operation="session.create",
             idempotency_key="customer-request-2",
             request_payload=payload,
@@ -513,7 +513,7 @@ async def test_concurrent_generic_idempotency_claim_has_one_owner() -> None:
         async with session_scope() as db:
             claim = await claim_tenant_idempotency(
                 db,
-                workspace_id="ws",
+                organization_id="org_test",
                 operation="file.create",
                 idempotency_key="one-owner",
                 request_payload={"filename": "report.txt"},
@@ -530,16 +530,16 @@ async def test_bounded_cleanup_removes_only_expired_request_and_completed_record
     service = GovernanceService(GovernanceLimits(requests_per_minute=10))
     now = datetime.now(UTC).replace(microsecond=0)
     old = now - timedelta(days=10)
-    await service.authorize_request("ws", now=old, audit=False)
-    await service.authorize_request("ws", now=old + timedelta(minutes=1), audit=False)
-    await service.authorize_request("ws", now=now, audit=False)
+    await service.authorize_request("org_test", now=old, audit=False)
+    await service.authorize_request("org_test", now=old + timedelta(minutes=1), audit=False)
+    await service.authorize_request("org_test", now=now, audit=False)
 
     completed_ids: list[str] = []
     async with session_scope() as db:
         for number in range(2):
             claim = await claim_tenant_idempotency(
                 db,
-                workspace_id="ws",
+                organization_id="org_test",
                 operation="cleanup.test",
                 idempotency_key=f"completed-{number}",
                 request_payload={"number": number},
@@ -553,7 +553,7 @@ async def test_bounded_cleanup_removes_only_expired_request_and_completed_record
             completed_ids.append(claim.record_id)
         active = await claim_tenant_idempotency(
             db,
-            workspace_id="ws",
+            organization_id="org_test",
             operation="cleanup.test",
             idempotency_key="still-in-progress",
             request_payload={},
@@ -569,7 +569,7 @@ async def test_bounded_cleanup_removes_only_expired_request_and_completed_record
         # An old non-request metric must never be swept by request retention.
         await governance_q.adjust_counter(
             db,
-            workspace_id="ws",
+            organization_id="org_test",
             metric=governance_q.MODEL_TOKENS_METRIC,
             window_start=old.replace(hour=0, minute=0, second=0),
             window_seconds=86_400,
@@ -600,13 +600,13 @@ async def test_bounded_cleanup_removes_only_expired_request_and_completed_record
     async with session_scope() as db:
         request_counters = await db.scalar(
             select(func.count())
-            .select_from(WorkspaceQuotaCounter)
-            .where(WorkspaceQuotaCounter.metric == governance_q.REQUESTS_METRIC)
+            .select_from(OrganizationQuotaCounter)
+            .where(OrganizationQuotaCounter.metric == governance_q.REQUESTS_METRIC)
         )
         model_counters = await db.scalar(
             select(func.count())
-            .select_from(WorkspaceQuotaCounter)
-            .where(WorkspaceQuotaCounter.metric == governance_q.MODEL_TOKENS_METRIC)
+            .select_from(OrganizationQuotaCounter)
+            .where(OrganizationQuotaCounter.metric == governance_q.MODEL_TOKENS_METRIC)
         )
         remaining_idempotency = (
             await db.execute(select(TenantIdempotencyRecord))

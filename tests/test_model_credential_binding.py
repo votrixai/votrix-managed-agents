@@ -77,7 +77,7 @@ async def _runtime_context(session_id, *, commit=False):
             db,
             agent_id=session.agent_id,
             version=session.agent_version,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         context = await _runtime_context_for_session(
             db,
@@ -89,35 +89,30 @@ async def _runtime_context(session_id, *, commit=False):
         return context
 
 
-async def test_server_key_choice_is_frozen_when_vault_has_no_match_at_create(client):
+async def test_session_requires_matching_vault_model_credential(client):
     agent = await _agent(client)
     environment = await _environment(client)
     vault = await _vault(client, "Initially empty")
 
-    first = await _session(client, agent, environment, [vault["id"]])
-    assert first["status_details"]["model_credential_binding"] == {
-        "version": 1,
-        "source": "server",
-        "credential_id": None,
-        "vault_id": None,
-        "model_provider": "openrouter",
-    }
-    assert "OPENROUTER_API_KEY" not in str(first["status_details"])
-    async with session_scope() as db:
-        stored_first = await sessions_q.get_session(db, first["id"])
-        assert (
-            stored_first.status_details["model_credential_binding"]["secret_name"]
-            == "OPENROUTER_API_KEY"
-        )
+    missing = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": agent["id"],
+            "environment_id": environment["id"],
+            "vault_ids": [vault["id"]],
+        },
+    )
+    assert missing.status_code == 422, missing.text
+    assert missing.json()["error"]["code"] == "model_credential_required"
+    assert "openrouter" in missing.json()["error"]["message"]
 
     credential = await _credential(client, vault["id"], "added-later")
-    assert (await _runtime_context(first["id"]))["provider_secrets"] == {}
-
-    second = await _session(client, agent, environment, [vault["id"]])
-    assert second["status_details"]["model_credential_binding"]["source"] == "vault"
-    assert second["status_details"]["model_credential_binding"]["model_provider"] == "openrouter"
-    assert "secret_name" not in second["status_details"]["model_credential_binding"]
-    assert (await _runtime_context(second["id"]))["provider_secrets"] == {
+    session = await _session(client, agent, environment, [vault["id"]])
+    assert session["status_details"]["model_credential_binding"]["source"] == "vault"
+    assert session["status_details"]["model_credential_binding"]["model_provider"] == "openrouter"
+    assert "secret_name" not in session["status_details"]["model_credential_binding"]
+    assert (await _runtime_context(session["id"]))["provider_secrets"] == {
         "OPENROUTER_API_KEY": "added-later"
     }
 
@@ -132,9 +127,34 @@ async def test_server_key_choice_is_frozen_when_vault_has_no_match_at_create(cli
         },
     )
     assert response.status_code == 200, response.text
-    assert (await _runtime_context(second["id"]))["provider_secrets"] == {
+    assert (await _runtime_context(session["id"]))["provider_secrets"] == {
         "OPENROUTER_API_KEY": "rotated-in-place"
     }
+
+
+async def test_legacy_server_binding_is_rejected(client):
+    agent = await _agent(client)
+    environment = await _environment(client)
+    vault = await _vault(client, "Legacy server binding")
+    await _credential(client, vault["id"], "customer-owned")
+    session = await _session(client, agent, environment, [vault["id"]])
+
+    async with session_scope() as db:
+        record = await sessions_q.get_session(db, session["id"])
+        details = dict(record.status_details)
+        details["model_credential_binding"] = {
+            "version": 1,
+            "source": "server",
+            "credential_id": None,
+            "vault_id": None,
+            "model_provider": "openrouter",
+            "secret_name": "OPENROUTER_API_KEY",
+        }
+        await sessions_q.update_session(db, record, status_details=details)
+        await db.commit()
+
+    with pytest.raises(ModelCredentialUnavailableError, match="Server-provided"):
+        await _runtime_context(session["id"])
 
 
 async def test_legacy_session_binds_once_then_revocation_fails_closed(client):

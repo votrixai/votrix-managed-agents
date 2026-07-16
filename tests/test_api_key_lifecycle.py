@@ -8,17 +8,27 @@ from httpx import ASGITransport, AsyncClient
 from app.auth import DatabaseApiKeyAuthProvider, default_auth_provider
 from app.config import get_settings
 from app.db.engine import session_scope
-from app.db.models import Workspace
+from app.db.models import Organization
 from app.db.queries import api_keys as api_keys_q
 from app.factory import create_app
 from tests.conftest import TEST_HEADERS
 
 
-async def _seed_key(*, workspace_id: str, name: str, scopes: list[str], expires_at=None):
+async def _seed_key(*, organization_id: str, name: str, scopes: list[str], expires_at=None):
     async with session_scope() as db:
+        organization = await db.get(Organization, organization_id)
+        if organization is None:
+            db.add(
+                Organization(
+                    id=organization_id,
+                    slug=organization_id.removeprefix("org_").replace("_", "-"),
+                    name=f"Test organization {organization_id}",
+                    metadata_={},
+                )
+            )
         api_key, token = await api_keys_q.create_api_key(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             name=name,
             scopes=scopes,
             expires_at=expires_at,
@@ -31,15 +41,15 @@ def _headers(token: str) -> dict[str, str]:
     return {**TEST_HEADERS, "x-api-key": token}
 
 
-async def test_api_key_lifecycle_returns_plaintext_once_and_is_workspace_scoped():
+async def test_api_key_lifecycle_returns_plaintext_once_and_is_organization_scoped():
     admin_a, admin_token_a = await _seed_key(
-        workspace_id="wrkspc_keys_a",
-        name="Workspace A admin",
+        organization_id="org_keys_a",
+        name="Organization A admin",
         scopes=[api_keys_q.API_SCOPE, api_keys_q.API_KEYS_MANAGE_SCOPE],
     )
     _, admin_token_b = await _seed_key(
-        workspace_id="wrkspc_keys_b",
-        name="Workspace B admin",
+        organization_id="org_keys_b",
+        name="Organization B admin",
         scopes=[api_keys_q.API_SCOPE, api_keys_q.API_KEYS_MANAGE_SCOPE],
     )
 
@@ -123,7 +133,7 @@ async def test_api_key_lifecycle_returns_plaintext_once_and_is_workspace_scoped(
         assert revoked_denied.status_code == 401
 
     async with session_scope() as db:
-        stored = await api_keys_q.get_api_key(db, child_id, workspace_id="wrkspc_keys_a")
+        stored = await api_keys_q.get_api_key(db, child_id, organization_id="org_keys_a")
         assert stored is not None
         assert stored.key_hash == api_keys_q.hash_api_key(child_token)
         assert stored.key_hash != child_token
@@ -131,13 +141,13 @@ async def test_api_key_lifecycle_returns_plaintext_once_and_is_workspace_scoped(
 
 async def test_expired_api_key_is_rejected_and_past_expiry_cannot_be_issued():
     _, expired_token = await _seed_key(
-        workspace_id="wrkspc_expired",
+        organization_id="org_expired",
         name="Expired",
         scopes=[api_keys_q.API_SCOPE],
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
     _, admin_token = await _seed_key(
-        workspace_id="wrkspc_expired",
+        organization_id="org_expired",
         name="Admin",
         scopes=[api_keys_q.API_KEYS_MANAGE_SCOPE],
     )
@@ -159,21 +169,16 @@ async def test_expired_api_key_is_rejected_and_past_expiry_cannot_be_issued():
         assert invalid_create.status_code == 422
 
 
-async def test_archived_workspace_api_key_is_rejected():
+async def test_archived_organization_api_key_is_rejected():
     _, token = await _seed_key(
-        workspace_id="wrkspc_archived_tenant",
+        organization_id="org_archived_tenant",
         name="Archived tenant key",
         scopes=[api_keys_q.API_SCOPE],
     )
     async with session_scope() as db:
-        workspace = Workspace(
-            id="wrkspc_archived_tenant",
-            slug="archived-tenant",
-            name="Archived tenant",
-            metadata_={},
-            archived_at=datetime.now(timezone.utc),
-        )
-        db.add(workspace)
+        organization = await db.get(Organization, "org_archived_tenant")
+        assert organization is not None
+        organization.archived_at = datetime.now(timezone.utc)
         await db.commit()
 
     app = create_app(auth_provider=DatabaseApiKeyAuthProvider())
@@ -184,17 +189,17 @@ async def test_archived_workspace_api_key_is_rejected():
 
 async def test_worker_scope_is_separate_and_tenant_bound():
     _, api_token_a = await _seed_key(
-        workspace_id="wrkspc_worker_a",
+        organization_id="org_worker_a",
         name="API A",
         scopes=[api_keys_q.API_SCOPE],
     )
     _, worker_token_a = await _seed_key(
-        workspace_id="wrkspc_worker_a",
+        organization_id="org_worker_a",
         name="Worker A",
         scopes=[api_keys_q.WORKER_SCOPE],
     )
     _, worker_token_b = await _seed_key(
-        workspace_id="wrkspc_worker_b",
+        organization_id="org_worker_b",
         name="Worker B",
         scopes=[api_keys_q.WORKER_SCOPE],
     )

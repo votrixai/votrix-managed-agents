@@ -40,8 +40,8 @@ def test_s3_object_storage_configuration(monkeypatch):
         category="files",
         filename="file.txt",
         content_sha256="abcdef1234567890",
-        workspace_id="ws_test",
-    ).startswith("workspaces/ws_test/vma/files/")
+        organization_id="org_test",
+    ).startswith("organizations/org_test/vma/files/")
 
 
 def test_object_storage_requires_s3_configuration(monkeypatch):
@@ -50,3 +50,20 @@ def test_object_storage_requires_s3_configuration(monkeypatch):
 
     with pytest.raises(StorageConfigurationError):
         should_store_in_object_storage()
+
+
+@pytest.mark.parametrize(
+    "organization_id",
+    ["default", "org_", "org_../escape", "org_" + "default"],
+)
+def test_object_key_requires_an_explicit_prefixed_organization_id(organization_id):
+    with pytest.raises(TypeError):
+        object_key(namespace="vma", category="files", filename="file.txt")
+
+    with pytest.raises(ValueError, match="organization_id"):
+        object_key(
+            namespace="vma",
+            category="files",
+            filename="file.txt",
+            organization_id=organization_id,
+        )

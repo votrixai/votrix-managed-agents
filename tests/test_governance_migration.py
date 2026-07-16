@@ -42,13 +42,15 @@ def test_governance_migration_upgrades_enforces_ledgers_and_downgrades(tmp_path:
             )
         }
         assert {
-            "workspace_quotas",
-            "workspace_quota_counters",
-            "workspace_quota_reservations",
+            "organization_quotas",
+            "organization_quota_counters",
+            "organization_quota_reservations",
             "audit_ledger",
             "usage_ledger",
             "tenant_idempotency",
         } <= tables
+        assert "organizations" in tables
+        assert connection.execute("SELECT COUNT(*) FROM organizations").fetchone() == (0,)
         assert {
             "trg_audit_ledger_append_only_update",
             "trg_audit_ledger_append_only_delete",
@@ -60,9 +62,9 @@ def test_governance_migration_upgrades_enforces_ledgers_and_downgrades(tmp_path:
         connection.execute(
             """
             INSERT INTO audit_ledger
-                (id, workspace_id, actor_type, action, outcome, data, occurred_at)
+                (id, organization_id, actor_type, action, outcome, data, occurred_at)
             VALUES
-                ('audit_1', 'ws', 'system', 'migration.test', 'success', '{}', CURRENT_TIMESTAMP)
+                ('audit_1', 'org_test', 'system', 'migration.test', 'success', '{}', CURRENT_TIMESTAMP)
             """
         )
         try:
@@ -77,9 +79,9 @@ def test_governance_migration_upgrades_enforces_ledgers_and_downgrades(tmp_path:
         connection.execute(
             """
             INSERT INTO usage_ledger
-                (id, workspace_id, metric, quantity, unit, dimensions, data, occurred_at)
+                (id, organization_id, metric, quantity, unit, dimensions, data, occurred_at)
             VALUES
-                ('usage_1', 'ws', 'tokens', 1, 'token', '{}', '{}', CURRENT_TIMESTAMP)
+                ('usage_1', 'org_test', 'tokens', 1, 'token', '{}', '{}', CURRENT_TIMESTAMP)
             """
         )
         try:
@@ -104,6 +106,24 @@ def test_governance_migration_upgrades_enforces_ledgers_and_downgrades(tmp_path:
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger')"
             )
         }
-    assert "workspace_quotas" not in remaining
+    assert "organization_quotas" not in remaining
     assert "audit_ledger" not in remaining
     assert not any(name.startswith("trg_audit_ledger") for name in remaining)
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "base"],
+        cwd=root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database) as connection:
+        tables_after_base = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert "organizations" not in tables_after_base
+    assert "managed_resources" not in tables_after_base

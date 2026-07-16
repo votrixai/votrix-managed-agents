@@ -15,13 +15,13 @@ The repository now contains the minimum platform foundation for a controlled
 multi-tenant public beta:
 
 - Requests in local, development, staging, and production fail closed through
-  database-backed workspace API keys with lifecycle, expiration, revocation,
+  database-backed Organization API keys with lifecycle, expiration, revocation,
   rotation, and small scopes.
 - Request IDs, stable error codes, and quota headers provide a supportable
   client contract.
 - Hosted Session execution uses durable Postgres work leases with generations,
   heartbeats, recovery, and stale-attempt terminal-write fencing.
-- Workspace request, active-work, daily model-token, and stored-byte limits are
+- Organization request, active-work, daily model-token, and stored-byte limits are
   enforced atomically.
 - E2B lifecycle transitions accumulate a private, best-effort local runtime
   cost estimate from configured vCPU/memory rates without calling E2B billing
@@ -34,11 +34,20 @@ multi-tenant public beta:
 - The native Python SDK has a full async GA client and a synchronous
   provisioning subset with pagination, streams, retries, API-key management,
   native model-Credential lifecycle, request IDs, and stable error codes.
+- Model execution is strict BYOK: VMA never reads a model key from process
+  environment or provider configuration, and every key-based Session must bind
+  a matching Organization Vault model Credential at creation.
 
 This is not a production-HA, enterprise-identity/compliance, or paid-billing
 claim. The public beta is BYOK/free. The raw usage ledger supports quota
 enforcement and cost analysis; it does not contain a price book or authoritative
 monetary balances.
+
+This pre-launch release is a breaking tenancy reset. Organization replaces the
+pre-launch tenant model without compatibility aliases or an implicit default.
+Existing databases, R2 objects, API keys, and E2B Sessions are
+unsupported; recreate each environment and bootstrap an explicit `org_*`
+Organization before validation or traffic.
 
 The E2B estimate is a separate internal operations aid. It is not provider
 usage truth, does not add monetary values or bills to `usage_ledger`, and is not
@@ -59,7 +68,7 @@ Explicitly deferred:
   Threads, system Skills, tunnels, GitHub repository resources, and MCP OAuth.
 - Webhook endpoint registration/delivery; there is no beta webhook product
   promise.
-- Postgres RLS; Organizations, memberships, human/service-account RBAC, SSO,
+- Postgres RLS; Organization memberships, human/service-account RBAC, SSO,
   and SCIM.
 - Enterprise audit export/retention/legal hold/external anchoring and complete
   administrator/support access history.
@@ -72,28 +81,43 @@ Explicitly deferred:
 ### API keys
 
 - Local, development, staging, and production select
-  `DatabaseApiKeyAuthProvider`; the trusted CLI creates the first workspace and
+  `DatabaseApiKeyAuthProvider`; the trusted CLI creates the first Organization and
   administrator key after migrations.
 - Key plaintext appears only in create/rotate output. The database stores a
   SHA-256 digest and non-secret metadata.
 - `api` grants normal API access, `api_keys:manage` protects key lifecycle, and
   `worker` protects Environment work operations.
-- Callers cannot choose a workspace through an untrusted request header.
-- An invalid key has no trusted workspace and therefore cannot be written as a
+- Callers cannot choose an Organization through an untrusted request header.
+- An invalid key has no trusted Organization and therefore cannot be written as a
   tenant-attributed audit event. Add a separate security-event sink later if
   hosted operations need invalid-auth aggregation.
 
+### Model Credentials
+
+- `VMA_MODEL_PROVIDERS` contains approved routing metadata and the internal
+  Vault credential-slot name only. Despite the legacy name, `api_key_env` is
+  not a process-environment lookup.
+- A key-based Session reads `vault_ids` in order and freezes the first matching
+  model Credential. If none exists, creation returns `422` with
+  `model_credential_required`; VMA has no platform model key or server-key
+  fallback.
+- Rotation of the bound Credential takes effect on later turns. Archive or
+  deletion fails closed and never changes payer inside the Session.
+- Keyless `fake` and `ollama` providers bind with source `none`.
+- The MVP has one immutable model-Credential binding per Session, so a
+  multiagent coordinator and every pinned subagent must use the same provider.
+
 ### Quotas and raw usage
 
-- Request quota is a per-workspace one-minute counter.
+- Request quota is a per-Organization one-minute counter.
 - Active work is a durable reservation keyed to the work ID and is released
   idempotently on completion, error, or stop.
-- File and Skill writes enforce the workspace stored-byte limit.
+- File and Skill writes enforce the Organization stored-byte limit.
 - Model-token preflight admits a turn only while the UTC-day counter is below
   its limit. Provider-reported actual usage is known postflight and is appended
   exactly once. One admitted turn may cross the limit; subsequent turns are
   denied until reset. Do not “fix” this by dropping over-limit usage.
-- Workspace override storage exists, but no public quota-administration API is
+- Organization override storage exists, but no public quota-administration API is
   promised. Environment defaults are the current operator control surface.
 
 ### Work ownership
@@ -142,7 +166,7 @@ Explicitly deferred:
 ### Idempotency
 
 - Session create uses the generic `tenant_idempotency` record keyed by
-  workspace, operation, key hash, and request fingerprint. Same key/body
+  Organization, operation, key hash, and request fingerprint. Same key/body
   replays; a different body conflicts; an in-progress request is reported.
 - Session events use `session_event_idempotency`, created in the same
   transaction as event append/work enqueue and linked to the work ID.
@@ -156,16 +180,17 @@ Explicitly deferred:
 
 | Area | Primary files |
 | --- | --- |
-| Workspace auth and scopes | `app/auth.py`, `app/workspace.py`, `app/db/queries/api_keys.py` |
+| Organization auth and scopes | `app/auth.py`, `app/organization.py`, `app/db/queries/api_keys.py` |
 | API-key HTTP lifecycle and bootstrap | `app/routers/api_keys.py`, `app/models/api_keys.py`, `scripts/bootstrap_api_key.py` |
 | Request IDs and error contract | `app/factory.py`, `app/errors.py`, `app/models/status.py` |
 | Governance service and headers | `app/governance.py`, `app/governance_runtime.py`, `app/db/queries/governance.py` |
-| Governance persistence | `app/db/models.py`, `alembic/versions/20260715_0015_workspace_governance.py` |
+| Governance persistence | `app/db/models.py`, `alembic/versions/20260715_0015_organization_governance.py` |
 | Work leases and embedded consumer | `app/runtime/work_queue.py`, `app/worker.py`, `app/routers/environments.py`, `app/factory.py` |
 | Runtime usage accounting | `app/runtime/runner.py`, `app/runtime/work_queue.py` |
 | Private E2B runtime estimate | `app/runtime/e2b_cost_estimation.py`, `app/runtime/sandbox_lifecycle.py` |
 | Storage quota hooks | `app/routers/files.py`, `app/routers/skills.py` |
 | Session/event idempotency | `app/routers/sessions.py`, `app/db/queries/event_idempotency.py`, `app/governance.py` |
+| Strict BYOK/provider binding | `app/runtime/model_credentials.py`, `app/runtime/providers.py`, `app/db/queries/sessions.py`, `app/routers/sessions.py` |
 | Private object storage | `app/storage.py`, `app/routers/files.py`, `app/routers/skills.py` |
 | Public GA filter/capabilities | `app/public_surface.py`, `app/factory.py`, `scripts/export_openapi.py` |
 | Outbound SSRF boundary | `app/network_security.py`, `app/runtime/deepagent_tools.py` |
@@ -178,7 +203,7 @@ Explicitly deferred:
 Run the chain in order through `alembic upgrade head`; do not cherry-pick only
 the final revision:
 
-1. `20260713_0012` — creates `session_event_idempotency`, unique by workspace,
+1. `20260713_0012` — creates `session_event_idempotency`, unique by Organization,
    Session, and key hash, with the canonical request hash, linked work ID, and
    exact successful response.
 2. `20260713_0013` — adds the idempotent
@@ -188,13 +213,13 @@ the final revision:
    metadata, and rotation replacement links. Existing database keys receive
    the legacy-compatible `api`, `api_keys:manage`, and `worker` scopes; archived
    rows are backfilled as revoked.
-4. `20260715_0015` — creates workspace quota overrides, atomic counters,
+4. `20260715_0015` — creates Organization quota overrides, atomic counters,
    active-work reservations, append-only audit/usage ledgers, generic tenant
    idempotency, indexes, constraints, and PostgreSQL/SQLite append-only
    triggers.
 
 Deploy/migrate before starting the new application revision, then bootstrap the
-first workspace key before sending authenticated traffic. The GCP scripts run a
+first Organization key before sending authenticated traffic. The GCP scripts run a
 dedicated migration Job and replace the service only after it succeeds. A
 downgrade from `0015` drops governance ledgers and their data; treat rollback as
 a data-loss decision, not a routine retry.
@@ -204,15 +229,15 @@ a data-loss decision, not a routine retry.
 | Purpose | Settings |
 | --- | --- |
 | Environment/protocol | `APP_ENV`, `VMA_REQUIRE_BETA_HEADER`, `VMA_REQUIRE_ANTHROPIC_VERSION_HEADER`; authentication keys are database records created through the bootstrap/API lifecycle |
-| Governance | `VMA_GOVERNANCE_ENABLED`, `VMA_REQUESTS_PER_MINUTE`, `VMA_MAX_ACTIVE_WORK`, `VMA_DAILY_MODEL_TOKENS`, `VMA_WORKSPACE_STORAGE_BYTES` |
+| Governance | `VMA_GOVERNANCE_ENABLED`, `VMA_REQUESTS_PER_MINUTE`, `VMA_MAX_ACTIVE_WORK`, `VMA_DAILY_MODEL_TOKENS`, `VMA_ORGANIZATION_STORAGE_BYTES` |
 | Durable consumer | `VMA_EMBEDDED_WORKER_ENABLED`, `VMA_WORKER_CONCURRENCY`, `VMA_WORKER_POLL_INTERVAL_SECONDS`, `VMA_WORKER_LEASE_SECONDS`; external workers use tenant-bound database API keys with `worker` scope |
 | Public surface/browser | `VMA_PUBLIC_GA_ONLY`, `VMA_CORS_ORIGINS` |
-| Database/checkpoints | `DATABASE_URL`, optional `VMA_CHECKPOINT_DATABASE_URL` |
+| Database/checkpoints | `DATABASE_URL`, optional `VMA_CHECKPOINT_DATABASE_URL`, `VMA_DB_POOL_SIZE`, `VMA_DB_MAX_OVERFLOW`, `VMA_DB_POOL_TIMEOUT_SECONDS`, `VMA_DB_POOL_RECYCLE_SECONDS` |
 | Private object storage | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `S3_REGION` |
 | Upload/runtime limits | `VMA_MAX_FILE_UPLOAD_BYTES`, `VMA_MAX_SESSION_INPUT_BYTES`, `VMA_MAX_SKILL_ARCHIVE_BYTES` |
 | Secret storage | `VMA_ENCRYPTION_KEY`, local-only `VMA_ALLOW_PLAINTEXT_SECRETS_LOCAL` |
 | Web-tool egress | `VMA_WEB_FETCH_MAX_BYTES`, `VMA_WEB_SEARCH_ENDPOINT`, `VMA_WEB_ALLOW_PRIVATE_NETWORKS` (keep `false` for tenants) |
-| Model/sandbox | `VMA_DEFAULT_MODEL_PROVIDER`, `VMA_MODEL_PROVIDERS`, provider keys, `VMA_SANDBOX_PROVIDER`, `VMA_SANDBOX_FACTORY`, E2B settings |
+| Model/sandbox | `VMA_DEFAULT_MODEL_PROVIDER`, `VMA_MODEL_PROVIDERS` routing/credential-slot metadata (no model keys), `VMA_SANDBOX_PROVIDER`, `VMA_SANDBOX_FACTORY`, E2B settings |
 | E2B internal estimate | `VMA_E2B_COST_ESTIMATION_ENABLED`, `VMA_E2B_VCPU_SECOND_USD`, `VMA_E2B_GIB_SECOND_USD`, resource inputs from `VMA_E2B_TEMPLATE_RESOURCES` |
 
 Hosted public beta should keep:
@@ -224,6 +249,13 @@ VMA_EMBEDDED_WORKER_ENABLED=true
 VMA_PUBLIC_GA_ONLY=true
 VMA_WEB_ALLOW_PRIVATE_NETWORKS=false
 VMA_ALLOW_PLAINTEXT_SECRETS_LOCAL=false
+VMA_WORKER_CONCURRENCY=5
+VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
+VMA_MAX_SESSION_INPUT_BYTES=67108864
+VMA_DB_POOL_SIZE=10
+VMA_DB_MAX_OVERFLOW=5
+VMA_REQUESTS_PER_MINUTE=600
+VMA_MAX_ACTIVE_WORK=20
 ```
 
 Use `APP_ENV=staging` in staging; the remaining fail-closed/public-GA settings
@@ -239,16 +271,16 @@ Do not restore `S3_PUBLIC_URL` or a public R2 domain. The bucket remains private
 uv sync
 uv run alembic upgrade head
 uv run python -m scripts.bootstrap_api_key \
-  --workspace-id wrkspc_example \
-  --workspace-slug example \
-  --workspace-name "Example"
+  --organization-id org_votrix \
+  --organization-slug votrix \
+  --organization-name "Votrix"
 ```
 
 The last command writes the plaintext API key once. Run it in a trusted
 administrator environment and move the output directly to the intended secret
 store. Do not write it into the repository or service logs. Use the
 authenticated API for later keys and rotations. Local/development clients may
-read the stored workspace secret through `VOTRIX_API_KEY`; the service does not
+read the stored Organization secret through `VOTRIX_API_KEY`; the service does not
 use that client variable as a process-global authentication setting.
 
 ### Checked-in Cloud Run path
@@ -290,6 +322,22 @@ VMA_SMOKE_API_KEY=... \
 uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
 ```
 
+After the one-Session acceptance flow passes, exercise ten independent
+Sessions against the same staging revision:
+
+```bash
+VMA_PERF_BASE_URL=https://YOUR-STAGING-CLOUD-RUN-URL \
+VMA_PERF_API_KEY=... \
+VMA_PERF_VAULT_IDS=vault_... \
+uv run python scripts/performance_smoke.py
+```
+
+The Vault must already contain the model Credential. The smoke creates its own
+disposable Agent and Environment unless `VMA_PERF_AGENT_ID` and
+`VMA_PERF_ENVIRONMENT_ID` are supplied, creates and cleans up only its own
+Sessions, and never modifies supplied resources. Save its queue, first-event,
+total-latency, and failure summary with the release record.
+
 ## Validation record
 
 Focused suites observed during implementation (useful evidence, not the final
@@ -303,14 +351,14 @@ release gate):
 - Session-create idempotency: 3 passed.
 - Session/event semantics: 32 passed.
 
-Final local validation on the settled 2026-07-15 workspace is recorded below.
+Final local validation on the settled 2026-07-15 codebase is recorded below.
 PostgreSQL integration and credentialed staging remain explicit external gates;
 they were not reported as passing without a test database or deployment
 credentials.
 
 | Gate | Command | Final result |
 | --- | --- | --- |
-| Server suite | `.venv/bin/pytest -q` | `PASS — 439 passed, 3 PostgreSQL tests skipped` |
+| Server suite | `.venv/bin/pytest -q` | `PASS — 467 passed, 3 PostgreSQL tests skipped` |
 | Anthropic consumer matrix | `./scripts/test-backend-contract-matrix.sh` | `PASS — 4 passed on anthropic 0.97.0 and 4 passed on 0.116.0` |
 | Migration head/check | isolated SQLite `alembic upgrade head` and `alembic check` | `PASS — full 0001–0015 upgrade; no new operations detected` |
 | PostgreSQL migration/concurrency | PostgreSQL-marked tests and production-like `alembic` gate | `NOT RUN — VMA_TEST_POSTGRES_URL was unavailable` |
@@ -323,6 +371,7 @@ credentials.
 | Dependency lock | `uv lock --check` | `PASS — 134 packages resolved with no lock changes required` |
 | Repository whitespace | `git diff --check` | `PASS` |
 | Credentialed staging smoke | `scripts/pilot_acceptance.py` | `NOT RUN — staging URL/API key/E2B credentials were unavailable` |
+| Ten-Session staging performance | `scripts/performance_smoke.py` | `NOT RUN — requires a deployed staging revision and tenant credentials` |
 
 ## Residual risks
 
@@ -332,8 +381,10 @@ credentials.
    exactly-once provider calls or fence every checkpoint/external side effect.
 3. The request limiter performs durable database writes and fails closed with
    authentication; database latency/availability is therefore on the API path.
+   The hosted profile now reuses a bounded PostgreSQL application pool, but its
+   pool ceiling must remain below the Supabase environment's connection limit.
 4. Postgres RLS is absent. Application-scoped queries and tests remain the
-   primary tenant boundary; a full two-workspace matrix must stay in the gate.
+   primary tenant boundary; a full two-Organization matrix must stay in the gate.
 5. Audit/usage rows are append-only in normal application/database operation,
    but there is no external tamper anchor, enterprise export, or retention job.
    Bounded request-counter/completed-idempotency cleanup exists as an internal
@@ -352,7 +403,7 @@ credentials.
 10. Private storage still needs operator backup, lifecycle, orphan inspection,
    malware policy, and regional controls. Public presigned upload completion is
    intentionally unavailable in GA.
-11. Workspace quota override persistence exists without a public operator UI or
+11. Organization quota override persistence exists without a public operator UI or
    documented admin CLI. Defaults are environment-controlled for this beta.
 12. No Organization RBAC/SSO, RLS, enterprise audit operations, webhook
     delivery, or paid billing is implied by “multi-tenant public beta.”
@@ -371,20 +422,25 @@ credentials.
 5. Run concurrent Postgres tests for request counters, active-work reservation
    acquire/release, usage idempotency, same-key Session create, lease expiry,
    and stale-generation completion.
-6. Complete the two-workspace denial matrix across lookup, pagination, SSE,
+6. Complete the two-Organization denial matrix across lookup, pagination, SSE,
    work execution, checkpoints, private objects, Vaults, and E2B lifecycle.
 7. Deploy staging, bootstrap a staging-only management key, create a separate
-   least-privilege application key, and run the credentialed pilot smoke.
+   least-privilege application key, create a model Credential in a staging
+   Organization Vault, and run the credentialed pilot smoke. Do not add a model
+   provider key to the service environment as a workaround.
 8. Observe database latency, quota denial rates, stuck work, lease recovery,
    token overrun or missing provider usage, storage growth, and audit/usage
    volume before production.
-9. Compare the configured E2B rates/formula with current provider invoices for
+9. Run the ten-Session performance smoke on the exact staging image, record
+   p50/p95/max queue and total latency plus failures, and confirm five embedded
+   consumers drain the burst without memory or database-pool exhaustion.
+10. Compare the configured E2B rates/formula with current provider invoices for
    internal forecasting, document the calibration date, and alert on drift.
    Do not turn the estimate into a customer-visible charge.
-10. Define retention cutoffs and an operator job for bounded expired request
+11. Define retention cutoffs and an operator job for bounded expired request
    counter/completed-idempotency cleanup; do not mutate append-only ledgers.
-11. Keep `maxScale=1` and the GA filter enabled. Do not expose deferred routes or
+12. Keep `maxScale=1` and the GA filter enabled. Do not expose deferred routes or
    a public bucket as a workaround.
-12. Treat Organization/RLS/enterprise audit work as the next platform phase.
+13. Treat Organization/RLS/enterprise audit work as the next platform phase.
     Add commercial billing only if/when the free BYOK beta product decision
     changes; it is not a current release blocker.

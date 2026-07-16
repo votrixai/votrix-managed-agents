@@ -6,9 +6,8 @@ import pytest
 from app.db.engine import session_scope
 from app.db.models import ManagedResource
 from app.db.queries import resources as res_q
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_HEADERS, TEST_ORGANIZATION_ID
 from app.config import get_settings
-from app.workspace import DEFAULT_WORKSPACE_ID
 
 
 async def test_post_update_alias_matches_official_sdk_shape(client):
@@ -184,7 +183,7 @@ async def test_file_upload_content_scan_rejects_eicar_signature(client):
     assert "content scan" in response.json()["error"]["message"]
 
 
-async def test_file_complete_requires_current_workspace_staged_key(client):
+async def test_file_complete_requires_current_organization_staged_key(client):
     response = await client.post(
         "/v1/files/presign",
         headers=TEST_HEADERS,
@@ -192,14 +191,14 @@ async def test_file_complete_requires_current_workspace_staged_key(client):
     )
     assert response.status_code == 200, response.text
     staged = response.json()
-    assert staged["key"].startswith("workspaces/wrkspc_default/")
+    assert staged["key"].startswith(f"organizations/{TEST_ORGANIZATION_ID}/")
     assert "/staged-uploads/" in staged["key"]
 
     response = await client.post(
         "/v1/files/complete",
         headers=TEST_HEADERS,
         json={
-            "key": "workspaces/other/vma/staged-uploads/2026-01-01/obj_staged.txt",
+            "key": "organizations/other/vma/staged-uploads/2026-01-01/obj_staged.txt",
             "filename": "bad.txt",
         },
     )
@@ -881,7 +880,7 @@ async def test_vault_delete_cascades_more_than_one_thousand_credentials(client):
             [
                 ManagedResource(
                     id=f"cred_unbounded_{index:04d}",
-                    workspace_id=DEFAULT_WORKSPACE_ID,
+                    organization_id=TEST_ORGANIZATION_ID,
                     resource_type="credential",
                     parent_id=vault["id"],
                     name=f"Archived {index}",

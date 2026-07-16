@@ -219,7 +219,7 @@ async def test_api_key_lifecycle_exposes_secrets_only_once():
         value = {
             "id": key_id,
             "type": "api_key",
-            "workspace_id": "workspace_1",
+            "organization_id": "org_test",
             "name": "Production",
             "prefix": "vma_test",
             "scopes": ["api", "api_keys:manage"],

@@ -135,7 +135,7 @@ gate and must remain visible in operations documentation.
   `/mnt/session/uploads` root; reject overwrite, conflicting/overlapping paths,
   nesting, traversal, symlinks/hardlinks, and mutable-root overlap. Existing
   mounted inputs cannot be updated or deleted.
-- [x] Verify Workspace ownership, size, copied object identity, and SHA-256
+- [x] Verify Organization ownership, size, copied object identity, and SHA-256
   before advancing the sandbox seal and uncommitted resource row.
 - [x] Advance a monotonic immutable Session manifest revision after each
   successful append and verify the latest digest, revision, manifest, paths,
@@ -204,15 +204,15 @@ cross-Session Memory Store source of truth.
   `vault_ids` ordering; VMA does not add a separate policy enum.
 - [x] Complete the database-backed scoped API-key lifecycle and trusted
   bootstrap path required for the public beta.
-- [ ] Enforce Workspace ownership for every relational row, R2 object, stream,
+- [ ] Enforce Organization ownership for every relational row, R2 object, stream,
   checkpoint, work item, and E2B Sandbox binding.
 - [ ] Fix `votrix-backend` file/session ownership checks before using one shared
-  VMA service tenant for multiple Votrix Workspaces.
-- [x] Add atomic per-Workspace limits for requests/minute, active work, stored
+  VMA service Organization for multiple Votrix customers.
+- [x] Add atomic per-Organization limits for requests/minute, active work, stored
   File/Skill bytes, and daily model tokens. Sandbox-count and sandbox-compute
   limits remain deferred.
 
-Acceptance gate: a two-Workspace denial matrix covers reads, writes, streaming,
+Acceptance gate: a two-Organization denial matrix covers reads, writes, streaming,
 background work, object storage, and external Sandbox lifecycle operations.
 
 ### P0-5 — Provisioning, model identity, and raw usage
@@ -238,7 +238,7 @@ background work, object storage, and external Sandbox lifecycle operations.
 
 ### P0-6 — Production operations and cost controls
 
-- [ ] Correlate Workspace, Session, turn, work item, model request, and Sandbox
+- [ ] Correlate Organization, Session, turn, work item, model request, and Sandbox
   IDs in structured logs and metrics without logging secrets.
 - [ ] Alert on stuck work, duplicate execution, model/provider errors, Sandbox
   create/pause/delete failures, and retention backlog.
@@ -263,31 +263,33 @@ background work, object storage, and external Sandbox lifecycle operations.
 
 ## Multi-tenant API keys
 
-Status: implemented for the public-beta workspace boundary. Enterprise human
-identity and organization hierarchy remain deferred.
+Status: implemented for the public-beta Organization boundary. Enterprise human
+identity and delegated resource namespaces remain deferred.
 
 ### MVP tenancy decision
 
-- Treat the existing `Workspace` as the tenant and Organization boundary.
-- Do not add a separate Organization-to-Workspace hierarchy yet.
-- An Organization/Workspace may own multiple API keys for different callers,
-  such as a production backend, developer laptop, CI, and third-party
-  integration.
+- [x] Perform a pre-launch breaking reset: legacy database rows, R2 keys, API
+  keys, and E2B Sessions are unsupported and each environment must be recreated.
+- `Organization` is the only top-level tenant and security boundary.
+- An Organization may own multiple API keys for different callers, such as a
+  production backend, developer laptop, CI, and third-party integration.
 - Local, development, staging, and production all authenticate with
-  database-backed workspace keys. The trusted bootstrap CLI emits the first
-  secret once without installing a process-global key or enabling anonymous
-  access.
+  database-backed Organization keys. The trusted bootstrap CLI requires an
+  explicit `org_*` ID and emits the first secret once without installing a
+  process-global key or enabling anonymous access.
+- There is no anonymous tenant, implicit tenant fallback, or legacy tenant-ID
+  compatibility mapping.
 
 ### Existing foundations
 
-- `workspaces` and `api_keys` database tables exist.
+- `organizations` and `api_keys` database tables exist.
 - API keys are stored as SHA-256 hashes; plaintext is returned only at creation
   or rotation.
-- API key records already bind to `workspace_id`, expose a non-secret prefix,
-  track `last_used_at`, and support archival.
-- `DatabaseApiKeyAuthProvider` resolves a key to request workspace context.
-- Core resources already carry `workspace_id` in the database.
-- R2 object keys and E2B ownership include the workspace boundary.
+- API key records bind to `organization_id`, expose a non-secret prefix, track
+  `last_used_at`, and support archival.
+- `DatabaseApiKeyAuthProvider` resolves a key to request Organization context.
+- Core resources carry `organization_id` in the database.
+- R2 object keys and E2B ownership include the Organization boundary.
 
 ### Required implementation
 
@@ -311,18 +313,18 @@ identity and organization hierarchy remain deferred.
   expand only when product requirements justify it.
 - [x] Enforce expiration, revocation, and scopes in request dependencies.
 - [x] Ensure callers cannot select a tenant with an untrusted
-  `X-Workspace-ID`-style header.
-- [x] Define a secure bootstrap path for creating the first workspace admin key
+  `X-Organization-ID`-style header.
+- [x] Define a secure bootstrap path for creating the first Organization admin key
   without leaving a permanent global production key.
 - [x] Attribute authenticated key lifecycle and request authorization/completion
-  to the workspace/key without recording plaintext credentials. Invalid keys
+  to the Organization/key without recording plaintext credentials. Invalid keys
   cannot be tenant-attributed and still need a separate security-event sink if
   hosted operations require one.
 
 ### Isolation audit and tests
 
-- [ ] Add a two-workspace denial matrix proving Workspace A cannot read,
-  mutate, stream, or delete Workspace B resources.
+- [ ] Add a two-Organization denial matrix proving Organization A cannot read,
+  mutate, stream, or delete Organization B resources.
 - [ ] Audit ID-based lookup, pagination, and background execution paths for:
   - Agents and Agent versions
   - Environments
@@ -335,35 +337,33 @@ identity and organization hierarchy remain deferred.
 - [x] Verify revoked/archived and expired keys receive `401` and insufficient scopes
   receive `403`.
 - [x] Verify key rotation does not interrupt unrelated keys belonging to the
-  same workspace.
+  same Organization.
 - [ ] Consider PostgreSQL row-level security as defense in depth after the
-  application-level workspace audit is complete.
+  application-level Organization audit is complete.
 
 ### Possible hosted identity path
 
 If all customer traffic passes through `votrix-backend`, consider accepting a
-short-lived backend-signed JWT containing `workspace_id`, audience, scopes, and
-expiry instead of storing one long-lived backend API key per Organization.
-Direct Claude-compatible SDK users can continue to receive workspace-scoped API
+short-lived backend-signed JWT containing `organization_id`, audience, scopes,
+and expiry instead of storing one long-lived backend API key per Organization.
+Direct Claude-compatible SDK users can continue to receive Organization-scoped API
 keys. Do not trust an unsigned tenant identifier forwarded by another service.
 
 ### Explicitly deferred
 
-- Separate Organization and Workspace tables.
-- Multiple Workspaces under one Organization.
+- Delegated project/customer resource namespaces.
 - Organization membership and human-user RBAC.
-- Cross-workspace Organization administrator roles.
+- Cross-namespace Organization administrator roles.
 - Commercial billing and advanced quota-policy ownership at the Organization
   level.
-- Automated migration of existing tenants into a future two-level hierarchy.
 
 ### Acceptance criteria
 
 - No supported environment accepts a permanent process-global authentication
   key or anonymous requests.
-- Every authenticated request resolves exactly one trusted workspace context.
-- Every API key belongs to one workspace; a workspace can own many keys.
+- Every authenticated request resolves exactly one trusted Organization context.
+- Every API key belongs to one Organization; an Organization can own many keys.
 - Plaintext API keys are shown once, hashed at rest, redacted from logs, and
   independently revocable.
-- Cross-workspace access tests cover all durable and external resources.
+- Cross-Organization access tests cover all durable and external resources.
 - Existing Claude-compatible API and SDK request shapes remain unchanged.

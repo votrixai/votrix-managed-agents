@@ -32,7 +32,7 @@ Cross-resource metadata contract:
 
 ## API Keys (VMA native)
 
-Hosted API keys are workspace-scoped, hashed at rest, independently revocable,
+Hosted API keys are Organization-scoped, hashed at rest, independently revocable,
 and authorized through `api`, `api_keys:manage`, or `worker`. Plaintext is
 returned only by create/rotate. A trusted CLI creates the first management key.
 
@@ -48,7 +48,7 @@ returned only by create/rotate. A trusted CLI creates the first management key.
 
 The authenticated catalog is a secret-free projection of the server-owned
 provider registry. It never returns an API key, private environment-variable
-name, base URL, model kwargs, or whether a server key is configured.
+name, base URL, model kwargs, or Session-specific credential availability.
 
 | Operation | Route | Status |
 | --- | --- | --- |
@@ -97,6 +97,11 @@ empty arrays clear tools, MCP servers, or Skills; null is rejected for those
 arrays; and `model: null` is rejected. The response returns the resolved Agent
 snapshot while the base Agent and version remain unchanged. Custom Skill
 `latest` references are pinned before the Session sandbox is provisioned.
+Every key-based model requires a matching model Credential in one of the
+submitted `vault_ids`; otherwise creation returns `422` with code
+`model_credential_required`. VMA has no server model-key fallback. Because the
+MVP persists one model-Credential binding per Session, the coordinator and all
+pinned subagents must use the same provider.
 
 | Operation | Route | Status |
 | --- | --- | --- |
@@ -184,7 +189,7 @@ Deployment-run list supports SDK `deployment_id`, `trigger_type`, created-at fil
 
 ## Vaults
 
-Vault credentials are Workspace-scoped. Active Credentials have a unique
+Vault credentials are Organization-scoped. Active Credentials have a unique
 private credential slot or `mcp_server_url` within one Vault, are limited to 20
 per Vault, and keep structural keys immutable. Archiving or deleting a Vault
 cascades secret purge and revocation. Native callers create a model Credential
@@ -192,7 +197,11 @@ with a public provider ID and write-only key; VMA performs the internal mapping.
 VMA uses the first matching Vault in `vault_ids` at Session creation and
 persists only the selected Credential ID. Later turns reload that exact
 Credential and fail closed after revocation instead of changing payer. The
-secret stays in the control plane and is not copied into E2B.
+secret stays in the control plane and is not copied into E2B. If no matching
+model Credential exists, Session creation fails with `422` and code
+`model_credential_required`; VMA never reads a model API key from process
+environment or provider configuration. Keyless `fake` and `ollama` providers
+use credential source `none`.
 
 | Operation | Route | Status |
 | --- | --- | --- |
@@ -242,7 +251,7 @@ Memory records enforce SDK-compatible slash-prefixed path validation, required c
 Files and Skill archives use a private S3-compatible bucket. VMA authenticates
 downloads, and no public bucket URL is required. Presign/complete upload routes
 exist for non-GA integrations but are hidden from the public-beta schema; GA
-callers use the authenticated bounded upload route. Workspace stored-byte quota
+callers use the authenticated bounded upload route. Organization stored-byte quota
 is enforced for File and Skill writes.
 
 At the end of an E2B turn, VMA discovers bounded direct regular files below

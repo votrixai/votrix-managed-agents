@@ -44,7 +44,7 @@ class FileDeletedResponse(FlexibleApiModel):
 
 class PresignedFileUploadResponse(FlexibleApiModel):
     type: Literal["file_upload_url"] = "file_upload_url"
-    key: str = Field(description="Workspace-scoped staging object key to pass to the completion request.")
+    key: str = Field(description="Organization-scoped staging object key to pass to the completion request.")
     upload_url: str = Field(description="Time-limited URL that accepts the file bytes.")
     method: Literal["PUT"] = Field(default="PUT", description="HTTP method required by the upload URL.")
     headers: dict[str, str] = Field(description="Headers that must be sent with the upload request.")

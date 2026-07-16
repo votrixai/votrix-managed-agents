@@ -13,7 +13,7 @@ async def test_file_upload_denies_before_object_write_when_storage_quota_is_exha
     client,
     monkeypatch,
 ):
-    monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", "0")
+    monkeypatch.setenv("VMA_ORGANIZATION_STORAGE_BYTES", "0")
     get_settings.cache_clear()
 
     async def unexpected_save(*_args, **_kwargs):
@@ -39,10 +39,10 @@ async def test_staged_file_completion_denies_before_copy_or_delete(
     client,
     monkeypatch,
 ):
-    monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", "0")
+    monkeypatch.setenv("VMA_ORGANIZATION_STORAGE_BYTES", "0")
     get_settings.cache_clear()
     staged_key = (
-        "workspaces/wrkspc_default/vma/staged-uploads/"
+        "organizations/org_test/vma/staged-uploads/"
         "2026-07-15/obj_staged.txt"
     )
 
@@ -76,7 +76,7 @@ async def test_skill_creation_denies_before_object_write_and_rolls_back_parent(
     client,
     monkeypatch,
 ):
-    monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", "0")
+    monkeypatch.setenv("VMA_ORGANIZATION_STORAGE_BYTES", "0")
     get_settings.cache_clear()
 
     async def unexpected_save(*_args, **_kwargs):
@@ -105,7 +105,7 @@ async def test_skill_creation_denies_before_object_write_and_rolls_back_parent(
 
 async def test_storage_quota_can_be_disabled_for_local_compatibility(client, monkeypatch):
     monkeypatch.setenv("VMA_GOVERNANCE_ENABLED", "false")
-    monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", "0")
+    monkeypatch.setenv("VMA_ORGANIZATION_STORAGE_BYTES", "0")
     get_settings.cache_clear()
 
     response = await client.post(
@@ -117,14 +117,14 @@ async def test_storage_quota_can_be_disabled_for_local_compatibility(client, mon
     assert response.status_code == 201, response.text
 
 
-async def test_storage_accounting_is_cumulative_and_workspace_scoped(
+async def test_storage_accounting_is_cumulative_and_organization_scoped(
     client,
     monkeypatch,
     database_api_key_factory,
 ):
-    await database_api_key_factory(token="key-a", workspace_id="ws_a")
-    await database_api_key_factory(token="key-b", workspace_id="ws_b")
-    monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", "4")
+    await database_api_key_factory(token="key-a", organization_id="org_a")
+    await database_api_key_factory(token="key-b", organization_id="org_b")
+    monkeypatch.setenv("VMA_ORGANIZATION_STORAGE_BYTES", "4")
     get_settings.cache_clear()
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -179,7 +179,7 @@ async def test_new_skill_version_is_denied_without_advancing_latest_version(
         initial_size = stored.size_bytes
     assert initial_size is not None
 
-    monkeypatch.setenv("VMA_WORKSPACE_STORAGE_BYTES", str(initial_size))
+    monkeypatch.setenv("VMA_ORGANIZATION_STORAGE_BYTES", str(initial_size))
     get_settings.cache_clear()
 
     async def unexpected_save(*_args, **_kwargs):

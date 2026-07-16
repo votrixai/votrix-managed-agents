@@ -33,7 +33,7 @@ from app.storage import (
     save_file_bytes,
     should_store_in_object_storage,
 )
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 SKILL_SOURCES = {"anthropic", "custom"}
 MAX_SKILL_ZIP_MEMBERS = 1_000
@@ -226,7 +226,7 @@ async def _create_skill_version_resource(
     if get_settings().vma_governance_enabled:
         await governance_service().enforce_storage_quota(
             db,
-            workspace_id_or_default(),
+            resolve_organization_id(),
             len(content),
         )
     try:
@@ -237,6 +237,7 @@ async def _create_skill_version_resource(
             namespace=f"skills/{skill_id}",
             filename=f"skill-v{version_number}-{sha256}.zip",
             category="versions",
+            organization_id=resolve_organization_id(),
         )
     except StorageConfigurationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -18,7 +18,7 @@ def upgrade() -> None:
     op.create_table(
         "managed_resources",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("resource_type", sa.String(length=64), nullable=False),
         sa.Column("parent_id", sa.String(length=64), nullable=True),
         sa.Column("version", sa.Integer(), nullable=True),
@@ -40,14 +40,14 @@ def upgrade() -> None:
             name="uq_managed_resources_type_parent_version",
         ),
         sa.UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "resource_type",
             "parent_id",
             "version",
-            name="uq_managed_resources_workspace_type_parent_version",
+            name="uq_managed_resources_organization_type_parent_version",
         ),
     )
-    op.create_index(op.f("ix_managed_resources_workspace_id"), "managed_resources", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_managed_resources_organization_id"), "managed_resources", ["organization_id"], unique=False)
     op.create_index(op.f("ix_managed_resources_resource_type"), "managed_resources", ["resource_type"], unique=False)
     op.create_index(op.f("ix_managed_resources_parent_id"), "managed_resources", ["parent_id"], unique=False)
 
@@ -55,5 +55,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(op.f("ix_managed_resources_parent_id"), table_name="managed_resources")
     op.drop_index(op.f("ix_managed_resources_resource_type"), table_name="managed_resources")
-    op.drop_index(op.f("ix_managed_resources_workspace_id"), table_name="managed_resources")
+    op.drop_index(op.f("ix_managed_resources_organization_id"), table_name="managed_resources")
     op.drop_table("managed_resources")

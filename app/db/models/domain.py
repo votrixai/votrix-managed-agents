@@ -19,15 +19,15 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy import event
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.models._base import Base, TimestampMixin
 from app.ids import new_id
-from app.workspace import DEFAULT_WORKSPACE_ID
+from app.organization import resolve_organization_id
 
 
-class Workspace(TimestampMixin, Base):
-    __tablename__ = "workspaces"
+class Organization(TimestampMixin, Base):
+    __tablename__ = "organizations"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
@@ -35,16 +35,20 @@ class Workspace(TimestampMixin, Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    @validates("id")
+    def validate_id(self, _key: str, value: str) -> str:
+        return resolve_organization_id(value)
+
 
 class ApiKey(TimestampMixin, Base):
     __tablename__ = "api_keys"
     __table_args__ = (
         UniqueConstraint("key_hash", name="uq_api_keys_key_hash"),
-        Index("ix_api_keys_workspace_revoked", "workspace_id", "revoked_at"),
+        Index("ix_api_keys_organization_revoked", "organization_id", "revoked_at"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     prefix: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -61,28 +65,28 @@ class ApiKey(TimestampMixin, Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class WorkspaceQuota(TimestampMixin, Base):
-    __tablename__ = "workspace_quotas"
+class OrganizationQuota(TimestampMixin, Base):
+    __tablename__ = "organization_quotas"
     __table_args__ = (
         CheckConstraint(
             "requests_per_minute IS NULL OR requests_per_minute >= 0",
-            name="ck_workspace_quotas_requests_nonnegative",
+            name="ck_organization_quotas_requests_nonnegative",
         ),
         CheckConstraint(
             "max_active_work IS NULL OR max_active_work >= 0",
-            name="ck_workspace_quotas_active_work_nonnegative",
+            name="ck_organization_quotas_active_work_nonnegative",
         ),
         CheckConstraint(
             "daily_model_tokens IS NULL OR daily_model_tokens >= 0",
-            name="ck_workspace_quotas_model_tokens_nonnegative",
+            name="ck_organization_quotas_model_tokens_nonnegative",
         ),
         CheckConstraint(
             "storage_bytes IS NULL OR storage_bytes >= 0",
-            name="ck_workspace_quotas_storage_nonnegative",
+            name="ck_organization_quotas_storage_nonnegative",
         ),
     )
 
-    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     requests_per_minute: Mapped[int | None] = mapped_column(Integer)
     max_active_work: Mapped[int | None] = mapped_column(Integer)
     daily_model_tokens: Mapped[int | None] = mapped_column(BigInteger)
@@ -90,52 +94,52 @@ class WorkspaceQuota(TimestampMixin, Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 
-class WorkspaceQuotaCounter(TimestampMixin, Base):
-    __tablename__ = "workspace_quota_counters"
+class OrganizationQuotaCounter(TimestampMixin, Base):
+    __tablename__ = "organization_quota_counters"
     __table_args__ = (
-        CheckConstraint("value >= 0", name="ck_workspace_quota_counters_value_nonnegative"),
+        CheckConstraint("value >= 0", name="ck_organization_quota_counters_value_nonnegative"),
         CheckConstraint(
             "window_seconds >= 0",
-            name="ck_workspace_quota_counters_window_nonnegative",
+            name="ck_organization_quota_counters_window_nonnegative",
         ),
         Index(
-            "ix_workspace_quota_counters_metric_window",
+            "ix_organization_quota_counters_metric_window",
             "metric",
             "window_start",
         ),
     )
 
-    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     metric: Mapped[str] = mapped_column(String(64), primary_key=True)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     window_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
-class WorkspaceQuotaReservation(TimestampMixin, Base):
-    __tablename__ = "workspace_quota_reservations"
+class OrganizationQuotaReservation(TimestampMixin, Base):
+    __tablename__ = "organization_quota_reservations"
     __table_args__ = (
         UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "quota_name",
             "reference_id",
-            name="uq_workspace_quota_reservations_reference",
+            name="uq_organization_quota_reservations_reference",
         ),
-        CheckConstraint("amount > 0", name="ck_workspace_quota_reservations_amount_positive"),
+        CheckConstraint("amount > 0", name="ck_organization_quota_reservations_amount_positive"),
         CheckConstraint(
             "state IN ('active', 'released')",
-            name="ck_workspace_quota_reservations_state",
+            name="ck_organization_quota_reservations_state",
         ),
         Index(
-            "ix_workspace_quota_reservations_workspace_state",
-            "workspace_id",
+            "ix_organization_quota_reservations_organization_state",
+            "organization_id",
             "quota_name",
             "state",
         ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     quota_name: Mapped[str] = mapped_column(String(64), nullable=False)
     reference_id: Mapped[str] = mapped_column(String(255), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -148,13 +152,13 @@ class WorkspaceQuotaReservation(TimestampMixin, Base):
 class AuditLedgerEntry(Base):
     __tablename__ = "audit_ledger"
     __table_args__ = (
-        Index("ix_audit_ledger_workspace_occurred", "workspace_id", "occurred_at"),
-        Index("ix_audit_ledger_workspace_action_occurred", "workspace_id", "action", "occurred_at"),
+        Index("ix_audit_ledger_organization_occurred", "organization_id", "occurred_at"),
+        Index("ix_audit_ledger_organization_action_occurred", "organization_id", "action", "occurred_at"),
         Index("ix_audit_ledger_request_id", "request_id"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     actor_type: Mapped[str] = mapped_column(String(64), nullable=False)
     actor_id: Mapped[str | None] = mapped_column(String(128))
     action: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -174,27 +178,27 @@ class UsageLedgerEntry(Base):
     __tablename__ = "usage_ledger"
     __table_args__ = (
         UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "idempotency_key",
-            name="uq_usage_ledger_workspace_idempotency",
+            name="uq_usage_ledger_organization_idempotency",
         ),
         CheckConstraint("quantity >= 0", name="ck_usage_ledger_quantity_nonnegative"),
         Index(
-            "ix_usage_ledger_workspace_metric_occurred",
-            "workspace_id",
+            "ix_usage_ledger_organization_metric_occurred",
+            "organization_id",
             "metric",
             "occurred_at",
         ),
         Index(
-            "ix_usage_ledger_workspace_source",
-            "workspace_id",
+            "ix_usage_ledger_organization_source",
+            "organization_id",
             "source_type",
             "source_id",
         ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     quantity: Mapped[int] = mapped_column(BigInteger, nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -216,10 +220,10 @@ class TenantIdempotencyRecord(TimestampMixin, Base):
     __tablename__ = "tenant_idempotency"
     __table_args__ = (
         UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "operation",
             "key_hash",
-            name="uq_tenant_idempotency_workspace_operation_key",
+            name="uq_tenant_idempotency_organization_operation_key",
         ),
         CheckConstraint(
             "state IN ('in_progress', 'completed')",
@@ -230,8 +234,8 @@ class TenantIdempotencyRecord(TimestampMixin, Base):
             name="ck_tenant_idempotency_completed_response",
         ),
         Index(
-            "ix_tenant_idempotency_workspace_created",
-            "workspace_id",
+            "ix_tenant_idempotency_organization_created",
+            "organization_id",
             "created_at",
         ),
         Index(
@@ -242,7 +246,7 @@ class TenantIdempotencyRecord(TimestampMixin, Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     operation: Mapped[str] = mapped_column(String(128), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -268,7 +272,7 @@ class Agent(TimestampMixin, Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     active_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -286,11 +290,11 @@ class AgentVersion(TimestampMixin, Base):
     __tablename__ = "agent_versions"
     __table_args__ = (
         UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),
-        UniqueConstraint("workspace_id", "agent_id", "version", name="uq_agent_versions_workspace_agent_version"),
+        UniqueConstraint("organization_id", "agent_id", "version", name="uq_agent_versions_organization_agent_version"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -309,10 +313,10 @@ class AgentVersion(TimestampMixin, Base):
 
 class Environment(TimestampMixin, Base):
     __tablename__ = "environments"
-    __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_environments_workspace_name"),)
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_environments_organization_name"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
@@ -324,14 +328,14 @@ class Environment(TimestampMixin, Base):
 class ManagedSession(TimestampMixin, Base):
     __tablename__ = "sessions"
     __table_args__ = (
-        UniqueConstraint("workspace_id", "id", name="uq_sessions_workspace_id"),
-        UniqueConstraint("workspace_id", "runtime_thread_id", name="uq_sessions_workspace_runtime_thread"),
+        UniqueConstraint("organization_id", "id", name="uq_sessions_organization_id"),
+        UniqueConstraint("organization_id", "runtime_thread_id", name="uq_sessions_organization_runtime_thread"),
         Index("ix_sessions_environment_status", "environment_id", "status"),
         Index("ix_sessions_agent_status", "agent_id", "status"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False)
     agent_version: Mapped[int] = mapped_column(Integer, nullable=False)
     environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"), nullable=False)
@@ -360,15 +364,15 @@ class SessionSandbox(TimestampMixin, Base):
     __tablename__ = "session_sandboxes"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["workspace_id", "session_id"],
-            ["sessions.workspace_id", "sessions.id"],
-            name="fk_session_sandboxes_workspace_session",
+            ["organization_id", "session_id"],
+            ["sessions.organization_id", "sessions.id"],
+            name="fk_session_sandboxes_organization_session",
             ondelete="RESTRICT",
         ),
         UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "session_id",
-            name="uq_session_sandboxes_workspace_session",
+            name="uq_session_sandboxes_organization_session",
         ),
         UniqueConstraint(
             "provider",
@@ -376,8 +380,8 @@ class SessionSandbox(TimestampMixin, Base):
             name="uq_session_sandboxes_provider_external",
         ),
         Index(
-            "ix_session_sandboxes_workspace_state_expires",
-            "workspace_id",
+            "ix_session_sandboxes_organization_state_expires",
+            "organization_id",
             "state",
             "expires_at",
         ),
@@ -390,7 +394,7 @@ class SessionSandbox(TimestampMixin, Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     session_id: Mapped[str] = mapped_column(String(64), nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     external_sandbox_id: Mapped[str | None] = mapped_column(String(512))
@@ -420,7 +424,7 @@ class SessionEvent(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
@@ -437,27 +441,27 @@ class SessionEventIdempotency(TimestampMixin, Base):
     __tablename__ = "session_event_idempotency"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["workspace_id", "session_id"],
-            ["sessions.workspace_id", "sessions.id"],
-            name="fk_session_event_idempotency_workspace_session",
+            ["organization_id", "session_id"],
+            ["sessions.organization_id", "sessions.id"],
+            name="fk_session_event_idempotency_organization_session",
             ondelete="CASCADE",
         ),
         UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "session_id",
             "key_hash",
-            name="uq_session_event_idempotency_workspace_session_key",
+            name="uq_session_event_idempotency_organization_session_key",
         ),
         Index(
-            "ix_session_event_idempotency_workspace_session_created",
-            "workspace_id",
+            "ix_session_event_idempotency_organization_session_created",
+            "organization_id",
             "session_id",
             "created_at",
         ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False)
     session_id: Mapped[str] = mapped_column(String(64), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -476,15 +480,15 @@ class ManagedResource(TimestampMixin, Base):
             name="uq_managed_resources_type_parent_version",
         ),
         UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "resource_type",
             "parent_id",
             "version",
-            name="uq_managed_resources_workspace_type_parent_version",
+            name="uq_managed_resources_organization_type_parent_version",
         ),
         Index(
-            "ix_managed_resources_workspace_type_parent_deleted_name",
-            "workspace_id",
+            "ix_managed_resources_organization_type_parent_deleted_name",
+            "organization_id",
             "resource_type",
             "parent_id",
             "deleted_at",
@@ -513,7 +517,7 @@ class ManagedResource(TimestampMixin, Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_id: Mapped[str | None] = mapped_column(String(64), index=True)
     # Skill versions are epoch-microsecond identifiers for Anthropic SDK

@@ -133,7 +133,7 @@ the typed `vaults.model_credentials` surface below.
 
 ## API-key lifecycle
 
-Both clients expose scoped workspace-key administration:
+Both clients expose scoped Organization-key administration:
 
 ```python
 created = await client.api_keys.create(

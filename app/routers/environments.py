@@ -156,8 +156,8 @@ async def delete_environment(
 async def require_worker_access(
     request: Request,
 ) -> None:
-    workspace = getattr(request.state, "current_workspace", None)
-    if workspace is None or WORKER_SCOPE not in workspace.scopes:
+    organization = getattr(request.state, "current_organization", None)
+    if organization is None or WORKER_SCOPE not in organization.scopes:
         raise HTTPException(status_code=403, detail="API key is missing required scope: worker")
     return None
 

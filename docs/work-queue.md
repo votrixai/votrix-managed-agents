@@ -23,7 +23,7 @@ This queue is visible state for session execution. It does not mean local develo
 - Ack, heartbeat, execution, and terminal completion verify the worker,
   `lease_id`, and generation; an old worker cannot finalize a recovered attempt.
 - Direct HTTP workers authenticate with a database-issued API key that belongs
-  to the target workspace and includes the `worker` scope. They use the same
+  to the target Organization and includes the `worker` scope. They use the same
   `x-api-key` or Bearer authentication schemes as other API clients.
 - Expired `leased` or `running` work can be recovered by a later poll from
   another worker, which receives a new lease ID/generation.
@@ -32,7 +32,7 @@ This queue is visible state for session execution. It does not mean local develo
 - `vma-worker` leases work before execution, heartbeats for the full turn, and
   passes its worker/lease/generation identity into execution, so the CLI and
   embedded-consumer paths follow the same ownership model as direct HTTP workers.
-- Enqueue reserves one unit of the workspace active-work quota. Terminal
+- Enqueue reserves one unit of the Organization active-work quota. Terminal
   completion, error, or stop releases it idempotently; queued/rescheduling work
   keeps its reservation.
 

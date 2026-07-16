@@ -15,12 +15,12 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_index(
-        "ix_managed_resources_workspace_type_parent_deleted_name",
+        "ix_managed_resources_organization_type_parent_deleted_name",
         "managed_resources",
-        ["workspace_id", "resource_type", "parent_id", "deleted_at", "name"],
+        ["organization_id", "resource_type", "parent_id", "deleted_at", "name"],
         unique=False,
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_managed_resources_workspace_type_parent_deleted_name", table_name="managed_resources")
+    op.drop_index("ix_managed_resources_organization_type_parent_deleted_name", table_name="managed_resources")

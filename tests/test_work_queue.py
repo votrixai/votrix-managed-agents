@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from app.db.engine import session_scope
 from app.db.queries import api_keys as api_keys_q
 from app.db.queries import resources as res_q
-from app.runtime.work_queue import lease_next_work_for_worker
+from app.runtime.work_queue import execute_work_item, lease_next_work_for_worker
 from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
 
@@ -403,12 +403,12 @@ async def test_work_routes_require_database_api_key_worker_scope(
 ):
     api_token = await database_api_key_factory(
         token="api-only-key",
-        workspace_id="wrkspc_default",
+        organization_id="org_test",
         scopes=(api_keys_q.API_SCOPE,),
     )
     worker_token = await database_api_key_factory(
         token="worker-only-key",
-        workspace_id="wrkspc_default",
+        organization_id="org_test",
         scopes=(api_keys_q.WORKER_SCOPE,),
     )
 
@@ -447,15 +447,15 @@ async def test_work_routes_require_database_api_key_worker_scope(
     assert response.json()["status"] == "leased"
 
 
-async def test_trusted_worker_can_atomically_lease_a_nondefault_workspace_item():
+async def test_trusted_worker_can_atomically_lease_another_organization_item():
     async with session_scope() as db:
         work = await res_q.create_resource(
             db,
             resource_type="environment_work",
             parent_id="env_tenant_b",
             status="queued",
-            data={"session_id": "sess_tenant_b", "workspace_id": "wrkspc_tenant_b"},
-            workspace_id="wrkspc_tenant_b",
+            data={"session_id": "sess_tenant_b", "organization_id": "org_tenant_b"},
+            organization_id="org_tenant_b",
         )
         await db.commit()
         work_id = work.id
@@ -470,5 +470,39 @@ async def test_trusted_worker_can_atomically_lease_a_nondefault_workspace_item()
 
     assert leased is not None
     assert leased.id == work_id
-    assert leased.workspace_id == "wrkspc_tenant_b"
+    assert leased.organization_id == "org_tenant_b"
     assert leased.status == "leased"
+
+
+async def test_work_execution_uses_row_organization_not_payload(monkeypatch):
+    async with session_scope() as db:
+        work = await res_q.create_resource(
+            db,
+            resource_type="environment_work",
+            parent_id="env_test",
+            status="queued",
+            data={
+                "session_id": "sess_missing",
+                "organization_id": "org_attacker",
+            },
+            organization_id="org_test",
+        )
+        await db.commit()
+        work_id = work.id
+
+    seen: dict[str, str] = {}
+
+    async def fake_run_session_turn(session_id, *, organization_id, **_kwargs):
+        seen["session_id"] = session_id
+        seen["organization_id"] = organization_id
+        return True
+
+    monkeypatch.setattr("app.runtime.runner.run_session_turn", fake_run_session_turn)
+
+    result = await execute_work_item(work_id, worker_id="trusted-worker")
+
+    assert result == "completed"
+    assert seen == {
+        "session_id": "sess_missing",
+        "organization_id": "org_test",
+    }

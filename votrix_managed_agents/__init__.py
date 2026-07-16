@@ -6,7 +6,7 @@ from app.auth import (
     RequestCredentials,
 )
 from app.factory import create_app
-from app.workspace import CurrentWorkspace, default_workspace
+from app.organization import CurrentOrganization
 
 try:
     __version__ = version("votrix-managed-agents")
@@ -15,10 +15,9 @@ except PackageNotFoundError:
 
 __all__ = [
     "AuthProvider",
-    "CurrentWorkspace",
+    "CurrentOrganization",
     "DatabaseApiKeyAuthProvider",
     "RequestCredentials",
     "__version__",
     "create_app",
-    "default_workspace",
 ]

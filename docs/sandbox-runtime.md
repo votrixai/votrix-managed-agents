@@ -150,6 +150,26 @@ or re-upload anything. If verification fails, the turn fails closed. A provider
 seal one revision ahead of PostgreSQL can only be recovered by the exact append
 retry described above; other mismatches require a new Session.
 
+Normal E2B turns treat the persisted binding plus provider-side seal as the
+input authority. They do not re-download all Session files or Skill archives
+from object storage and do not unzip Skills again. A `user.message` image or
+document block hydrates only the referenced immutable file for the model input;
+if the prompt refers to its sandbox path instead, the Agent reads the already
+persisted copy without a control-plane download. `sessions.resources.add`
+downloads only the new object. Bindings created before the persisted input
+descriptor was introduced perform one full compatibility hydration on their
+next append and then use the same metadata-only path. Until that backfill (or a
+new Session), their turns retain the legacy full-verification path so an
+upgrade does not silently weaken or invalidate the existing binding. The state
+backend still materializes all input bytes because its virtual filesystem is
+reconstructed from checkpoint state rather than an external persistent
+sandbox.
+
+E2B seal verification still hashes the committed immutable manifest inside the
+resumed sandbox before each turn. That local disk work scales with immutable
+input size, but it does not move those bytes through R2 or Cloud Run and does
+not recreate Skill archives in control-plane memory.
+
 Files changed under `/workspace` and read-write memory roots survive later turns
 while the same E2B sandbox remains resumable, but they are not exported to
 S3-compatible storage. In particular, edits to a read-write Memory Store seed
@@ -217,7 +237,7 @@ Operators can instead configure a Python callable:
 VMA_SANDBOX_FACTORY=my_service.sandboxes:create_backend
 ```
 
-VMA calls it with `workspace_id`, `session_id`, and `environment_config`. It may return a Deep Agents backend, an awaitable, or an async context manager. A stateful provider should treat the workspace/Session pair as its stable private lookup key and must not assume that a Python backend object survives between requests or workers.
+VMA calls it with `organization_id`, `session_id`, and `environment_config`. It may return a Deep Agents backend, an awaitable, or an async context manager. A stateful provider should treat the Organization/Session pair as its stable private lookup key and must not assume that a Python backend object survives between requests or workers.
 
 The factory is responsible for filesystem, process, network, package, resource, secret, retention, and deletion policy. It must not expose an external sandbox ID as a cross-tenant lookup capability.
 
@@ -247,7 +267,7 @@ The optional `vma-worker` and environment work routes provide work-queue mechani
 Before enabling `execute` for tenants, verify:
 
 1. The selected E2B template or custom provider supplies a real isolation boundary.
-2. Cross-workspace and cross-Session access fails closed.
+2. Cross-Organization and cross-Session access fails closed.
 3. The guest cannot alter sealed inputs, provider metadata, control-plane credentials, or non-approved template paths.
 4. Egress, metadata-service blocking, and public-traffic settings work in the deployed E2B environment.
 5. Resource and command timeouts terminate work as expected.

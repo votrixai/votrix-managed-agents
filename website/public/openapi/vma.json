@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Votrix Managed Agents",
-    "description": "Build and operate long-running agents through a durable, workspace-scoped REST API. This reference is generated from the same FastAPI application that serves production traffic, so request fields and response models stay aligned with the code.\n\n> **Base URL** `https://managed-agents.votrixai.com`\n\nEvery `/v1` request requires the current `votrix-managed-agents-beta: votrix-managed-agents-2026-04-01` header plus either an `x-api-key` header or the same key as a Bearer token. Choose an endpoint to inspect its schema, copy a code sample, or send a request.",
+    "description": "Build and operate long-running agents through a durable, Organization-scoped REST API. This reference is generated from the same FastAPI application that serves production traffic, so request fields and response models stay aligned with the code.\n\n> **Base URL** `https://managed-agents.votrixai.com`\n\nEvery `/v1` request requires the current `votrix-managed-agents-beta: votrix-managed-agents-2026-04-01` header plus either an `x-api-key` header or the same key as a Bearer token. Choose an endpoint to inspect its schema, copy a code sample, or send a request.",
     "version": "0.1.0"
   },
   "paths": {
@@ -90,7 +90,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -229,7 +229,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -246,7 +246,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of api keys visible to the current workspace.",
+        "description": "Returns a paginated list of api keys visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -340,7 +340,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -357,7 +357,7 @@
             }
           }
         },
-        "description": "Returns the requested api key from the current workspace.",
+        "description": "Returns the requested api key from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -468,7 +468,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -596,7 +596,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -740,7 +740,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -757,7 +757,7 @@
             }
           }
         },
-        "description": "Creates a versioned agent definition in the current workspace. The returned agent is ready to be referenced by a session or deployment.",
+        "description": "Creates a versioned agent definition in the current Organization. The returned agent is ready to be referenced by a session or deployment.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -962,7 +962,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -979,7 +979,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of agents visible to the current workspace.",
+        "description": "Returns a paginated list of agents visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1130,7 +1130,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1147,7 +1147,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of agent versions visible to the current workspace.",
+        "description": "Returns a paginated list of agent versions visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1280,7 +1280,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1297,7 +1297,7 @@
             }
           }
         },
-        "description": "Returns the requested agent from the current workspace.",
+        "description": "Returns the requested agent from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1425,7 +1425,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1590,7 +1590,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1722,7 +1722,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1862,7 +1862,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2044,7 +2044,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2061,7 +2061,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of environments visible to the current workspace.",
+        "description": "Returns a paginated list of environments visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -2173,7 +2173,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2190,7 +2190,7 @@
             }
           }
         },
-        "description": "Returns the requested environment from the current workspace.",
+        "description": "Returns the requested environment from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -2316,7 +2316,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2479,7 +2479,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2609,7 +2609,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2721,7 +2721,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2894,7 +2894,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3279,7 +3279,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3296,7 +3296,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of sessions visible to the current workspace.",
+        "description": "Returns a paginated list of sessions visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -3423,7 +3423,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3440,7 +3440,7 @@
             }
           }
         },
-        "description": "Returns the requested session from the current workspace.",
+        "description": "Returns the requested session from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -3581,7 +3581,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3759,7 +3759,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3889,7 +3889,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4001,7 +4001,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4113,7 +4113,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4225,7 +4225,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4385,7 +4385,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4682,7 +4682,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4699,7 +4699,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of session events visible to the current workspace.",
+        "description": "Returns a paginated list of session events visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -4874,7 +4874,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5066,7 +5066,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5202,7 +5202,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5339,7 +5339,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5356,7 +5356,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of session resources visible to the current workspace.",
+        "description": "Returns a paginated list of session resources visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -5475,7 +5475,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5492,7 +5492,7 @@
             }
           }
         },
-        "description": "Returns the requested session resource from the current workspace.",
+        "description": "Returns the requested session resource from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -5619,7 +5619,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5739,7 +5739,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5851,7 +5851,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6010,7 +6010,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6027,7 +6027,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of files visible to the current workspace.",
+        "description": "Returns a paginated list of files visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -6122,7 +6122,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6139,7 +6139,7 @@
             }
           }
         },
-        "description": "Returns the requested file metadata from the current workspace.",
+        "description": "Returns the requested file metadata from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -6232,7 +6232,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6367,7 +6367,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6469,7 +6469,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6486,7 +6486,7 @@
             }
           }
         },
-        "description": "Creates a new skill in the current workspace and returns the created resource.",
+        "description": "Creates a new skill in the current Organization and returns the created resource.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -6678,7 +6678,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6695,7 +6695,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of skills visible to the current workspace.",
+        "description": "Returns a paginated list of skills visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -6790,7 +6790,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6807,7 +6807,7 @@
             }
           }
         },
-        "description": "Returns the requested skill from the current workspace.",
+        "description": "Returns the requested skill from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -6900,7 +6900,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7012,7 +7012,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7029,7 +7029,7 @@
             }
           }
         },
-        "description": "Creates a new skill version in the current workspace and returns the created resource.",
+        "description": "Creates a new skill version in the current Organization and returns the created resource.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -7215,7 +7215,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7232,7 +7232,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of skill versions visible to the current workspace.",
+        "description": "Returns a paginated list of skill versions visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -7337,7 +7337,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7354,7 +7354,7 @@
             }
           }
         },
-        "description": "Returns the requested skill version from the current workspace.",
+        "description": "Returns the requested skill version from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -7457,7 +7457,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7602,7 +7602,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7704,7 +7704,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7721,7 +7721,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of model providers visible to the current workspace.",
+        "description": "Returns a paginated list of model providers visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -7815,7 +7815,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7832,7 +7832,7 @@
             }
           }
         },
-        "description": "Returns the requested model provider from the current workspace.",
+        "description": "Returns the requested model provider from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -7927,7 +7927,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7944,7 +7944,7 @@
             }
           }
         },
-        "description": "Creates a new vault in the current workspace and returns the created resource.",
+        "description": "Creates a new vault in the current Organization and returns the created resource.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -8064,7 +8064,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8081,7 +8081,7 @@
             }
           }
         },
-        "description": "Returns a paginated list of vaults visible to the current workspace.",
+        "description": "Returns a paginated list of vaults visible to the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -8176,7 +8176,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8193,7 +8193,7 @@
             }
           }
         },
-        "description": "Returns the requested vault from the current workspace.",
+        "description": "Returns the requested vault from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -8296,7 +8296,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8406,7 +8406,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8518,7 +8518,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8641,7 +8641,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8788,7 +8788,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8909,7 +8909,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8926,7 +8926,7 @@
             }
           }
         },
-        "description": "Returns the requested model credential from the current workspace.",
+        "description": "Returns the requested model credential from the current Organization.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -9040,7 +9040,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9159,7 +9159,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9281,7 +9281,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9387,7 +9387,7 @@
             }
           },
           "401": {
-            "description": "The workspace API key is missing or invalid.",
+            "description": "The Organization API key is missing or invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9404,7 +9404,7 @@
             }
           }
         },
-        "description": "Returns capabilities for resources visible to the current workspace.",
+        "description": "Returns capabilities for resources visible to the current Organization.",
         "parameters": [],
         "security": [
           {
@@ -9949,9 +9949,9 @@
             "default": "api_key",
             "description": "Stable type discriminator for this object."
           },
-          "workspace_id": {
+          "organization_id": {
             "type": "string",
-            "description": "Workspace that owns this API key."
+            "description": "Organization that owns this API key."
           },
           "name": {
             "type": "string",
@@ -10090,7 +10090,7 @@
         "type": "object",
         "required": [
           "id",
-          "workspace_id",
+          "organization_id",
           "name",
           "prefix",
           "scopes",
@@ -10121,9 +10121,9 @@
             "default": "api_key",
             "description": "Stable type discriminator for this object."
           },
-          "workspace_id": {
+          "organization_id": {
             "type": "string",
-            "description": "Workspace that owns this API key."
+            "description": "Organization that owns this API key."
           },
           "name": {
             "type": "string",
@@ -10256,7 +10256,7 @@
         "type": "object",
         "required": [
           "id",
-          "workspace_id",
+          "organization_id",
           "name",
           "prefix",
           "scopes",
@@ -12166,7 +12166,7 @@
           },
           "key": {
             "type": "string",
-            "description": "Workspace-scoped staging object key to pass to the completion request."
+            "description": "Organization-scoped staging object key to pass to the completion request."
           },
           "upload_url": {
             "type": "string",
@@ -13568,12 +13568,12 @@
         "type": "apiKey",
         "in": "header",
         "name": "x-api-key",
-        "description": "Workspace API key. Treat this value as a server-side secret and do not expose it in client-side application code."
+        "description": "Organization API key. Treat this value as a server-side secret and do not expose it in client-side application code."
       },
       "BearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Workspace API key sent as a Bearer token in the `Authorization` header."
+        "description": "Organization API key sent as a Bearer token in the `Authorization` header."
       }
     }
   },
@@ -13626,7 +13626,7 @@
     },
     {
       "name": "files",
-      "description": "Session and workspace file resources.",
+      "description": "Session and Organization file resources.",
       "x-displayName": "Files"
     },
     {

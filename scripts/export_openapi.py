@@ -48,7 +48,7 @@ TAG_DESCRIPTIONS = {
         "Session threads",
         "Threads, thread events, and thread streams within a session.",
     ),
-    "files": ("Files", "Session and workspace file resources."),
+    "files": ("Files", "Session and Organization file resources."),
     "skills": ("Skills", "Reusable skill archives and versioned skill definitions."),
     "vaults": (
         "Vaults & credentials",
@@ -83,7 +83,7 @@ SPECIAL_OPERATION_DESCRIPTIONS = {
         "Revokes an API key immediately and records the requesting actor and optional audit reason."
     ),
     ("post", "/v1/agents"): (
-        "Creates a versioned agent definition in the current workspace. "
+        "Creates a versioned agent definition in the current Organization. "
         "The returned agent is ready to be referenced by a session or deployment."
     ),
     ("post", "/v1/environments"): (
@@ -127,18 +127,18 @@ ACTION_DESCRIPTION_TEMPLATES = {
     "archive": "Archives the requested {subject} while retaining its history and returns the archived state.",
     "cancel": "Requests cancellation of the specified {subject} and returns its latest state.",
     "complete": "Completes {subject} and returns the resulting resource metadata.",
-    "create": "Creates a new {subject} in the current workspace and returns the created resource.",
+    "create": "Creates a new {subject} in the current Organization and returns the created resource.",
     "delete": "Deletes the requested {subject} and returns a deletion confirmation.",
     "download": "Downloads the content for the requested {subject}.",
-    "get": "Returns the requested {subject} from the current workspace.",
+    "get": "Returns the requested {subject} from the current Organization.",
     "heartbeat": "Renews the lease for the requested {subject} and returns its latest state.",
-    "list": "Returns a paginated list of {subject} visible to the current workspace.",
+    "list": "Returns a paginated list of {subject} visible to the current Organization.",
     "pause": "Pauses the requested {subject} and returns its latest state.",
     "poll": "Waits for available {subject} and returns the work item that was leased to the worker.",
     "presign": "Creates a temporary upload target for {subject} and returns the required upload details.",
     "redact": "Redacts sensitive content from the requested {subject} and returns its latest state.",
     "resume": "Resumes the requested {subject} and returns its latest state.",
-    "retrieve": "Returns the requested {subject} from the current workspace.",
+    "retrieve": "Returns the requested {subject} from the current Organization.",
     "run": "Starts the requested {subject} and returns the resulting run state.",
     "send": "Appends {subject} and returns the durable records accepted by the service.",
     "stop": "Stops the requested {subject} and returns its latest state.",
@@ -625,7 +625,7 @@ def fallback_operation_description(
     if not summary:
         return (
             f"Performs the `{method.upper()}` operation for `{path}` within "
-            "the current workspace."
+            "the current Organization."
         )
 
     action, _, remainder = summary.partition(" ")
@@ -640,10 +640,10 @@ def fallback_operation_description(
 
     if method.lower() == "get":
         return (
-            f"Returns {summary.lower()} for resources visible to the current workspace."
+            f"Returns {summary.lower()} for resources visible to the current Organization."
         )
     return (
-        f"Performs {summary.lower()} within the current workspace and returns "
+        f"Performs {summary.lower()} within the current Organization and returns "
         "the resulting resource or operation state."
     )
 
@@ -785,7 +785,7 @@ def enrich_error_responses(operation: dict[str, Any]) -> None:
     responses.setdefault(
         "401",
         error_response(
-            description="The workspace API key is missing or invalid.",
+            description="The Organization API key is missing or invalid.",
             error_type="authentication_error",
             message="Invalid API key.",
         ),
@@ -1079,7 +1079,7 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
     info = schema.setdefault("info", {})
     info["description"] = (
         "Build and operate long-running agents through a durable, "
-        "workspace-scoped REST API. This reference is generated from the same "
+        "Organization-scoped REST API. This reference is generated from the same "
         "FastAPI application that serves production traffic, so request fields "
         "and response models stay aligned with the code.\n\n"
         f"> **Base URL** `{server_url.rstrip('/')}`\n\n"
@@ -1099,7 +1099,7 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
                 "in": "header",
                 "name": "x-api-key",
                 "description": (
-                    "Workspace API key. Treat this value as a server-side secret "
+                    "Organization API key. Treat this value as a server-side secret "
                     "and do not expose it in client-side application code."
                 ),
             },
@@ -1107,7 +1107,7 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
                 "type": "http",
                 "scheme": "bearer",
                 "description": (
-                    "Workspace API key sent as a Bearer token in the "
+                    "Organization API key sent as a Bearer token in the "
                     "`Authorization` header."
                 ),
             },

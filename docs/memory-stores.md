@@ -1,6 +1,6 @@
 ---
 title: Memory Stores
-description: Workspace memory records, immutable versions, hierarchy, and redaction semantics.
+description: Organization memory records, immutable versions, hierarchy, and redaction semantics.
 ---
 
 Memory Store data lives in the relational database. In production this means a Postgres-compatible database through `DATABASE_URL`.

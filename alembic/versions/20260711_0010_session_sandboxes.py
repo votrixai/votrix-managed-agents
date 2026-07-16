@@ -17,14 +17,14 @@ depends_on = None
 def upgrade() -> None:
     with op.batch_alter_table("sessions") as batch_op:
         batch_op.create_unique_constraint(
-            "uq_sessions_workspace_id",
-            ["workspace_id", "id"],
+            "uq_sessions_organization_id",
+            ["organization_id", "id"],
         )
 
     op.create_table(
         "session_sandboxes",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("session_id", sa.String(length=64), nullable=False),
         sa.Column("provider", sa.String(length=64), nullable=False),
         sa.Column("external_sandbox_id", sa.String(length=512), nullable=True),
@@ -56,16 +56,16 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["workspace_id", "session_id"],
-            ["sessions.workspace_id", "sessions.id"],
-            name="fk_session_sandboxes_workspace_session",
+            ["organization_id", "session_id"],
+            ["sessions.organization_id", "sessions.id"],
+            name="fk_session_sandboxes_organization_session",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "session_id",
-            name="uq_session_sandboxes_workspace_session",
+            name="uq_session_sandboxes_organization_session",
         ),
         sa.UniqueConstraint(
             "provider",
@@ -74,15 +74,15 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
-        op.f("ix_session_sandboxes_workspace_id"),
+        op.f("ix_session_sandboxes_organization_id"),
         "session_sandboxes",
-        ["workspace_id"],
+        ["organization_id"],
         unique=False,
     )
     op.create_index(
-        "ix_session_sandboxes_workspace_state_expires",
+        "ix_session_sandboxes_organization_state_expires",
         "session_sandboxes",
-        ["workspace_id", "state", "expires_at"],
+        ["organization_id", "state", "expires_at"],
         unique=False,
     )
     op.create_index(
@@ -99,13 +99,13 @@ def downgrade() -> None:
         table_name="session_sandboxes",
     )
     op.drop_index(
-        "ix_session_sandboxes_workspace_state_expires",
+        "ix_session_sandboxes_organization_state_expires",
         table_name="session_sandboxes",
     )
     op.drop_index(
-        op.f("ix_session_sandboxes_workspace_id"),
+        op.f("ix_session_sandboxes_organization_id"),
         table_name="session_sandboxes",
     )
     op.drop_table("session_sandboxes")
     with op.batch_alter_table("sessions") as batch_op:
-        batch_op.drop_constraint("uq_sessions_workspace_id", type_="unique")
+        batch_op.drop_constraint("uq_sessions_organization_id", type_="unique")

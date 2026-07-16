@@ -14,7 +14,6 @@ SECRET_BASES = {
     "database-url",
     "e2b-api-key",
     "encryption-key",
-    "openrouter-api-key",
     "s3-access-key-id",
     "s3-bucket-name",
     "s3-endpoint-url",
@@ -76,7 +75,10 @@ def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> No
         assert re.search(r'autoscaling\.knative\.dev/maxScale:\s*["\']?1["\']?', manifest)
         assert re.search(r'run\.googleapis\.com/cpu-throttling:\s*["\']?false["\']?', manifest)
         assert "serviceAccountName: vma-runtime@" in manifest
+        assert re.search(r"containerConcurrency:\s*40", manifest)
         assert "containerPort: 8080" in manifest
+        assert re.search(r"memory:\s*4Gi", manifest)
+        assert re.search(r'cpu:\s*["\']?1["\']?', manifest)
         assert "startupProbe:" in manifest and "path: /health" in manifest
         assert "livenessProbe:" in manifest and "path: /health/db" in manifest
         assert "name: WEB_CONCURRENCY" in manifest
@@ -105,9 +107,18 @@ def test_cloud_run_secret_names_are_isolated_from_votrix_backend() -> None:
 def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
     expected = {
         "VMA_EMBEDDED_WORKER_ENABLED": "true",
-        "VMA_WORKER_CONCURRENCY": "2",
+        "VMA_WORKER_CONCURRENCY": "5",
         "VMA_WORKER_POLL_INTERVAL_SECONDS": "0.5",
         "VMA_WORKER_LEASE_SECONDS": "120",
+        "VMA_EVENT_POLL_INTERVAL_SECONDS": "1.0",
+        "VMA_MAX_SESSION_INPUT_BYTES": "67108864",
+        "VMA_DB_POOL_SIZE": "10",
+        "VMA_DB_MAX_OVERFLOW": "5",
+        "VMA_DB_POOL_TIMEOUT_SECONDS": "10",
+        "VMA_DB_POOL_RECYCLE_SECONDS": "300",
+        "VMA_REQUESTS_PER_MINUTE": "600",
+        "VMA_MAX_ACTIVE_WORK": "20",
+        "VMA_ORGANIZATION_STORAGE_BYTES": "5368709120",
         "VMA_PUBLIC_GA_ONLY": "true",
         "VMA_CORS_ORIGINS": "https://docs.votrixai.com",
     }
@@ -166,6 +177,28 @@ def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
             },
         }
         assert all("api_key" not in config for config in registry.values())
+
+
+def test_hosted_runtime_has_no_platform_model_api_key() -> None:
+    deployment_files = (
+        ".env.production.example",
+        ".env.staging.example",
+        "service.production.yaml",
+        "service.staging.yaml",
+        "scripts/gcloud/1-create-secrets.sh",
+        "scripts/gcloud/README.md",
+    )
+    forbidden = (
+        "ANTHROPIC_API_KEY=",
+        "OPENAI_API_KEY=",
+        "DEEPSEEK_API_KEY=",
+        "OPENROUTER_API_KEY=",
+        "vma-openrouter-api-key",
+    )
+    for relative_path in deployment_files:
+        content = _read(relative_path)
+        for value in forbidden:
+            assert value not in content, f"{value} remains in {relative_path}"
 
 
 def test_cloud_e2b_template_resources_match_the_built_profile() -> None:
@@ -277,6 +310,19 @@ def test_local_env_example_covers_every_application_setting() -> None:
     setting_names = {name.upper() for name in Settings.model_fields}
 
     assert setting_names <= example_names, sorted(setting_names - example_names)
+
+
+def test_storage_quota_uses_only_the_organization_setting() -> None:
+    fields = Settings.model_fields
+    assert "vma_organization_storage_bytes" in fields
+    for relative_path in (
+        ".env.example",
+        "service.production.yaml",
+        "service.staging.yaml",
+        "scripts/gcloud/README.md",
+    ):
+        content = _read(relative_path)
+        assert "VMA_ORGANIZATION_STORAGE_BYTES" in content
 
 
 def test_deepagents_is_fixed_internally_not_selected_by_environment() -> None:

@@ -59,12 +59,12 @@ def install_error_handlers(app: FastAPI) -> None:
             "active_work": "active_work_quota_exceeded",
             "model_tokens": "model_token_quota_exceeded",
             "storage_bytes": "storage_quota_exceeded",
-        }.get(decision.metric, "workspace_quota_exceeded")
+        }.get(decision.metric, "organization_quota_exceeded")
         return JSONResponse(
             status_code=429,
             content=error_payload(
                 "rate_limit_error",
-                f"Workspace quota exceeded for {decision.metric}",
+                f"Organization quota exceeded for {decision.metric}",
                 code=code,
                 request_id=_request_id(request),
             ),

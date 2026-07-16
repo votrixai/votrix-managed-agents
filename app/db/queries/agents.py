@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import Agent, AgentVersion
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 
 def _model_json(value: str | dict[str, Any]) -> dict[str, Any]:
@@ -29,12 +29,12 @@ async def create_agent(
     multiagent: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
     runtime: dict[str, Any] | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> tuple[Agent, AgentVersion]:
-    scoped_workspace_id = workspace_id_or_default(workspace_id)
+    scoped_organization_id = resolve_organization_id(organization_id)
     agent = Agent(
         id=new_id("agt"),
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
         name=name,
         description=description,
         active_version=1,
@@ -42,7 +42,7 @@ async def create_agent(
     )
     version = AgentVersion(
         id=new_id("agtv"),
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
         agent_id=agent.id,
         version=1,
         name=name,
@@ -66,23 +66,23 @@ async def get_agent(
     db: AsyncSession,
     agent_id: str,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> Agent | None:
-    workspace_id = workspace_id_or_default(workspace_id)
+    organization_id = resolve_organization_id(organization_id)
     result = await db.execute(
         select(Agent)
         .options(selectinload(Agent.versions))
-        .where(Agent.id == agent_id, Agent.workspace_id == workspace_id)
+        .where(Agent.id == agent_id, Agent.organization_id == organization_id)
     )
     return result.scalar_one_or_none()
 
 
 async def list_agents(db: AsyncSession, *, limit: int = 50, include_archived: bool = False) -> list[Agent]:
-    workspace_id = workspace_id_or_default()
+    organization_id = resolve_organization_id()
     stmt = (
         select(Agent)
         .options(selectinload(Agent.versions))
-        .where(Agent.workspace_id == workspace_id)
+        .where(Agent.organization_id == organization_id)
         .order_by(Agent.created_at.desc())
         .limit(limit)
     )
@@ -97,14 +97,14 @@ async def get_agent_version(
     *,
     agent_id: str,
     version: int,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> AgentVersion | None:
-    workspace_id = workspace_id_or_default(workspace_id)
+    organization_id = resolve_organization_id(organization_id)
     result = await db.execute(
         select(AgentVersion).where(
             AgentVersion.agent_id == agent_id,
             AgentVersion.version == version,
-            AgentVersion.workspace_id == workspace_id,
+            AgentVersion.organization_id == organization_id,
         )
     )
     return result.scalar_one_or_none()
@@ -115,7 +115,7 @@ async def get_active_agent_version(db: AsyncSession, agent: Agent) -> AgentVersi
         db,
         agent_id=agent.id,
         version=agent.active_version,
-        workspace_id=agent.workspace_id,
+        organization_id=agent.organization_id,
     )
 
 
@@ -160,7 +160,7 @@ async def update_agent(
 
     version = AgentVersion(
         id=new_id("agtv"),
-        workspace_id=agent.workspace_id,
+        organization_id=agent.organization_id,
         agent_id=agent.id,
         version=next_version,
         name=name,
@@ -186,9 +186,9 @@ async def archive_agent(db: AsyncSession, agent: Agent) -> Agent:
 
 
 def agent_versions_query(agent_id: str) -> Select[tuple[AgentVersion]]:
-    workspace_id = workspace_id_or_default()
+    organization_id = resolve_organization_id()
     return (
         select(AgentVersion)
-        .where(AgentVersion.agent_id == agent_id, AgentVersion.workspace_id == workspace_id)
+        .where(AgentVersion.agent_id == agent_id, AgentVersion.organization_id == organization_id)
         .order_by(AgentVersion.version.desc())
     )

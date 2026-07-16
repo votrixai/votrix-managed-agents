@@ -6,15 +6,20 @@ from httpx import ASGITransport, AsyncClient
 
 from app.config import get_settings
 from app.db.engine import get_engine, reset_engine_for_tests, session_scope
-from app.db.models import Base, Workspace
+from app.db.models import Base, Organization
 from app.db.queries import api_keys as api_keys_q
-from app.workspace import DEFAULT_WORKSPACE_ID, default_workspace, set_current_workspace
+from app.organization import (
+    CurrentOrganization,
+    reset_current_organization,
+    set_current_organization,
+)
 
 UNAUTHENTICATED_TEST_HEADERS = {
     "anthropic-beta": "managed-agents-2026-04-01",
     "anthropic-version": "2023-06-01",
 }
-TEST_API_KEY = "vma_test_bootstrap_default_workspace_key"
+TEST_ORGANIZATION_ID = "org_test"
+TEST_API_KEY = "vma_test_bootstrap_organization_key"
 TEST_HEADERS = {
     **UNAUTHENTICATED_TEST_HEADERS,
     "x-api-key": TEST_API_KEY,
@@ -29,7 +34,7 @@ VOTRIX_MANAGED_AGENTS_HEADERS = {
 async def _seed_database_api_key(
     *,
     token: str,
-    workspace_id: str,
+    organization_id: str,
     scopes: tuple[str, ...] = (
         api_keys_q.API_SCOPE,
         api_keys_q.API_KEYS_MANAGE_SCOPE,
@@ -37,19 +42,19 @@ async def _seed_database_api_key(
     ),
 ) -> str:
     async with session_scope() as db:
-        workspace = await db.get(Workspace, workspace_id)
-        if workspace is None:
+        organization = await db.get(Organization, organization_id)
+        if organization is None:
             db.add(
-                Workspace(
-                    id=workspace_id,
-                    slug=workspace_id,
-                    name=f"Test workspace {workspace_id}",
+                Organization(
+                    id=organization_id,
+                    slug=organization_id,
+                    name=f"Test organization {organization_id}",
                     metadata_={"provisioned_by": "test_bootstrap"},
                 )
             )
         await api_keys_q.create_api_key(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             name="Test bootstrap key",
             token=token,
             scopes=scopes,
@@ -65,6 +70,13 @@ async def test_database(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     # Never let a developer's real .env provision E2B during the test suite.
     monkeypatch.setenv("VMA_SANDBOX_PROVIDER", "state")
+    # Route generic contract fixtures through an authless fake provider. Tests
+    # covering real providers create explicit Vault model Credentials.
+    monkeypatch.setenv("VMA_DEFAULT_MODEL_PROVIDER", "fake")
+    monkeypatch.setenv(
+        "VMA_MODEL_PROVIDERS",
+        '{"fake":{"adapter":"fake","default_model":"test-model"}}',
+    )
     monkeypatch.setenv("S3_ENDPOINT_URL", "https://storage.example.com")
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-key")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret")
@@ -74,7 +86,7 @@ async def test_database(tmp_path, monkeypatch):
     monkeypatch.setenv("VMA_REQUIRE_ANTHROPIC_VERSION_HEADER", "true")
     object_store: dict[str, tuple[bytes, str]] = {}
 
-    async def fake_save_file_bytes(data, mime_type, *, namespace, filename, category="general", workspace_id=None):
+    async def fake_save_file_bytes(data, mime_type, *, namespace, filename, category="general", organization_id=None):
         from app.storage import StoredObject, object_key
 
         content_type = mime_type or "application/octet-stream"
@@ -84,7 +96,7 @@ async def test_database(tmp_path, monkeypatch):
             category=category,
             filename=filename,
             content_sha256=sha256,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         object_store[key] = (data, content_type)
         return StoredObject(
@@ -146,7 +158,13 @@ async def test_database(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr("app.runtime.deepagents_engine.execute_deep_agent", fake_deepagents_executor)
-    set_current_workspace(default_workspace())
+    organization_token = set_current_organization(
+        CurrentOrganization(
+            id=TEST_ORGANIZATION_ID,
+            slug="test",
+            source="test_fixture",
+        )
+    )
     get_settings.cache_clear()
     await reset_engine_for_tests()
     engine = get_engine()
@@ -154,14 +172,14 @@ async def test_database(tmp_path, monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
     await _seed_database_api_key(
         token=TEST_API_KEY,
-        workspace_id=DEFAULT_WORKSPACE_ID,
+        organization_id=TEST_ORGANIZATION_ID,
     )
     yield
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await reset_engine_for_tests()
     get_settings.cache_clear()
-    set_current_workspace(default_workspace())
+    reset_current_organization(organization_token)
     os.environ.pop("DATABASE_URL", None)
 
 

@@ -17,25 +17,25 @@ from app.runtime.sandbox_outputs import (
 from tests.conftest import TEST_HEADERS
 
 
-async def _create_session(db, *, workspace_id: str = "wrkspc_default"):
+async def _create_session(db, *, organization_id: str = "org_test"):
     agent, version = await agents_q.create_agent(
         db,
         name="Sandbox output agent",
         model={"id": "deepseek/deepseek-v4-pro"},
-        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
     environment = await environments_q.create_environment(
         db,
         name="Sandbox output environment",
         config={"type": "cloud"},
-        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
     return await sessions_q.create_session(
         db,
         agent=agent,
         agent_version=version.version,
         environment=environment,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
 
 
@@ -62,7 +62,7 @@ async def test_persist_output_creates_downloadable_session_file(client):
         output_id = output.id
 
         assert output.parent_id == session_id
-        assert output.workspace_id == session.workspace_id
+        assert output.organization_id == session.organization_id
         assert output.filename == "report.csv"
         assert output.content_type == "text/csv"
         assert output.sha256 == digest
@@ -95,7 +95,7 @@ async def test_persist_output_creates_downloadable_session_file(client):
     assert downloaded.content == content
 
 
-async def test_scoped_list_does_not_prelimit_on_unrelated_workspace_files(client):
+async def test_scoped_list_does_not_prelimit_on_unrelated_organization_files(client):
     async with session_scope() as db:
         session = await _create_session(db)
         output = (
@@ -116,7 +116,7 @@ async def test_scoped_list_does_not_prelimit_on_unrelated_workspace_files(client
                 resource_type="file",
                 name=f"unrelated-{index}.txt",
                 filename=f"unrelated-{index}.txt",
-                workspace_id=session.workspace_id,
+                organization_id=session.organization_id,
             )
         await db.commit()
         session_id = session.id
@@ -156,7 +156,7 @@ async def test_exact_path_and_hash_retry_is_idempotent(monkeypatch):
             db,
             resource_type="file",
             parent_id=session.id,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             limit=20,
         )
 
@@ -198,13 +198,13 @@ async def test_overwrite_keeps_old_file_and_scoped_list_puts_latest_first(client
             db,
             resource_id=first_id,
             resource_type="file",
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         ) is not None
         assert await res_q.get_resource(
             db,
             resource_id=second_id,
             resource_type="file",
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         ) is not None
 
     listed = await client.get(

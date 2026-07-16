@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 from langchain_openrouter.chat_models import _format_message_content
 
-from app.runtime.model_inputs import adapt_user_message_content
+from app.runtime.model_inputs import adapt_user_message_content, referenced_managed_file_ids
 from app.runtime.deepagents_engine import _graph_input
+from app.runtime.runner import (
+    _current_turn_model_file_ids,
+    _runtime_context_for_session,
+    _session_files_for_runtime,
+    _validate_descriptor_session_files,
+)
+from app.runtime.sandbox_inputs import SandboxInputBundle, SandboxInputFile
+from app.runtime.sandbox_lifecycle import SandboxInputMismatchError
 from tests.conftest import TEST_HEADERS
 
 
@@ -44,6 +53,76 @@ def _file_source(file_id: str) -> dict:
 def _nested_file_source(file_id: str) -> dict:
     """Defensive compatibility for clients that nest the file object."""
     return {"type": "file", "file": {"file_id": file_id}}
+
+
+def _runtime_file_resource(
+    *,
+    source_id: str,
+    scoped_id: str,
+    filename: str,
+    content: bytes,
+) -> SimpleNamespace:
+    path = f"/mnt/session/uploads/{filename}"
+    return SimpleNamespace(
+        id=f"resource_{scoped_id}",
+        name=filename,
+        data={
+            "type": "file",
+            "file_id": scoped_id,
+            "source_file_id": source_id,
+            "mount_path": path,
+            "read_only": True,
+            "session_file": {
+                "filename": filename,
+                "mime_type": "text/plain",
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "storage": {"key": f"objects/{filename}"},
+            },
+        },
+    )
+
+
+def test_modern_descriptor_requires_exact_session_file_metadata_before_download():
+    descriptor = SandboxInputBundle(
+        files=(
+            SandboxInputFile(
+                path="/mnt/session/uploads/report.txt",
+                content=TEXT_BYTES,
+                read_only=True,
+                source="session_file",
+            ),
+        ),
+        skill_sources=(),
+        memory_sources=(),
+        mutable_roots=(),
+    ).descriptor
+    matching = _runtime_file_resource(
+        source_id="file_source",
+        scoped_id="file_scoped",
+        filename="report.txt",
+        content=TEXT_BYTES,
+    )
+    _validate_descriptor_session_files(descriptor, [matching])
+
+    with pytest.raises(SandboxInputMismatchError, match="file metadata"):
+        _validate_descriptor_session_files(descriptor, [])
+    drifted = _runtime_file_resource(
+        source_id="file_source",
+        scoped_id="file_scoped",
+        filename="report.txt",
+        content=b"drifted",
+    )
+    with pytest.raises(SandboxInputMismatchError, match="file metadata"):
+        _validate_descriptor_session_files(descriptor, [drifted])
+    extra = _runtime_file_resource(
+        source_id="file_extra_source",
+        scoped_id="file_extra_scoped",
+        filename="extra.txt",
+        content=b"extra",
+    )
+    with pytest.raises(SandboxInputMismatchError, match="file metadata"):
+        _validate_descriptor_session_files(descriptor, [matching, extra])
 
 
 def test_adapt_file_blocks_resolves_source_and_scoped_ids_without_mutating_input():
@@ -113,6 +192,231 @@ def test_adapt_accepts_defensive_nested_file_source_shape():
             "mime_type": "image/png",
         }
     ]
+
+
+def test_referenced_file_ids_extracts_only_supported_attachment_blocks():
+    content = [
+        {"type": "text", "text": "Compare these."},
+        {"type": "image", "source": _file_source("file_image")},
+        {"type": "document", "source": _nested_file_source("file_document")},
+    ]
+
+    assert referenced_managed_file_ids(content) == {
+        "file_image",
+        "file_document",
+    }
+    assert referenced_managed_file_ids("plain text") == frozenset()
+
+
+def test_current_turn_file_ids_ignores_history_and_pending_action_resumes():
+    history = [
+        SimpleNamespace(
+            seq=1,
+            type="user.message",
+            payload={
+                "content": [{"type": "image", "source": _file_source("file_old")}]
+            },
+        ),
+        SimpleNamespace(seq=2, type="agent.message", payload={"content": "done"}),
+        SimpleNamespace(
+            seq=3,
+            type="user.message",
+            payload={
+                "content": [{"type": "document", "source": _file_source("file_current")}]
+            },
+        ),
+    ]
+
+    assert _current_turn_model_file_ids(history, {"last_input_event_seq": 1}) == {
+        "file_current"
+    }
+    pending = [
+        {
+            "event_id": "evt_pending",
+            "interrupt_id": "interrupt_1",
+            "action_index": 0,
+        }
+    ]
+    assert _current_turn_model_file_ids(
+        history,
+        {"last_input_event_seq": 1, "pending_actions": pending},
+    ) == {"file_current"}
+
+    resolved_history = [
+        *history,
+        SimpleNamespace(
+            seq=4,
+            type="user.tool_result",
+            payload={"tool_use_id": "evt_pending", "content": "complete"},
+        ),
+    ]
+    assert _current_turn_model_file_ids(
+        resolved_history,
+        {"last_input_event_seq": 1, "pending_actions": pending},
+    ) == frozenset()
+
+
+async def test_runtime_file_loader_downloads_only_current_turn_references(monkeypatch):
+    first = _runtime_file_resource(
+        source_id="file_source_first",
+        scoped_id="file_scoped_first",
+        filename="first.txt",
+        content=b"first",
+    )
+    second = _runtime_file_resource(
+        source_id="file_source_second",
+        scoped_id="file_scoped_second",
+        filename="second.txt",
+        content=b"second",
+    )
+    objects = {
+        "objects/first.txt": b"first",
+        "objects/second.txt": b"second",
+    }
+    downloads: list[str] = []
+
+    async def download(key: str) -> bytes:
+        downloads.append(key)
+        return objects[key]
+
+    monkeypatch.setattr("app.storage.download_file", download)
+
+    files = await _session_files_for_runtime(
+        [first, second],
+        content_file_ids={"file_source_second"},
+        immutable_manifest={
+            first.data["mount_path"]: first.data["session_file"]["sha256"],
+            second.data["mount_path"]: second.data["session_file"]["sha256"],
+        },
+    )
+
+    assert downloads == ["objects/second.txt"]
+    assert "content" not in files[0]
+    assert files[1]["content"] == b"second"
+    assert files[0]["file_id"] == "file_scoped_first"
+
+
+async def test_runtime_file_loader_rejects_database_metadata_outside_sealed_manifest(monkeypatch):
+    mounted = _runtime_file_resource(
+        source_id="file_source",
+        scoped_id="file_scoped",
+        filename="sealed.txt",
+        content=b"sealed",
+    )
+    downloads: list[str] = []
+
+    async def download(key: str) -> bytes:
+        downloads.append(key)
+        return b"sealed"
+
+    monkeypatch.setattr("app.storage.download_file", download)
+
+    with pytest.raises(RuntimeError, match="sealed manifest"):
+        await _session_files_for_runtime(
+            [mounted],
+            content_file_ids={"file_scoped"},
+            immutable_manifest={},
+        )
+
+    assert downloads == []
+
+
+async def test_runtime_file_loader_plain_turn_reads_zero_objects_and_state_reads_all(monkeypatch):
+    first = _runtime_file_resource(
+        source_id="file_source_first",
+        scoped_id="file_scoped_first",
+        filename="first.txt",
+        content=b"first",
+    )
+    second = _runtime_file_resource(
+        source_id="file_source_second",
+        scoped_id="file_scoped_second",
+        filename="second.txt",
+        content=b"second",
+    )
+    objects = {
+        "objects/first.txt": b"first",
+        "objects/second.txt": b"second",
+    }
+    downloads: list[str] = []
+
+    async def download(key: str) -> bytes:
+        downloads.append(key)
+        return objects[key]
+
+    monkeypatch.setattr("app.storage.download_file", download)
+
+    metadata_only = await _session_files_for_runtime(
+        [first, second],
+        content_file_ids=set(),
+    )
+    assert downloads == []
+    assert all("content" not in item for item in metadata_only)
+
+    fully_materialized = await _session_files_for_runtime([first, second])
+    assert downloads == ["objects/first.txt", "objects/second.txt"]
+    assert [item["content"] for item in fully_materialized] == [b"first", b"second"]
+
+
+async def test_persisted_e2b_runtime_context_does_not_load_skill_archives(monkeypatch):
+    from app.runtime import runner
+
+    session = SimpleNamespace(
+        id="session_persisted",
+        organization_id="org_persisted",
+        runtime_thread_id="thread_persisted",
+        run_state={},
+    )
+    persisted = {
+        "provider": "e2b",
+        "skill_sources": ["/skills/custom/research/v1/"],
+        "memory_sources": [],
+        "mutable_roots": ["/workspace", "/mnt/session/outputs"],
+        "immutable_manifest": {},
+    }
+
+    async def list_resources(*_args, **_kwargs):
+        return []
+
+    async def persisted_inputs(*_args, **_kwargs):
+        return persisted
+
+    async def no_credentials(*_args, **_kwargs):
+        return []
+
+    async def no_model_credential(*_args, **_kwargs):
+        return None
+
+    async def no_mcp(*_args, **_kwargs):
+        return {"servers": [], "errors": []}
+
+    async def no_subagents(*_args, **_kwargs):
+        return []
+
+    async def forbidden_skill_download(*_args, **_kwargs):
+        raise AssertionError("persisted E2B turns must not hydrate Skill archives")
+
+    monkeypatch.setattr(runner.res_q, "list_resources", list_resources)
+    monkeypatch.setattr(runner, "_persisted_e2b_inputs_for_session", persisted_inputs)
+    monkeypatch.setattr(runner, "_vault_credentials_for_session", no_credentials)
+    monkeypatch.setattr(runner, "_model_credential_for_session", no_model_credential)
+    monkeypatch.setattr(runner, "_mcp_auth_context_for_session", no_mcp)
+    monkeypatch.setattr(runner, "_subagents_for_runtime", no_subagents)
+    monkeypatch.setattr(runner, "_skill_archives_for_runtime", forbidden_skill_download)
+
+    context = await _runtime_context_for_session(
+        object(),
+        session,
+        SimpleNamespace(),
+        session_file_content_ids=set(),
+        prefer_persisted_sandbox_inputs=True,
+    )
+
+    assert context["skill_archives"] == []
+    assert context["session_files"] == []
+    assert context["persisted_sandbox_inputs"] == {
+        key: value for key, value in persisted.items() if key != "immutable_manifest"
+    }
 
 
 def test_installed_chat_openrouter_serializes_standard_image_and_pdf_blocks():

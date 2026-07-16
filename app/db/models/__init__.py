@@ -13,10 +13,10 @@ from app.db.models.domain import (
     SessionSandbox,
     TenantIdempotencyRecord,
     UsageLedgerEntry,
-    Workspace,
-    WorkspaceQuota,
-    WorkspaceQuotaCounter,
-    WorkspaceQuotaReservation,
+    Organization,
+    OrganizationQuota,
+    OrganizationQuotaCounter,
+    OrganizationQuotaReservation,
 )
 
 __all__ = [
@@ -35,8 +35,8 @@ __all__ = [
     "TenantIdempotencyRecord",
     "TimestampMixin",
     "UsageLedgerEntry",
-    "Workspace",
-    "WorkspaceQuota",
-    "WorkspaceQuotaCounter",
-    "WorkspaceQuotaReservation",
+    "Organization",
+    "OrganizationQuota",
+    "OrganizationQuotaCounter",
+    "OrganizationQuotaReservation",
 ]

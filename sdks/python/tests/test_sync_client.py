@@ -187,7 +187,7 @@ def test_sync_api_key_lifecycle_exposes_secrets_only_on_create_and_rotate():
         value = {
             "id": key_id,
             "type": "api_key",
-            "workspace_id": "workspace_1",
+            "organization_id": "org_test",
             "name": "CI",
             "prefix": "vma_ci",
             "scopes": ["api", "api_keys:manage"],

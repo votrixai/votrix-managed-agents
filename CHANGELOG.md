@@ -12,7 +12,7 @@ or paid billing readiness. The beta is BYOK/free.
 
 ### Added
 
-- Database-backed workspace API keys with one-time plaintext create/rotate
+- Database-backed Organization API keys with one-time plaintext create/rotate
   responses, hashes at rest, expiration, independent revocation, last-used
   tracking, replacement links, and `api`, `api_keys:manage`, and `worker`
   scopes.
@@ -20,7 +20,7 @@ or paid billing readiness. The beta is BYOK/free.
   trusted `scripts.bootstrap_api_key` first-key CLI.
 - `request-id`/`x-request-id` correlation on responses and audit facts, with
   stable machine-readable `error.code` values and typed OpenAPI error models.
-- Atomic workspace defaults/overrides for requests per minute, active work,
+- Atomic Organization defaults/overrides for requests per minute, active work,
   daily model tokens, and stored File/Skill bytes, including rate/quota reset
   headers and stable denial codes.
 - A private, best-effort E2B runtime cost estimator that accumulates locally
@@ -31,7 +31,7 @@ or paid billing readiness. The beta is BYOK/free.
   PostgreSQL/SQLite mutation-rejection triggers. Provider-reported raw usage is
   idempotent, carries provider/model attribution, and supports quotas and cost
   analysis only.
-- Generic tenant idempotency records scoped by workspace, operation, key hash,
+- Generic tenant idempotency records scoped by Organization, operation, key hash,
   and request fingerprint; Session creation uses them to replay the exact
   successful response. Session event submission retains its dedicated
   transactional idempotency record.
@@ -55,7 +55,25 @@ or paid billing readiness. The beta is BYOK/free.
 
 ### Changed
 
-- Authentication now fails closed through database-backed workspace keys in
+- **Pre-launch breaking reset:** the top-level tenant is now Organization,
+  identified by `organization_id` and `org_*` IDs. Legacy tenant names,
+  fields, CLI flags, defaults, and compatibility aliases were removed. Existing
+  databases, R2 objects, API keys, and E2B Sessions are intentionally
+  unsupported and every environment must be recreated and bootstrapped with an
+  explicit Organization.
+- E2B turns now resume from the persisted sandbox binding and provider-side
+  seal without re-downloading every Session file and Skill archive from object
+  storage. Only files referenced by the current model message are hydrated;
+  append-only `resources.add` downloads only the new file, while legacy
+  bindings perform one compatibility hydration before persisting a descriptor.
+- The single-instance Cloud Run beta profile now runs five embedded turn
+  consumers with one vCPU/4 GiB, 40 HTTP concurrency, one-second event polling,
+  a 64 MiB aggregate Session-input cap, and Organization defaults sized to admit
+  a ten-Session burst without quota rejection.
+- PostgreSQL control-plane traffic now uses a bounded, configurable SQLAlchemy
+  application pool by default; SQLite keeps `NullPool`, and
+  `VMA_DB_POOL_SIZE=0` is the explicit PostgreSQL opt-out.
+- Authentication now fails closed through database-backed Organization keys in
   local, development, staging, and production. The environment-key and
   anonymous development paths were removed; the trusted CLI bootstraps the
   first key.
@@ -76,6 +94,17 @@ or paid billing readiness. The beta is BYOK/free.
   rate/resource configuration change affects new intervals without rewriting
   earlier estimates. Estimation can be disabled with
   `VMA_E2B_COST_ESTIMATION_ENABLED=false`.
+- Model execution is now strict BYOK. Every key-based Session must select a
+  matching model Credential from its ordered Organization Vaults or creation
+  returns `422 model_credential_required`; VMA no longer falls back to a
+  service-owned model key.
+- `VMA_MODEL_PROVIDERS` now describes routing, capabilities, and an internal
+  Vault credential slot only. Embedded `api_key` values are rejected and
+  `api_key_env` is no longer resolved from process environment. Cloud Run
+  deployment inputs no longer contain model-provider keys.
+- The one-binding-per-Session multiagent MVP now rejects mixed-provider rosters
+  at Session creation. Keyless `fake` and `ollama` providers bind with source
+  `none`.
 
 ### Fixed
 
@@ -99,17 +128,21 @@ or paid billing readiness. The beta is BYOK/free.
   metadata/private/non-global addresses, and non-HTTPS/non-443 destinations;
   DNS answers are validated and the approved address is pinned at connection
   time to narrow rebinding exposure.
-- Workspace quota counters and reservations use atomic database operations;
+- Organization quota counters and reservations use atomic database operations;
   audit and usage rows reject mutation at both application and database layers.
 - Public SDK surfaces omit deferred Memory Stores and generic Vault Credential
-  escape hatches; provider keys remain write-only and server-mapped.
+  escape hatches; customer model-provider keys remain write-only and are
+  mapped from public provider IDs to private Vault slots.
+- Customer model keys are decrypted only from the selected Session Vault
+  Credential and never sourced from service environment variables, embedded
+  provider config, checkpoints, or E2B.
 
 ### Deferred
 
 - Cross-process live-preview delivery and complete distributed
   per-Session/checkpoint ownership. The checked-in `maxScale=1` constraint must
   remain until both exist.
-- Postgres RLS; Organizations, memberships, human/service-account RBAC, SSO,
+- Postgres RLS; Organization memberships, human/service-account RBAC, SSO,
   and SCIM.
 - Enterprise audit export, automated retention, legal hold, external tamper
   anchoring, and administrator/support access history.
@@ -125,6 +158,8 @@ or paid billing readiness. The beta is BYOK/free.
 
 ### Testing
 
+- Added a ten-Session remote performance smoke that records queue, first-event,
+  and total latency distributions and cleans up only the Sessions it creates.
 - Added focused contracts for API-key lifecycle/scopes/bootstrap, request IDs
   and error envelopes, governance counters/ledgers/idempotency, stale work
   leases and runtime-history pagination, outbound network restrictions,

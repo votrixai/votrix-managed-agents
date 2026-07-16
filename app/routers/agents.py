@@ -243,7 +243,7 @@ async def _normalize_multiagent_roster(
             db,
             agent_id=agent_id,
             version=pinned_version,
-            workspace_id=referenced_agent.workspace_id,
+            organization_id=referenced_agent.organization_id,
         )
         if referenced_version is None:
             raise HTTPException(status_code=422, detail=f"Referenced agent version not found: {agent_id}@{pinned_version}")

@@ -5,7 +5,7 @@ import pytest
 
 from app.routers.sessions import _requested_event_deltas, _resume_after_seq, _stream_response
 from app.runtime.vma_preview_bus import VmaProcessLocalPreviewBus, vma_preview_bus
-from app.workspace import default_workspace
+from app.organization import CurrentOrganization
 from tests.conftest import TEST_HEADERS
 
 
@@ -211,7 +211,13 @@ async def _wait_for_subscriber(session_id: str) -> None:
 
 class _ConnectedRequest:
     def __init__(self) -> None:
-        self.state = SimpleNamespace(current_workspace=default_workspace())
+        self.state = SimpleNamespace(
+            current_organization=CurrentOrganization(
+                id="org_test",
+                slug="test",
+                source="test",
+            )
+        )
 
     async def is_disconnected(self) -> bool:
         return False

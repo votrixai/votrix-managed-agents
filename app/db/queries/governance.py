@@ -13,9 +13,9 @@ from app.db.models import (
     ManagedResource,
     TenantIdempotencyRecord,
     UsageLedgerEntry,
-    WorkspaceQuota,
-    WorkspaceQuotaCounter,
-    WorkspaceQuotaReservation,
+    OrganizationQuota,
+    OrganizationQuotaCounter,
+    OrganizationQuotaReservation,
 )
 from app.ids import new_id
 
@@ -26,27 +26,27 @@ STORAGE_BYTES_METRIC = "storage_bytes"
 REQUEST_WINDOW_SECONDS = 60
 
 
-async def get_workspace_quota(
+async def get_organization_quota(
     db: AsyncSession,
-    workspace_id: str,
+    organization_id: str,
     *,
     for_update: bool = False,
-) -> WorkspaceQuota | None:
-    stmt = select(WorkspaceQuota).where(WorkspaceQuota.workspace_id == workspace_id)
+) -> OrganizationQuota | None:
+    stmt = select(OrganizationQuota).where(OrganizationQuota.organization_id == organization_id)
     if for_update:
         stmt = stmt.with_for_update()
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 
-async def ensure_and_lock_workspace_quota(
+async def ensure_and_lock_organization_quota(
     db: AsyncSession,
-    workspace_id: str,
-) -> WorkspaceQuota:
+    organization_id: str,
+) -> OrganizationQuota:
     """Create and lock the serialization row used by storage quota checks."""
     now = _utcnow()
-    insert = _dialect_insert(db, WorkspaceQuota).values(
-        workspace_id=workspace_id,
+    insert = _dialect_insert(db, OrganizationQuota).values(
+        organization_id=organization_id,
         requests_per_minute=None,
         max_active_work=None,
         daily_model_tokens=None,
@@ -55,34 +55,34 @@ async def ensure_and_lock_workspace_quota(
         created_at=now,
         updated_at=now,
     )
-    insert = insert.on_conflict_do_nothing(index_elements=[WorkspaceQuota.workspace_id])
+    insert = insert.on_conflict_do_nothing(index_elements=[OrganizationQuota.organization_id])
     await db.execute(insert)
 
     # PostgreSQL obtains a row lock here. SQLite ignores FOR UPDATE, so the
     # no-op UPDATE below deliberately acquires its database writer lock until
     # the caller commits the resource insert in the same transaction.
-    quota = await get_workspace_quota(db, workspace_id, for_update=True)
+    quota = await get_organization_quota(db, organization_id, for_update=True)
     if quota is None:
-        raise RuntimeError("Failed to initialize workspace quota row")
+        raise RuntimeError("Failed to initialize organization quota row")
     await db.execute(
-        update(WorkspaceQuota)
-        .where(WorkspaceQuota.workspace_id == workspace_id)
-        .values(updated_at=WorkspaceQuota.updated_at)
+        update(OrganizationQuota)
+        .where(OrganizationQuota.organization_id == organization_id)
+        .values(updated_at=OrganizationQuota.updated_at)
     )
     return quota
 
 
-async def set_workspace_quota_overrides(
+async def set_organization_quota_overrides(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     requests_per_minute: int | None,
     max_active_work: int | None,
     daily_model_tokens: int | None,
     storage_bytes: int | None,
     metadata: dict[str, Any] | None = None,
-) -> WorkspaceQuota:
-    quota = await ensure_and_lock_workspace_quota(db, workspace_id)
+) -> OrganizationQuota:
+    quota = await ensure_and_lock_organization_quota(db, organization_id)
     quota.requests_per_minute = requests_per_minute
     quota.max_active_work = max_active_work
     quota.daily_model_tokens = daily_model_tokens
@@ -96,7 +96,7 @@ async def set_workspace_quota_overrides(
 async def consume_counter(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     metric: str,
     window_start: datetime,
     window_seconds: int,
@@ -113,21 +113,21 @@ async def consume_counter(
     if amount == 0:
         return True, await get_counter_value(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             metric=metric,
             window_start=window_start,
         )
     if limit is not None and amount > limit:
         return False, await get_counter_value(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             metric=metric,
             window_start=window_start,
         )
 
     now = _utcnow()
-    insert = _dialect_insert(db, WorkspaceQuotaCounter).values(
-        workspace_id=workspace_id,
+    insert = _dialect_insert(db, OrganizationQuotaCounter).values(
+        organization_id=organization_id,
         metric=metric,
         window_start=window_start,
         window_seconds=window_seconds,
@@ -135,15 +135,15 @@ async def consume_counter(
         created_at=now,
         updated_at=now,
     )
-    proposed_value = WorkspaceQuotaCounter.value + amount
+    proposed_value = OrganizationQuotaCounter.value + amount
     kwargs: dict[str, Any] = {}
     if limit is not None:
         kwargs["where"] = proposed_value <= limit
     statement = insert.on_conflict_do_update(
         index_elements=[
-            WorkspaceQuotaCounter.workspace_id,
-            WorkspaceQuotaCounter.metric,
-            WorkspaceQuotaCounter.window_start,
+            OrganizationQuotaCounter.organization_id,
+            OrganizationQuotaCounter.metric,
+            OrganizationQuotaCounter.window_start,
         ],
         set_={
             "value": proposed_value,
@@ -151,14 +151,14 @@ async def consume_counter(
             "updated_at": now,
         },
         **kwargs,
-    ).returning(WorkspaceQuotaCounter.value)
+    ).returning(OrganizationQuotaCounter.value)
     result = await db.execute(statement)
     value = result.scalar_one_or_none()
     if value is not None:
         return True, int(value)
     return False, await get_counter_value(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         metric=metric,
         window_start=window_start,
     )
@@ -167,7 +167,7 @@ async def consume_counter(
 async def adjust_counter(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     metric: str,
     window_start: datetime,
     window_seconds: int,
@@ -178,8 +178,8 @@ async def adjust_counter(
         raise ValueError("window_seconds must be non-negative")
     now = _utcnow()
     initial_value = max(delta, 0)
-    insert = _dialect_insert(db, WorkspaceQuotaCounter).values(
-        workspace_id=workspace_id,
+    insert = _dialect_insert(db, OrganizationQuotaCounter).values(
+        organization_id=organization_id,
         metric=metric,
         window_start=window_start,
         window_seconds=window_seconds,
@@ -187,20 +187,20 @@ async def adjust_counter(
         created_at=now,
         updated_at=now,
     )
-    proposed_value = WorkspaceQuotaCounter.value + delta
+    proposed_value = OrganizationQuotaCounter.value + delta
     next_value = case((proposed_value < 0, 0), else_=proposed_value)
     statement = insert.on_conflict_do_update(
         index_elements=[
-            WorkspaceQuotaCounter.workspace_id,
-            WorkspaceQuotaCounter.metric,
-            WorkspaceQuotaCounter.window_start,
+            OrganizationQuotaCounter.organization_id,
+            OrganizationQuotaCounter.metric,
+            OrganizationQuotaCounter.window_start,
         ],
         set_={
             "value": next_value,
             "window_seconds": window_seconds,
             "updated_at": now,
         },
-    ).returning(WorkspaceQuotaCounter.value)
+    ).returning(OrganizationQuotaCounter.value)
     result = await db.execute(statement)
     return int(result.scalar_one())
 
@@ -208,22 +208,22 @@ async def adjust_counter(
 async def get_counter_value(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     metric: str,
     window_start: datetime,
 ) -> int:
     result = await db.execute(
-        select(WorkspaceQuotaCounter.value).where(
-            WorkspaceQuotaCounter.workspace_id == workspace_id,
-            WorkspaceQuotaCounter.metric == metric,
-            WorkspaceQuotaCounter.window_start == window_start,
+        select(OrganizationQuotaCounter.value).where(
+            OrganizationQuotaCounter.organization_id == organization_id,
+            OrganizationQuotaCounter.metric == metric,
+            OrganizationQuotaCounter.window_start == window_start,
         )
     )
     value = result.scalar_one_or_none()
     return int(value or 0)
 
 
-async def workspace_storage_bytes(db: AsyncSession, workspace_id: str) -> int:
+async def organization_storage_bytes(db: AsyncSession, organization_id: str) -> int:
     content_length = (
         func.length(ManagedResource.content)
         if _dialect_name(db) == "sqlite"
@@ -240,7 +240,7 @@ async def workspace_storage_bytes(db: AsyncSession, workspace_id: str) -> int:
     )
     result = await db.execute(
         select(func.coalesce(func.sum(stored_size), 0)).where(
-            ManagedResource.workspace_id == workspace_id,
+            ManagedResource.organization_id == organization_id,
             ManagedResource.deleted_at.is_(None),
         )
     )
@@ -250,15 +250,15 @@ async def workspace_storage_bytes(db: AsyncSession, workspace_id: str) -> int:
 async def get_quota_reservation(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     quota_name: str,
     reference_id: str,
     for_update: bool = False,
-) -> WorkspaceQuotaReservation | None:
-    stmt = select(WorkspaceQuotaReservation).where(
-        WorkspaceQuotaReservation.workspace_id == workspace_id,
-        WorkspaceQuotaReservation.quota_name == quota_name,
-        WorkspaceQuotaReservation.reference_id == reference_id,
+) -> OrganizationQuotaReservation | None:
+    stmt = select(OrganizationQuotaReservation).where(
+        OrganizationQuotaReservation.organization_id == organization_id,
+        OrganizationQuotaReservation.quota_name == quota_name,
+        OrganizationQuotaReservation.reference_id == reference_id,
     )
     if for_update:
         stmt = stmt.with_for_update()
@@ -269,19 +269,19 @@ async def get_quota_reservation(
 async def claim_quota_reservation(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     quota_name: str,
     reference_id: str,
     amount: int,
     acquired_at: datetime,
     metadata: dict[str, Any] | None = None,
-) -> tuple[WorkspaceQuotaReservation, bool]:
+) -> tuple[OrganizationQuotaReservation, bool]:
     """Atomically create a reservation or return its durable predecessor."""
     reservation_id = new_id("qres")
     now = _utcnow()
-    insert = _dialect_insert(db, WorkspaceQuotaReservation).values(
+    insert = _dialect_insert(db, OrganizationQuotaReservation).values(
         id=reservation_id,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         quota_name=quota_name,
         reference_id=reference_id,
         amount=amount,
@@ -294,22 +294,22 @@ async def claim_quota_reservation(
     )
     statement = insert.on_conflict_do_nothing(
         index_elements=[
-            WorkspaceQuotaReservation.workspace_id,
-            WorkspaceQuotaReservation.quota_name,
-            WorkspaceQuotaReservation.reference_id,
+            OrganizationQuotaReservation.organization_id,
+            OrganizationQuotaReservation.quota_name,
+            OrganizationQuotaReservation.reference_id,
         ]
-    ).returning(WorkspaceQuotaReservation.id)
+    ).returning(OrganizationQuotaReservation.id)
     result = await db.execute(statement)
     inserted_id = result.scalar_one_or_none()
     if inserted_id is not None:
-        reservation = await db.get(WorkspaceQuotaReservation, inserted_id)
+        reservation = await db.get(OrganizationQuotaReservation, inserted_id)
         if reservation is None:
             raise RuntimeError("Quota reservation disappeared after insert")
         return reservation, True
 
     reservation = await get_quota_reservation(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         quota_name=quota_name,
         reference_id=reference_id,
     )
@@ -320,13 +320,13 @@ async def claim_quota_reservation(
 
 async def discard_quota_reservation(
     db: AsyncSession,
-    reservation: WorkspaceQuotaReservation,
+    reservation: OrganizationQuotaReservation,
 ) -> None:
     """Discard a reservation created in the current, still-uncommitted transaction."""
     await db.execute(
-        delete(WorkspaceQuotaReservation).where(
-            WorkspaceQuotaReservation.id == reservation.id,
-            WorkspaceQuotaReservation.state == "active",
+        delete(OrganizationQuotaReservation).where(
+            OrganizationQuotaReservation.id == reservation.id,
+            OrganizationQuotaReservation.state == "active",
         )
     )
 
@@ -334,28 +334,28 @@ async def discard_quota_reservation(
 async def release_quota_reservation(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     quota_name: str,
     reference_id: str,
     released_at: datetime,
-) -> tuple[WorkspaceQuotaReservation | None, bool]:
+) -> tuple[OrganizationQuotaReservation | None, bool]:
     """Conditionally release once, with atomic semantics on SQLite/PostgreSQL."""
     statement = (
-        update(WorkspaceQuotaReservation)
+        update(OrganizationQuotaReservation)
         .where(
-            WorkspaceQuotaReservation.workspace_id == workspace_id,
-            WorkspaceQuotaReservation.quota_name == quota_name,
-            WorkspaceQuotaReservation.reference_id == reference_id,
-            WorkspaceQuotaReservation.state == "active",
+            OrganizationQuotaReservation.organization_id == organization_id,
+            OrganizationQuotaReservation.quota_name == quota_name,
+            OrganizationQuotaReservation.reference_id == reference_id,
+            OrganizationQuotaReservation.state == "active",
         )
         .values(state="released", released_at=released_at, updated_at=_utcnow())
-        .returning(WorkspaceQuotaReservation.id)
+        .returning(OrganizationQuotaReservation.id)
     )
     result = await db.execute(statement)
     released_id = result.scalar_one_or_none()
     reservation = await get_quota_reservation(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         quota_name=quota_name,
         reference_id=reference_id,
     )
@@ -365,7 +365,7 @@ async def release_quota_reservation(
 async def append_audit_entry(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     actor_type: str,
     actor_id: str | None,
     action: str,
@@ -378,7 +378,7 @@ async def append_audit_entry(
 ) -> AuditLedgerEntry:
     entry = AuditLedgerEntry(
         id=new_id("audit"),
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         actor_type=actor_type,
         actor_id=actor_id,
         action=action,
@@ -397,7 +397,7 @@ async def append_audit_entry(
 async def append_usage_entry(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     metric: str,
     quantity: int,
     unit: str,
@@ -412,7 +412,7 @@ async def append_usage_entry(
 ) -> UsageLedgerEntry:
     entry = UsageLedgerEntry(
         id=new_id("usage"),
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         metric=metric,
         quantity=quantity,
         unit=unit,
@@ -433,7 +433,7 @@ async def append_usage_entry(
 async def append_usage_entry_once(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     metric: str,
     quantity: int,
     unit: str,
@@ -450,7 +450,7 @@ async def append_usage_entry_once(
     entry_id = new_id("usage")
     insert = _dialect_insert(db, UsageLedgerEntry).values(
         id=entry_id,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         metric=metric,
         quantity=quantity,
         unit=unit,
@@ -464,7 +464,7 @@ async def append_usage_entry_once(
         occurred_at=occurred_at or _utcnow(),
     )
     statement = insert.on_conflict_do_nothing(
-        index_elements=[UsageLedgerEntry.workspace_id, UsageLedgerEntry.idempotency_key]
+        index_elements=[UsageLedgerEntry.organization_id, UsageLedgerEntry.idempotency_key]
     ).returning(UsageLedgerEntry.id)
     result = await db.execute(statement)
     inserted_id = result.scalar_one_or_none()
@@ -475,7 +475,7 @@ async def append_usage_entry_once(
         return entry, True
     entry = await get_usage_by_idempotency_key(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         idempotency_key=idempotency_key,
     )
     if entry is None:
@@ -486,12 +486,12 @@ async def append_usage_entry_once(
 async def get_usage_by_idempotency_key(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     idempotency_key: str,
 ) -> UsageLedgerEntry | None:
     result = await db.execute(
         select(UsageLedgerEntry).where(
-            UsageLedgerEntry.workspace_id == workspace_id,
+            UsageLedgerEntry.organization_id == organization_id,
             UsageLedgerEntry.idempotency_key == idempotency_key,
         )
     )
@@ -501,12 +501,12 @@ async def get_usage_by_idempotency_key(
 async def list_audit_entries(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     limit: int = 100,
 ) -> list[AuditLedgerEntry]:
     result = await db.execute(
         select(AuditLedgerEntry)
-        .where(AuditLedgerEntry.workspace_id == workspace_id)
+        .where(AuditLedgerEntry.organization_id == organization_id)
         .order_by(AuditLedgerEntry.occurred_at.desc(), AuditLedgerEntry.id.desc())
         .limit(max(1, min(limit, 1000)))
     )
@@ -516,12 +516,12 @@ async def list_audit_entries(
 async def list_usage_entries(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     limit: int = 100,
 ) -> list[UsageLedgerEntry]:
     result = await db.execute(
         select(UsageLedgerEntry)
-        .where(UsageLedgerEntry.workspace_id == workspace_id)
+        .where(UsageLedgerEntry.organization_id == organization_id)
         .order_by(UsageLedgerEntry.occurred_at.desc(), UsageLedgerEntry.id.desc())
         .limit(max(1, min(limit, 1000)))
     )
@@ -531,7 +531,7 @@ async def list_usage_entries(
 async def claim_tenant_idempotency(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     operation: str,
     key_hash: str,
     request_fingerprint: str,
@@ -545,7 +545,7 @@ async def claim_tenant_idempotency(
     now = _utcnow()
     insert = _dialect_insert(db, TenantIdempotencyRecord).values(
         id=record_id,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         operation=operation,
         key_hash=key_hash,
         request_fingerprint=request_fingerprint,
@@ -557,7 +557,7 @@ async def claim_tenant_idempotency(
     )
     statement = insert.on_conflict_do_nothing(
         index_elements=[
-            TenantIdempotencyRecord.workspace_id,
+            TenantIdempotencyRecord.organization_id,
             TenantIdempotencyRecord.operation,
             TenantIdempotencyRecord.key_hash,
         ]
@@ -572,7 +572,7 @@ async def claim_tenant_idempotency(
 
     result = await db.execute(
         select(TenantIdempotencyRecord).where(
-            TenantIdempotencyRecord.workspace_id == workspace_id,
+            TenantIdempotencyRecord.organization_id == organization_id,
             TenantIdempotencyRecord.operation == operation,
             TenantIdempotencyRecord.key_hash == key_hash,
         )
@@ -586,12 +586,12 @@ async def claim_tenant_idempotency(
 async def get_tenant_idempotency_record(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     record_id: str,
     for_update: bool = False,
 ) -> TenantIdempotencyRecord | None:
     stmt = select(TenantIdempotencyRecord).where(
-        TenantIdempotencyRecord.workspace_id == workspace_id,
+        TenantIdempotencyRecord.organization_id == organization_id,
         TenantIdempotencyRecord.id == record_id,
     )
     if for_update:
@@ -612,7 +612,7 @@ async def complete_tenant_idempotency(
         update(TenantIdempotencyRecord)
         .where(
             TenantIdempotencyRecord.id == record.id,
-            TenantIdempotencyRecord.workspace_id == record.workspace_id,
+            TenantIdempotencyRecord.organization_id == record.organization_id,
             TenantIdempotencyRecord.request_fingerprint == record.request_fingerprint,
             TenantIdempotencyRecord.state == "in_progress",
         )
@@ -628,7 +628,7 @@ async def complete_tenant_idempotency(
     completed_id = result.scalar_one_or_none()
     current = await get_tenant_idempotency_record(
         db,
-        workspace_id=record.workspace_id,
+        organization_id=record.organization_id,
         record_id=record.id,
     )
     if current is None:
@@ -650,24 +650,24 @@ async def cleanup_expired_request_counters(
         (
             await db.execute(
                 select(
-                    WorkspaceQuotaCounter.workspace_id,
-                    WorkspaceQuotaCounter.window_start,
+                    OrganizationQuotaCounter.organization_id,
+                    OrganizationQuotaCounter.window_start,
                 )
                 .where(
-                    WorkspaceQuotaCounter.metric == REQUESTS_METRIC,
-                    WorkspaceQuotaCounter.window_start <= window_cutoff,
+                    OrganizationQuotaCounter.metric == REQUESTS_METRIC,
+                    OrganizationQuotaCounter.window_start <= window_cutoff,
                 )
-                .order_by(WorkspaceQuotaCounter.window_start.asc())
+                .order_by(OrganizationQuotaCounter.window_start.asc())
                 .limit(limit)
             )
         ).all()
     )
-    for workspace_id, window_start in rows:
+    for organization_id, window_start in rows:
         await db.execute(
-            delete(WorkspaceQuotaCounter).where(
-                WorkspaceQuotaCounter.workspace_id == workspace_id,
-                WorkspaceQuotaCounter.metric == REQUESTS_METRIC,
-                WorkspaceQuotaCounter.window_start == window_start,
+            delete(OrganizationQuotaCounter).where(
+                OrganizationQuotaCounter.organization_id == organization_id,
+                OrganizationQuotaCounter.metric == REQUESTS_METRIC,
+                OrganizationQuotaCounter.window_start == window_start,
             )
         )
     return len(rows)

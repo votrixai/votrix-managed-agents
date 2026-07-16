@@ -13,10 +13,10 @@ async def test_runtime_history_reads_past_the_first_500_events(monkeypatch):
         session_id: str,
         after_seq: int,
         limit: int,
-        workspace_id: str,
+        organization_id: str,
     ):
         assert session_id == "sess_history"
-        assert workspace_id == "wrkspc_history"
+        assert organization_id == "org_history"
         assert limit == 500
         requested_after.append(after_seq)
         return [event for event in events if event.seq > after_seq][:limit]
@@ -26,7 +26,7 @@ async def test_runtime_history_reads_past_the_first_500_events(monkeypatch):
     history = await runner._list_runtime_history(
         object(),
         session_id="sess_history",
-        workspace_id="wrkspc_history",
+        organization_id="org_history",
     )
 
     assert [event.seq for event in history] == list(range(1, 1002))

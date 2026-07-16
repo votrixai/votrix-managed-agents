@@ -276,7 +276,7 @@ async def test_deepagents_engine_streams_and_persists_exact_message_id(monkeypat
         [_event(1, "user.message", content="hello")],
         {"type": "cloud"},
         runtime_context={
-            "workspace_id": "wrkspc_test",
+            "organization_id": "org_test",
             "session_id": "sess_test",
             "checkpoint_thread_id": "thread_private",
         },
@@ -332,7 +332,7 @@ async def test_custom_tool_interrupt_resumes_with_client_result(monkeypatch):
         [_event(1, "user.message", content="look up 42")],
         {"type": "cloud"},
         runtime_context={
-            "workspace_id": "wrkspc_test",
+            "organization_id": "org_test",
             "session_id": "sess_test",
             "checkpoint_thread_id": "thread_custom",
         },
@@ -356,7 +356,7 @@ async def test_custom_tool_interrupt_resumes_with_client_result(monkeypatch):
         ],
         {"type": "cloud"},
         runtime_context={
-            "workspace_id": "wrkspc_test",
+            "organization_id": "org_test",
             "session_id": "sess_test",
             "checkpoint_thread_id": "thread_custom",
             "previous_run_state": first.run_state,

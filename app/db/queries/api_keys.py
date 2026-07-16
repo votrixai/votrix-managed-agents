@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ApiKey
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 API_SCOPE = "api"
 API_KEYS_MANAGE_SCOPE = "api_keys:manage"
@@ -29,7 +29,7 @@ async def create_api_key(
     db: AsyncSession,
     *,
     name: str,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     token: str | None = None,
     scopes: Iterable[str] = DEFAULT_API_KEY_SCOPES,
     expires_at: datetime | None = None,
@@ -41,7 +41,7 @@ async def create_api_key(
     normalized_scopes = normalize_api_key_scopes(scopes)
     api_key = ApiKey(
         id=new_id("key"),
-        workspace_id=workspace_id_or_default(workspace_id),
+        organization_id=resolve_organization_id(organization_id),
         name=name,
         key_hash=hash_api_key(plaintext),
         prefix=plaintext[:12],
@@ -73,13 +73,13 @@ async def get_api_key(
     db: AsyncSession,
     key_id: str,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     include_revoked: bool = True,
     for_update: bool = False,
 ) -> ApiKey | None:
     stmt = select(ApiKey).where(
         ApiKey.id == key_id,
-        ApiKey.workspace_id == workspace_id_or_default(workspace_id),
+        ApiKey.organization_id == resolve_organization_id(organization_id),
     )
     if not include_revoked:
         stmt = stmt.where(ApiKey.archived_at.is_(None), ApiKey.revoked_at.is_(None))
@@ -92,10 +92,10 @@ async def get_api_key(
 async def list_api_keys(
     db: AsyncSession,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     include_revoked: bool = True,
 ) -> list[ApiKey]:
-    stmt = select(ApiKey).where(ApiKey.workspace_id == workspace_id_or_default(workspace_id))
+    stmt = select(ApiKey).where(ApiKey.organization_id == resolve_organization_id(organization_id))
     if not include_revoked:
         stmt = stmt.where(ApiKey.archived_at.is_(None), ApiKey.revoked_at.is_(None))
     result = await db.execute(stmt.order_by(ApiKey.created_at.desc(), ApiKey.id.desc()))

@@ -11,6 +11,7 @@ from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
+from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
 from app.governance import QuotaExceededError
 from app.governance_runtime import governance_service
@@ -25,8 +26,10 @@ from app.runtime.model_credentials import (
     status_details_with_binding,
     validate_binding_for_model,
 )
+from app.runtime.model_inputs import referenced_managed_file_ids
 from app.runtime.providers import runtime_provider_id
 from app.runtime.sandbox import sandbox_plan_from_environment
+from app.runtime.sandbox_inputs import SandboxInputDescriptor
 from app.runtime.sandbox_outputs import persist_discovered_outputs
 from app.runtime.work_queue import WorkExecutionLease
 from app.secret_cipher import decrypt_secret_values
@@ -38,7 +41,7 @@ from app.session_state import (
     can_start_work,
     is_waiting_for_action,
 )
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 logger = structlog.get_logger()
 _running_sessions: set[str] = set()
@@ -56,28 +59,28 @@ class SessionRunStopped(RuntimeError):
     """Raised when a concurrent control-plane action stops an active run."""
 
 
-def schedule_session_run(session_id: str, *, workspace_id: str | None = None) -> None:
-    asyncio.create_task(run_session_turn(session_id, workspace_id=workspace_id))
+def schedule_session_run(session_id: str, *, organization_id: str | None = None) -> None:
+    asyncio.create_task(run_session_turn(session_id, organization_id=organization_id))
 
 
 async def run_session_turn(
     session_id: str,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     work_lease: WorkExecutionLease | None = None,
 ) -> bool:
-    scoped_workspace_id = workspace_id_or_default(workspace_id)
-    run_key = f"{scoped_workspace_id}:{session_id}"
+    scoped_organization_id = resolve_organization_id(organization_id)
+    run_key = f"{scoped_organization_id}:{session_id}"
     async with _running_lock:
         if run_key in _running_sessions:
-            logger.info("session_already_running", session_id=session_id, workspace_id=scoped_workspace_id)
+            logger.info("session_already_running", session_id=session_id, organization_id=scoped_organization_id)
             return False
         _running_sessions.add(run_key)
 
     try:
         return await _run_session_turn(
             session_id,
-            workspace_id=scoped_workspace_id,
+            organization_id=scoped_organization_id,
             work_lease=work_lease,
         )
     finally:
@@ -88,11 +91,11 @@ async def run_session_turn(
 async def _run_session_turn(
     session_id: str,
     *,
-    workspace_id: str,
+    organization_id: str,
     work_lease: WorkExecutionLease | None = None,
 ) -> bool:
     async with session_scope() as db:
-        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id, for_update=True)
         if session is None or session.deleted_at is not None:
             return False
         if work_lease is not None:
@@ -110,7 +113,7 @@ async def _run_session_turn(
         if get_settings().vma_governance_enabled:
             token_decision = await governance_service().preflight_model_tokens_in_session(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 source_type="session",
                 source_id=session.id,
             )
@@ -134,30 +137,39 @@ async def _run_session_turn(
 
     try:
         async with session_scope() as db:
-            session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+            session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
             if session is None:
                 return False
-            agent = await agents_q.get_agent(db, session.agent_id, workspace_id=workspace_id)
+            agent = await agents_q.get_agent(db, session.agent_id, organization_id=organization_id)
             if agent is None:
                 raise RuntimeError(f"Agent {session.agent_id} not found")
             version = await agents_q.get_agent_version(
                 db,
                 agent_id=session.agent_id,
                 version=session.agent_version,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
             )
             if version is None:
                 raise RuntimeError(f"Agent version {session.agent_version} not found")
-            environment = await env_q.get_environment(db, session.environment_id, workspace_id=workspace_id)
+            environment = await env_q.get_environment(db, session.environment_id, organization_id=organization_id)
             if environment is None or environment.deleted_at is not None:
                 raise RuntimeError(f"Environment {session.environment_id} not found")
             history = await _list_runtime_history(
                 db,
                 session_id=session.id,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
             )
             effective_version = effective_agent_version(version, session.status_details)
-            runtime_context = await _runtime_context_for_session(db, session, effective_version)
+            runtime_context = await _runtime_context_for_session(
+                db,
+                session,
+                effective_version,
+                session_file_content_ids=_current_turn_model_file_ids(
+                    history,
+                    dict(session.run_state or {}),
+                ),
+                prefer_persisted_sandbox_inputs=True,
+            )
             await _append_runtime_context_events(db, session, runtime_context)
             # Legacy Sessions may acquire their immutable model Credential binding
             # while building runtime context. Commit it before making the model call.
@@ -166,7 +178,7 @@ async def _run_session_turn(
         async def emit_event(payload: dict[str, Any]) -> str:
             return await _persist_runtime_event(
                 session_id,
-                workspace_id,
+                organization_id,
                 payload,
                 work_lease=work_lease,
             )
@@ -174,14 +186,14 @@ async def _run_session_turn(
         async def emit_preview(frame: dict[str, Any]) -> None:
             from app.runtime.vma_preview_bus import publish_vma_preview
 
-            await publish_vma_preview(session_id, frame, workspace_id=workspace_id)
+            await publish_vma_preview(session_id, frame, organization_id=organization_id)
 
         result = await _execute(
             effective_version,
             history,
             environment.config,
             runtime_context=runtime_context,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             emit_event=emit_event,
             emit_preview=emit_preview,
@@ -189,7 +201,7 @@ async def _run_session_turn(
 
         usage_fence_current = await _record_model_usage_after_result(
             session_id=session_id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             effective_version=effective_version,
             history=history,
             result=result,
@@ -199,7 +211,7 @@ async def _run_session_turn(
             return False
 
         async with session_scope() as db:
-            session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
+            session = await sessions_q.get_session(db, session_id, organization_id=organization_id, for_update=True)
             if session is None:
                 return False
             if work_lease is not None and not await _execution_lease_is_current(db, session, work_lease):
@@ -296,7 +308,7 @@ async def _run_session_turn(
             await db.commit()
             return True
     except SessionRunStopped:
-        logger.info("session_run_stopped", session_id=session_id, workspace_id=workspace_id)
+        logger.info("session_run_stopped", session_id=session_id, organization_id=organization_id)
         return True
     except Exception as exc:
         if _is_transient_runtime_error(exc):
@@ -304,7 +316,7 @@ async def _run_session_turn(
         else:
             logger.exception("session_run_failed", session_id=session_id)
         async with session_scope() as db:
-            session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
+            session = await sessions_q.get_session(db, session_id, organization_id=organization_id, for_update=True)
             if session is None:
                 return False
             if work_lease is not None and not await _execution_lease_is_current(db, session, work_lease):
@@ -344,7 +356,7 @@ async def _run_session_turn(
 async def _record_model_usage_after_result(
     *,
     session_id: str,
-    workspace_id: str,
+    organization_id: str,
     effective_version: EffectiveAgentVersion,
     history: list[Any],
     result: RuntimeResult,
@@ -365,7 +377,7 @@ async def _record_model_usage_after_result(
         session = await sessions_q.get_session(
             db,
             session_id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             for_update=True,
         )
         if session is None:
@@ -389,7 +401,7 @@ async def _record_model_usage_after_result(
         )
         decision = await governance_service().postflight_model_tokens_in_session(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             total_tokens=total_tokens,
             idempotency_key=idempotency_key,
             provider=provider,
@@ -407,7 +419,7 @@ async def _record_model_usage_after_result(
     if decision.over_limit_by:
         logger.warning(
             "model_token_quota_overrun_recorded",
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             total_tokens=total_tokens,
             over_limit_by=decision.over_limit_by,
@@ -476,7 +488,7 @@ async def _list_runtime_history(
     db,
     *,
     session_id: str,
-    workspace_id: str,
+    organization_id: str,
 ) -> list[Any]:
     """Load the complete ordered event history without a fixed first-page cap."""
     history: list[Any] = []
@@ -487,7 +499,7 @@ async def _list_runtime_history(
             session_id=session_id,
             after_seq=after_seq,
             limit=RUNTIME_HISTORY_PAGE_SIZE,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         if not page:
             return history
@@ -498,6 +510,40 @@ async def _list_runtime_history(
         after_seq = next_after_seq
         if len(page) < RUNTIME_HISTORY_PAGE_SIZE:
             return history
+
+
+def _current_turn_model_file_ids(
+    history: list[Any],
+    previous_run_state: dict[str, Any],
+) -> frozenset[str]:
+    """Return attachments used by the exact input Deep Agents will consume.
+
+    Deep Agents resumes a pending tool action before considering a new user
+    message. Otherwise it selects the last user input after
+    ``last_input_event_seq``. Mirroring that ordering here prevents historical
+    file references from causing repeated R2 downloads.
+    """
+
+    pending = previous_run_state.get("pending_actions")
+    if isinstance(pending, list) and pending:
+        # Keep this decision byte-for-byte aligned with Deep Agents: an
+        # incomplete pending action does not suppress a later user input.
+        from app.runtime.deepagents_engine import _resume_command
+
+        command, _processed_seq = _resume_command(history, pending)
+        if command is not None:
+            return frozenset()
+    last_seq = int(previous_run_state.get("last_input_event_seq") or 0)
+    candidate = None
+    for event in history:
+        if event.seq > last_seq and event.type in {"user.message", "user.define_outcome"}:
+            candidate = event
+    if candidate is None or candidate.type != "user.message":
+        return frozenset()
+    payload = candidate.payload if isinstance(candidate.payload, dict) else {}
+    return referenced_managed_file_ids(
+        payload.get("content") or payload.get("text") or ""
+    )
 
 
 def _status_details_with_execution_lease(
@@ -543,7 +589,7 @@ async def _execution_lease_is_current(db, session, work_lease: WorkExecutionLeas
 
 async def _persist_runtime_event(
     session_id: str,
-    workspace_id: str,
+    organization_id: str,
     payload: dict[str, Any],
     *,
     work_lease: WorkExecutionLease | None = None,
@@ -558,7 +604,7 @@ async def _persist_runtime_event(
         if len(preferred_id) > 64:
             raise ValueError("Runtime event id exceeds 64 characters")
     async with session_scope() as db:
-        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id, for_update=True)
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id, for_update=True)
         if session is None or session.deleted_at is not None:
             raise RuntimeError("Session disappeared while persisting a runtime event")
         if work_lease is not None and not await _execution_lease_is_current(db, session, work_lease):
@@ -747,7 +793,7 @@ async def _execute(
     environment_config: dict[str, Any] | None = None,
     *,
     runtime_context: dict[str, Any] | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     session_id: str | None = None,
     emit_event: RuntimeEventEmitter | None = None,
     emit_preview: RuntimePreviewEmitter | None = None,
@@ -759,7 +805,7 @@ async def _execute(
         history,
         environment_config,
         runtime_context=runtime_context,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
         emit_event=emit_event,
         emit_preview=emit_preview,
@@ -858,13 +904,43 @@ async def _execute_local(
     )
 
 
-async def _runtime_context_for_session(db, session, version: EffectiveAgentVersion) -> dict[str, Any]:
+async def _runtime_context_for_session(
+    db,
+    session,
+    version: EffectiveAgentVersion,
+    *,
+    session_file_content_ids: set[str] | frozenset[str] | None = None,
+    prefer_persisted_sandbox_inputs: bool = False,
+) -> dict[str, Any]:
+    """Resolve the run-scoped control-plane context.
+
+    Normal E2B turns set ``prefer_persisted_sandbox_inputs`` because the
+    sandbox binding is then the authority for the already-materialized
+    filesystem. Create-time provisioning, append fallback, and state backends
+    leave it false and retain complete materialization. In the persisted case,
+    ``session_file_content_ids`` selects only the immutable files whose bytes
+    the current model request needs.
+    """
     session_resources = await res_q.list_resources(
         db,
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
+    )
+    persisted_inputs = (
+        await _persisted_e2b_inputs_for_session(
+            db,
+            session,
+            session_resources=session_resources,
+        )
+        if prefer_persisted_sandbox_inputs
+        else None
+    )
+    selected_file_ids = (
+        frozenset(session_file_content_ids or ())
+        if persisted_inputs is not None
+        else None
     )
     memory_resources = [
         resource
@@ -882,7 +958,7 @@ async def _runtime_context_for_session(db, session, version: EffectiveAgentVersi
             resource_type="memory",
             parent_id=memory_store_id,
             limit=MAX_MEMORY_CONTEXT_ITEMS_PER_STORE,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         memory_stores.append(
             {
@@ -896,8 +972,8 @@ async def _runtime_context_for_session(db, session, version: EffectiveAgentVersi
         )
     credentials = await _vault_credentials_for_session(db, session)
     model_credential = await _model_credential_for_session(db, session, version)
-    return {
-        "workspace_id": session.workspace_id,
+    runtime_context = {
+        "organization_id": session.organization_id,
         "session_id": session.id,
         "checkpoint_thread_id": session.runtime_thread_id,
         "previous_run_state": dict(session.run_state or {}),
@@ -913,10 +989,107 @@ async def _runtime_context_for_session(db, session, version: EffectiveAgentVersi
                 if (resource.data or {}).get("type")
             }
         ),
-        "session_files": await _session_files_for_runtime(session_resources),
-        "skill_archives": await _skill_archives_for_runtime(db, session, version),
+        "session_files": await _session_files_for_runtime(
+            session_resources,
+            content_file_ids=selected_file_ids,
+            immutable_manifest=(
+                persisted_inputs["immutable_manifest"]
+                if persisted_inputs is not None
+                else None
+            ),
+        ),
+        "skill_archives": (
+            []
+            if persisted_inputs is not None
+            else await _skill_archives_for_runtime(db, session, version)
+        ),
         "subagents": await _subagents_for_runtime(db, session, version),
     }
+    if persisted_inputs is not None:
+        runtime_context["persisted_sandbox_inputs"] = {
+            key: value
+            for key, value in persisted_inputs.items()
+            if key != "immutable_manifest"
+        }
+    return runtime_context
+
+
+async def _persisted_e2b_inputs_for_session(
+    db,
+    session,
+    *,
+    session_resources: list[Any],
+) -> dict[str, Any] | None:
+    """Load the content-free input identity for an already sealed E2B Session.
+
+    Old or partially provisioned bindings fall back to full materialization so
+    this optimization cannot silently weaken resume verification.
+    """
+
+    record = await sandboxes_q.get_session_sandbox(
+        db,
+        session.id,
+        organization_id=session.organization_id,
+    )
+    if (
+        record is None
+        or record.provider != "e2b"
+        or not record.external_sandbox_id
+    ):
+        return None
+    config = dict(record.config or {})
+    from app.runtime.sandbox_lifecycle import persisted_input_descriptor_from_config
+
+    descriptor = persisted_input_descriptor_from_config(config)
+    if descriptor is None:
+        return None
+    _validate_descriptor_session_files(descriptor, session_resources)
+    return {
+        "provider": "e2b",
+        "skill_sources": list(descriptor.skill_sources),
+        "memory_sources": list(descriptor.memory_sources),
+        "mutable_roots": list(descriptor.mutable_roots),
+        "immutable_manifest": descriptor.immutable_manifest,
+    }
+
+
+def _validate_descriptor_session_files(
+    descriptor: SandboxInputDescriptor,
+    session_resources: list[Any],
+) -> None:
+    """Compare frozen file entries with DB metadata before any object read."""
+
+    from app.runtime.sandbox_lifecycle import SandboxInputMismatchError
+
+    expected = {
+        item.path: item.sha256
+        for item in descriptor.files
+        if item.source == "session_file"
+    }
+    current: dict[str, str] = {}
+    for resource in session_resources:
+        data = dict(resource.data or {})
+        if data.get("type") != "file":
+            continue
+        session_file = dict(data.get("session_file") or {})
+        path = str(data.get("mount_path") or f"/mnt/session/uploads/{resource.id}")
+        sha256 = str(session_file.get("sha256") or "")
+        stored = dict(session_file.get("storage") or {})
+        if (
+            not sha256
+            or not isinstance(stored.get("key"), str)
+            or not stored.get("key")
+            or not bool(data.get("read_only", True))
+            or path in current
+        ):
+            raise SandboxInputMismatchError(
+                "Session file metadata no longer matches the sandbox binding; create a new Session"
+            )
+        current[path] = sha256
+    if current != expected:
+        raise SandboxInputMismatchError(
+            "Session file metadata no longer matches the sandbox binding; create a new Session"
+        )
 
 
 async def _model_credential_for_session(db, session, version: EffectiveAgentVersion):
@@ -933,7 +1106,7 @@ async def _model_credential_for_session(db, session, version: EffectiveAgentVers
             model=version.model,
             runtime=version.runtime,
             vault_ids=details.get("vault_ids") or [],
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         details = status_details_with_binding(details, binding)
         await sessions_q.update_session(db, session, status_details=details)
@@ -942,7 +1115,7 @@ async def _model_credential_for_session(db, session, version: EffectiveAgentVers
     return await load_bound_model_credential(
         db,
         binding=binding,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
 
 
@@ -953,7 +1126,7 @@ async def _vault_credentials_for_session(db, session) -> list[Any]:
             db,
             resource_id=str(vault_id),
             resource_type="vault",
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if vault is None or vault.archived_at is not None:
             continue
@@ -964,7 +1137,7 @@ async def _vault_credentials_for_session(db, session) -> list[Any]:
                 parent_id=str(vault_id),
                 limit=1000,
                 include_archived=False,
-                workspace_id=session.workspace_id,
+                organization_id=session.organization_id,
             )
         )
     return credentials
@@ -1036,11 +1209,28 @@ async def _mcp_auth_context_for_session(
     return {"servers": resolved_servers, "errors": errors}
 
 
-async def _session_files_for_runtime(session_resources: list[Any]) -> list[dict[str, Any]]:
+async def _session_files_for_runtime(
+    session_resources: list[Any],
+    *,
+    content_file_ids: set[str] | frozenset[str] | None = None,
+    immutable_manifest: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Return mounted-file metadata and selectively hydrate verified bytes.
+
+    ``None`` preserves the legacy full materialization needed by create-time
+    provisioning and the state backend.  Passing a concrete set (including an
+    empty set) downloads only entries whose scoped or source ID is named.  The
+    complete metadata index is always returned so model-input validation keeps
+    detecting unmounted and ambiguous aliases without object-store reads. When
+    a sealed manifest is supplied, every database row must still match that
+    frozen Session identity before any selected object is read.
+    """
+
     from app import storage
 
     files: list[dict[str, Any]] = []
     max_bytes = int(get_settings().vma_max_file_upload_bytes)
+    selected_ids = None if content_file_ids is None else set(content_file_ids)
     for resource in session_resources:
         data = dict(resource.data or {})
         if data.get("type") != "file":
@@ -1052,40 +1242,59 @@ async def _session_files_for_runtime(session_resources: list[Any]) -> list[dict[
         declared_size = (data.get("session_file") or {}).get("size_bytes")
         if isinstance(declared_size, int) and declared_size > max_bytes:
             raise RuntimeError(f"Session file exceeds the runtime limit: {data.get('mount_path') or key}")
-        content = await storage.download_file(key)
-        if len(content) > max_bytes:
-            raise RuntimeError(f"Session file exceeds the runtime limit: {data.get('mount_path') or key}")
-        expected_size = (data.get("session_file") or {}).get("size_bytes")
-        if isinstance(expected_size, int) and len(content) != expected_size:
-            raise RuntimeError(
-                f"Session file size does not match its manifest: {data.get('mount_path') or key}"
-            )
+        file_id = str(data.get("file_id") or "")
+        source_file_id = str(data.get("source_file_id") or "")
         expected_sha256 = str((data.get("session_file") or {}).get("sha256") or "")
-        if expected_sha256 and hashlib.sha256(content).hexdigest() != expected_sha256:
-            raise RuntimeError(
-                f"Session file sha256 does not match its manifest: {data.get('mount_path') or key}"
-            )
-        files.append(
-            {
-                "file_id": str(data.get("file_id") or ""),
-                "source_file_id": str(data.get("source_file_id") or ""),
-                "path": str(data.get("mount_path") or f"/mnt/session/uploads/{resource.id}"),
-                "filename": str(
-                    (data.get("session_file") or {}).get("filename")
-                    or data.get("filename")
-                    or resource.name
-                    or resource.id
-                ),
-                "mime_type": str(
-                    (data.get("session_file") or {}).get("mime_type")
-                    or "application/octet-stream"
-                ),
-                "size_bytes": len(content),
-                "sha256": hashlib.sha256(content).hexdigest(),
-                "content": content,
-                "read_only": bool(data.get("read_only", True)),
-            }
+        path = str(data.get("mount_path") or f"/mnt/session/uploads/{resource.id}")
+        if immutable_manifest is not None:
+            sealed_sha256 = immutable_manifest.get(path)
+            if not isinstance(sealed_sha256, str) or not sealed_sha256:
+                raise RuntimeError(f"Session file is absent from its sealed manifest: {path}")
+            if not expected_sha256 or expected_sha256 != sealed_sha256:
+                raise RuntimeError(f"Session file sha256 does not match its sealed manifest: {path}")
+        mounted: dict[str, Any] = {
+            "file_id": file_id,
+            "source_file_id": source_file_id,
+            "path": path,
+            "filename": str(
+                (data.get("session_file") or {}).get("filename")
+                or data.get("filename")
+                or resource.name
+                or resource.id
+            ),
+            "mime_type": str(
+                (data.get("session_file") or {}).get("mime_type")
+                or "application/octet-stream"
+            ),
+            "size_bytes": declared_size,
+            "sha256": expected_sha256,
+            "storage_key": key,
+            "read_only": bool(data.get("read_only", True)),
+        }
+        should_hydrate = selected_ids is None or bool(
+            selected_ids.intersection({file_id, source_file_id} - {""})
         )
+        if should_hydrate:
+            content = await storage.download_file(key)
+            if len(content) > max_bytes:
+                raise RuntimeError(f"Session file exceeds the runtime limit: {data.get('mount_path') or key}")
+            if isinstance(declared_size, int) and len(content) != declared_size:
+                raise RuntimeError(
+                    f"Session file size does not match its manifest: {data.get('mount_path') or key}"
+                )
+            actual_sha256 = hashlib.sha256(content).hexdigest()
+            if expected_sha256 and actual_sha256 != expected_sha256:
+                raise RuntimeError(
+                    f"Session file sha256 does not match its manifest: {data.get('mount_path') or key}"
+                )
+            mounted.update(
+                {
+                    "size_bytes": len(content),
+                    "sha256": actual_sha256,
+                    "content": content,
+                }
+            )
+        files.append(mounted)
     return files
 
 
@@ -1103,7 +1312,7 @@ async def _skill_archives_for_runtime(db, session, version: EffectiveAgentVersio
             db,
             resource_id=skill_id,
             resource_type="skill",
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if skill is None:
             continue
@@ -1119,7 +1328,7 @@ async def _skill_archives_for_runtime(db, session, version: EffectiveAgentVersio
             resource_type="skill_version",
             parent_id=skill_id,
             version=version_number,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if skill_version is None or not skill_version.storage_key:
             continue
@@ -1152,7 +1361,7 @@ async def _subagents_for_runtime(db, session, version: EffectiveAgentVersion) ->
             db,
             agent_id=agent_id,
             version=agent_version,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if referenced is None:
             continue

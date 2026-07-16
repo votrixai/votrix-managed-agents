@@ -119,7 +119,7 @@ async def test_worker_records_fenced_model_usage_once(client, monkeypatch):
             (
                 await db.execute(
                     select(UsageLedgerEntry).where(
-                        UsageLedgerEntry.workspace_id == "wrkspc_default",
+                        UsageLedgerEntry.organization_id == "org_test",
                         UsageLedgerEntry.metric == "model_tokens",
                     )
                 )

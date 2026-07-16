@@ -8,9 +8,11 @@ from app.db.models import Agent, AgentVersion, Environment, ManagedSession
 from app.ids import new_id
 from app.runtime.model_credentials import (
     MODEL_CREDENTIAL_BINDING_KEY,
+    ModelCredentialRequiredError,
     resolve_model_credential_binding,
 )
-from app.workspace import workspace_id_or_default
+from app.runtime.providers import runtime_provider_id
+from app.organization import resolve_organization_id
 
 
 async def create_session(
@@ -24,9 +26,11 @@ async def create_session(
     resources: list[dict[str, Any]] | None = None,
     vault_ids: list[str] | None = None,
     agent_config: dict[str, Any] | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedSession:
-    scoped_workspace_id = workspace_id_or_default(workspace_id or agent.workspace_id)
+    scoped_organization_id = resolve_organization_id(
+        agent.organization_id if organization_id is None else organization_id
+    )
     status_details: dict[str, Any] = {
         "resources": resources or [],
         "vault_ids": vault_ids or [],
@@ -37,7 +41,7 @@ async def create_session(
         select(AgentVersion).where(
             AgentVersion.agent_id == agent.id,
             AgentVersion.version == agent_version,
-            AgentVersion.workspace_id == scoped_workspace_id,
+            AgentVersion.organization_id == scoped_organization_id,
         )
     )
     version_record = version_result.scalar_one_or_none()
@@ -48,17 +52,23 @@ async def create_session(
         if isinstance(agent_config, dict) and isinstance(agent_config.get("model"), dict)
         else version_record.model
     )
+    await _require_single_multiagent_provider(
+        db,
+        version_record=version_record,
+        effective_model=effective_model,
+        organization_id=scoped_organization_id,
+    )
     status_details[MODEL_CREDENTIAL_BINDING_KEY] = await resolve_model_credential_binding(
         db,
         model=effective_model,
         runtime=version_record.runtime,
         vault_ids=vault_ids,
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
     )
     session = ManagedSession(
         id=new_id("sess"),
         runtime_thread_id=new_id("thread"),
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
         agent_id=agent.id,
         agent_version=agent_version,
         environment_id=environment.id,
@@ -73,18 +83,54 @@ async def create_session(
     return session
 
 
+async def _require_single_multiagent_provider(
+    db: AsyncSession,
+    *,
+    version_record: AgentVersion,
+    effective_model: dict[str, Any],
+    organization_id: str,
+) -> None:
+    """Keep the MVP's one immutable model Credential valid for every subagent."""
+
+    roster = version_record.multiagent if isinstance(version_record.multiagent, dict) else {}
+    primary_provider = runtime_provider_id(effective_model, runtime=version_record.runtime)
+    for entry in roster.get("agents") or []:
+        if not isinstance(entry, dict):
+            continue
+        agent_id = str(entry.get("id") or "")
+        try:
+            agent_version = int(entry.get("version"))
+        except (TypeError, ValueError):
+            continue
+        result = await db.execute(
+            select(AgentVersion).where(
+                AgentVersion.agent_id == agent_id,
+                AgentVersion.version == agent_version,
+                AgentVersion.organization_id == organization_id,
+            )
+        )
+        referenced = result.scalar_one_or_none()
+        if referenced is None:
+            continue
+        if runtime_provider_id(referenced.model, runtime=referenced.runtime) != primary_provider:
+            raise ModelCredentialRequiredError(
+                "Multiagent Sessions currently require the coordinator and all subagents "
+                "to use the same model provider"
+            )
+
+
 async def get_session(
     db: AsyncSession,
     session_id: str,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     for_update: bool = False,
 ) -> ManagedSession | None:
     stmt = select(ManagedSession).where(ManagedSession.id == session_id)
-    if workspace_id is not None:
-        stmt = stmt.where(ManagedSession.workspace_id == workspace_id)
+    if organization_id is not None:
+        stmt = stmt.where(ManagedSession.organization_id == organization_id)
     else:
-        stmt = stmt.where(ManagedSession.workspace_id == workspace_id_or_default())
+        stmt = stmt.where(ManagedSession.organization_id == resolve_organization_id())
     if for_update:
         stmt = stmt.with_for_update()
     result = await db.execute(stmt)
@@ -96,13 +142,13 @@ async def list_sessions(
     *,
     limit: int = 50,
     include_archived: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[ManagedSession]:
     stmt = (
         select(ManagedSession)
         .where(
             ManagedSession.deleted_at.is_(None),
-            ManagedSession.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedSession.organization_id == resolve_organization_id(organization_id),
         )
         .order_by(ManagedSession.created_at.desc())
         .limit(limit)

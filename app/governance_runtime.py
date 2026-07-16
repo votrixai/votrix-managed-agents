@@ -11,7 +11,7 @@ def governance_service() -> GovernanceService:
             requests_per_minute=settings.vma_requests_per_minute,
             max_active_work=settings.vma_max_active_work,
             daily_model_tokens=settings.vma_daily_model_tokens,
-            storage_bytes=settings.vma_workspace_storage_bytes,
+            storage_bytes=settings.vma_organization_storage_bytes,
         )
     )
 

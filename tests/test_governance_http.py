@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from tests.conftest import TEST_HEADERS
 
 
-async def test_workspace_request_quota_returns_429_and_retry_metadata(
+async def test_organization_request_quota_returns_429_and_retry_metadata(
     client,
     monkeypatch,
 ) -> None:

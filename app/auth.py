@@ -1,16 +1,18 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Protocol, runtime_checkable
 
 from fastapi import Header, HTTPException, Request
 
 from app.config import get_settings
 from app.db.queries.api_keys import API_KEYS_MANAGE_SCOPE, API_SCOPE, WORKER_SCOPE
-from app.workspace import (
-    CurrentWorkspace,
-    current_workspace,
-    reset_current_workspace,
-    set_current_workspace,
+from app.organization import (
+    CurrentOrganization,
+    MissingOrganizationContextError,
+    current_organization,
+    reset_current_organization,
+    resolve_organization_id,
+    set_current_organization,
 )
 
 CMA_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
@@ -36,14 +38,14 @@ class RequestCredentials:
 
 @runtime_checkable
 class AuthProvider(Protocol):
-    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentOrganization:
         ...
 
 
 class DatabaseApiKeyAuthProvider:
-    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentOrganization:
         from app.db.engine import session_scope
-        from app.db.models import Workspace
+        from app.db.models import Organization
         from app.db.queries import api_keys as api_keys_q
 
         token = credentials.x_api_key or _bearer_token(credentials.authorization)
@@ -54,14 +56,18 @@ class DatabaseApiKeyAuthProvider:
             api_key = await api_keys_q.get_api_key_by_token(db, token)
             if api_key is None or api_keys_q.api_key_is_expired(api_key):
                 raise HTTPException(status_code=401, detail="Invalid API key")
-            workspace = await db.get(Workspace, api_key.workspace_id)
-            if workspace is not None and workspace.archived_at is not None:
+            try:
+                organization_id = resolve_organization_id(api_key.organization_id)
+            except (MissingOrganizationContextError, ValueError) as exc:
+                raise HTTPException(status_code=401, detail="Invalid API key") from exc
+            organization = await db.get(Organization, organization_id)
+            if organization is None or organization.archived_at is not None:
                 raise HTTPException(status_code=401, detail="Invalid API key")
             await api_keys_q.touch_api_key(db, api_key)
             await db.commit()
-            return CurrentWorkspace(
-                id=api_key.workspace_id,
-                slug=workspace.slug if workspace is not None else api_key.workspace_id,
+            return CurrentOrganization(
+                id=organization_id,
+                slug=organization.slug,
                 source="database_api_key",
                 api_key_id=api_key.id,
                 scopes=frozenset(api_key.scopes or ()),
@@ -126,17 +132,18 @@ async def require_api_access(
         "auth_provider",
         DatabaseApiKeyAuthProvider(),
     )
-    workspace = await provider.authenticate(
+    organization = await provider.authenticate(
         request,
         RequestCredentials(x_api_key=x_api_key, authorization=authorization),
     )
+    organization = await _require_active_organization(organization)
     # Keep the authenticated actor on the request even when a later scope or
     # quota check rejects it. The HTTP audit middleware can then attribute the
     # denial without relying on a context variable that is only installed for
     # successful dependencies.
-    request.state.current_workspace = workspace
+    request.state.current_organization = organization
     required_scope = required_scope_for_request(request)
-    if required_scope not in workspace.scopes:
+    if required_scope not in organization.scopes:
         raise HTTPException(
             status_code=403,
             detail=f"API key is missing required scope: {required_scope}",
@@ -145,9 +152,9 @@ async def require_api_access(
         from app.governance_runtime import governance_service, rate_limit_headers
 
         decision = await governance_service().authorize_request(
-            workspace.id,
-            actor_type=workspace.source,
-            actor_id=workspace.api_key_id,
+            organization.id,
+            actor_type=organization.source,
+            actor_id=organization.api_key_id,
             request_id=getattr(request.state, "request_id", None),
             method=request.method,
             path=request.url.path,
@@ -161,23 +168,41 @@ async def require_api_access(
                     "error": {
                         "type": "rate_limit_error",
                         "code": "request_quota_exceeded",
-                        "message": "Workspace request rate limit exceeded",
+                        "message": "Organization request rate limit exceeded",
                     },
                 },
                 headers=rate_limit_headers(decision),
             )
-    token = set_current_workspace(workspace)
+    token = set_current_organization(organization)
     try:
-        yield workspace
+        yield organization
     finally:
-        reset_current_workspace(token)
+        reset_current_organization(token)
 
 
-async def get_current_workspace(request: Request) -> CurrentWorkspace:
-    workspace = getattr(request.state, "current_workspace", None)
-    if workspace is not None:
-        return workspace
-    return current_workspace()
+async def get_current_organization(request: Request) -> CurrentOrganization:
+    organization = getattr(request.state, "current_organization", None)
+    if organization is not None:
+        return organization
+    return current_organization()
+
+
+async def _require_active_organization(
+    organization: CurrentOrganization,
+) -> CurrentOrganization:
+    """Bind every authentication provider to a real, active Organization row."""
+    from app.db.engine import session_scope
+    from app.db.models import Organization
+
+    try:
+        organization_id = resolve_organization_id(organization.id)
+    except (MissingOrganizationContextError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid API key") from exc
+    async with session_scope() as db:
+        stored = await db.get(Organization, organization_id)
+    if stored is None or stored.archived_at is not None:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return replace(organization, id=organization_id, slug=stored.slug)
 
 
 def _split_header_values(value: str | None) -> set[str]:

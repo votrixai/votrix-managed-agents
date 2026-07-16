@@ -43,9 +43,9 @@ cp .env.example .env
 uv sync
 uv run alembic upgrade head
 uv run python -m scripts.bootstrap_api_key \
-  --workspace-id wrkspc_local \
-  --workspace-slug local \
-  --workspace-name "Local development"
+  --organization-id org_test \
+  --organization-slug test \
+  --organization-name "Local test"
 ./run.sh
 ```
 
@@ -57,9 +57,9 @@ curl http://127.0.0.1:8080/health/db
 ```
 
 Local, development, staging, and production all fail closed through
-database-backed workspace keys with scopes, expiration, independent
+database-backed Organization keys with scopes, expiration, independent
 rotation/revocation, and one-time plaintext secrets. The bootstrap command
-creates the first workspace and administrator key; there is no anonymous or
+creates the first Organization and administrator key; there is no anonymous or
 process-global authentication path. Supply its returned secret to local and
 development clients as `VOTRIX_API_KEY`; the service still resolves it from the
 database. Hosted environments also require durable Postgres and private object
@@ -79,7 +79,7 @@ curl http://127.0.0.1:8080/v1/capabilities \
 
 An `Authorization: Bearer $VOTRIX_API_KEY` header is equivalent.
 
-The public-beta platform enforces per-workspace request, active-work, daily
+The public-beta platform enforces per-Organization request, active-work, daily
 model-token, and stored-byte limits. It records append-only raw audit and usage
 facts and exposes request IDs and stable error codes. The release is BYOK/free:
 usage supports quota enforcement and cost analysis, not pricing, balances,
@@ -111,6 +111,6 @@ Deep Agents + LangGraph checkpoints
 model provider   remote MCP       sandbox backend
 ```
 
-The control plane owns public IDs, workspace isolation, immutable revisions,
+The control plane owns public IDs, Organization isolation, immutable revisions,
 session state, durable events, and compatibility translation. The sandbox—not
 the model or middleware—is the security boundary for tenant code.

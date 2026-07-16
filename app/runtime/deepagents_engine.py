@@ -21,6 +21,7 @@ from langgraph.types import Command
 
 from app.config import get_settings
 from app.ids import new_id
+from app.organization import resolve_organization_id
 from app.runtime.checkpoints import checkpoint_saver
 from app.runtime.contracts import (
     EffectiveAgentVersion,
@@ -55,7 +56,7 @@ class DeepAgentsRuntimeError(RuntimeError):
 
 @dataclass(frozen=True)
 class TenantRunContext:
-    workspace_id: str
+    organization_id: str
     session_id: str
     agent_id: str
     agent_version_id: str
@@ -77,17 +78,22 @@ async def execute_deep_agent(
     environment_config: dict[str, Any] | None,
     *,
     runtime_context: dict[str, Any] | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     session_id: str | None = None,
     emit_event: RuntimeEventEmitter | None = None,
     emit_preview: RuntimePreviewEmitter | None = None,
 ) -> RuntimeResult:
     """Execute one durable session turn with a run-scoped Deep Agents graph."""
     runtime_context = dict(runtime_context or {})
-    workspace_id = workspace_id or str(runtime_context.get("workspace_id") or "")
+    context_organization_id = runtime_context.get("organization_id")
+    organization_id = resolve_organization_id(
+        str(context_organization_id)
+        if organization_id is None and context_organization_id is not None
+        else organization_id
+    )
     session_id = session_id or str(runtime_context.get("session_id") or "")
     thread_id = str(runtime_context.get("checkpoint_thread_id") or "")
-    if not workspace_id or not session_id or not thread_id:
+    if not session_id or not thread_id:
         raise DeepAgentsRuntimeError("Deep Agents execution requires tenant, session, and checkpoint thread ids")
 
     secrets = runtime_context.get("provider_secrets")
@@ -130,11 +136,15 @@ async def execute_deep_agent(
     tool_events: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     sandbox_outputs: list[Any] = []
-    input_bundle = sandbox_input_bundle(runtime_context)
+    persisted_inputs = _persisted_sandbox_inputs(runtime_context)
+    # E2B Sessions were fully materialized and sealed at Session creation.
+    # Rebuilding the bundle here would re-download and unzip immutable inputs
+    # only to rediscover the identity already stored in the sandbox binding.
+    input_bundle = None if persisted_inputs is not None else sandbox_input_bundle(runtime_context)
     async with AsyncExitStack() as stack:
         backend_handle = await stack.enter_async_context(
             open_backend(
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 session_id=session_id,
                 environment_config=environment_config,
                 input_bundle=input_bundle,
@@ -170,7 +180,16 @@ async def execute_deep_agent(
         for name in custom_names:
             interrupt_on[name] = {"allowed_decisions": ["respond"]}
 
-        virtual_files, state_files, skill_sources, memory_sources, read_only_paths = _virtual_files(runtime_context)
+        if backend_handle.plan.backend == "e2b" and persisted_inputs is not None:
+            virtual_files: list[tuple[str, bytes]] = []
+            state_files: dict[str, dict[str, Any]] = {}
+            skill_sources = list(persisted_inputs["skill_sources"])
+            memory_sources = list(persisted_inputs["memory_sources"])
+            read_only_paths: list[str] = []
+        else:
+            virtual_files, state_files, skill_sources, memory_sources, read_only_paths = _virtual_files(
+                runtime_context
+            )
         if backend_handle.plan.backend not in {"langgraph_state", "e2b"} and virtual_files:
             await _upload_virtual_files(backend_handle.backend, virtual_files, warnings)
             state_files = {}
@@ -211,7 +230,7 @@ async def execute_deep_agent(
             "recursion_limit": max(10, int(get_settings().vma_max_graph_steps)),
         }
         context = TenantRunContext(
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             agent_id=version.agent_id,
             agent_version_id=version.id,
@@ -666,8 +685,10 @@ def _materialize_subagents(runtime_context: dict[str, Any], secrets: dict[str, s
             if not provider.capabilities.tool_calls:
                 continue
             model = build_chat_model(provider)
-        except Exception:
-            continue
+        except Exception as exc:
+            raise DeepAgentsRuntimeError(
+                f"Subagent {name} model could not be configured from the Session Vault credential"
+            ) from exc
         custom_tools = [
             custom_tool(tool)
             for tool in spec.get("tools") or []
@@ -708,6 +729,22 @@ def _virtual_files(
         list(bundle.memory_sources),
         read_only,
     )
+
+
+def _persisted_sandbox_inputs(runtime_context: dict[str, Any]) -> dict[str, tuple[str, ...]] | None:
+    """Return validated path metadata for an already sealed E2B filesystem."""
+
+    raw = runtime_context.get("persisted_sandbox_inputs")
+    if not isinstance(raw, dict) or raw.get("provider") != "e2b":
+        return None
+
+    normalized: dict[str, tuple[str, ...]] = {}
+    for name in ("skill_sources", "memory_sources", "mutable_roots"):
+        value = raw.get(name)
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise DeepAgentsRuntimeError(f"Persisted E2B {name} metadata is invalid")
+        normalized[name] = tuple(value)
+    return normalized
 
 
 async def _upload_virtual_files(backend, files: list[tuple[str, bytes]], warnings: list[dict[str, Any]]) -> None:

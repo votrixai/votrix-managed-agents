@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import SessionEventIdempotency
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 
 async def get_submission(
@@ -11,11 +11,11 @@ async def get_submission(
     *,
     session_id: str,
     key_hash: str,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> SessionEventIdempotency | None:
     result = await db.execute(
         select(SessionEventIdempotency).where(
-            SessionEventIdempotency.workspace_id == workspace_id_or_default(workspace_id),
+            SessionEventIdempotency.organization_id == resolve_organization_id(organization_id),
             SessionEventIdempotency.session_id == session_id,
             SessionEventIdempotency.key_hash == key_hash,
         )
@@ -32,11 +32,11 @@ async def create_submission(
     work_id: str | None,
     response_status: int,
     response_body: dict,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> SessionEventIdempotency:
     submission = SessionEventIdempotency(
         id=new_id("idem"),
-        workspace_id=workspace_id_or_default(workspace_id),
+        organization_id=resolve_organization_id(organization_id),
         session_id=session_id,
         key_hash=key_hash,
         request_sha256=request_sha256,

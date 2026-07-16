@@ -89,7 +89,7 @@ async def persist_discovered_outputs(
     locked_session = await sessions_q.get_session(
         db,
         session.id,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
         for_update=True,
     )
     if locked_session is None or locked_session.deleted_at is not None:
@@ -97,7 +97,7 @@ async def persist_discovered_outputs(
 
     existing = await _existing_output_identities(
         db,
-        workspace_id=locked_session.workspace_id,
+        organization_id=locked_session.organization_id,
         session_id=locked_session.id,
         sha256_values={item.sha256 for item in validated},
     )
@@ -114,7 +114,7 @@ async def persist_discovered_outputs(
             namespace=f"sessions_{locked_session.id}",
             category="outputs",
             filename=item.filename,
-            workspace_id=locked_session.workspace_id,
+            organization_id=locked_session.organization_id,
         )
         resource = await res_q.create_resource(
             db,
@@ -128,7 +128,7 @@ async def persist_discovered_outputs(
             storage_backend=stored.backend,
             storage_key=stored.key,
             storage_url=None,
-            workspace_id=locked_session.workspace_id,
+            organization_id=locked_session.organization_id,
             data={
                 "filename": item.filename,
                 "mime_type": stored.content_type,
@@ -247,7 +247,7 @@ def _validated_mime_type(value: str | None) -> str | None:
 async def _existing_output_identities(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     session_id: str,
     sha256_values: set[str],
 ) -> set[tuple[str, str]]:
@@ -255,7 +255,7 @@ async def _existing_output_identities(
         return set()
     result = await db.execute(
         select(ManagedResource).where(
-            ManagedResource.workspace_id == workspace_id,
+            ManagedResource.organization_id == organization_id,
             ManagedResource.resource_type == "file",
             ManagedResource.parent_id == session_id,
             ManagedResource.sha256.in_(sha256_values),

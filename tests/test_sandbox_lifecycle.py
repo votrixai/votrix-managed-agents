@@ -12,7 +12,13 @@ from app.db.queries import agents as agents_q
 from app.db.queries import environments as environments_q
 from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
-from app.runtime.sandbox_inputs import SandboxInputBundle, SandboxInputError, SandboxInputFile, sandbox_input_bundle
+from app.runtime.sandbox_inputs import (
+    SandboxInputBundle,
+    SandboxInputDescriptor,
+    SandboxInputError,
+    SandboxInputFile,
+    sandbox_input_bundle,
+)
 from app.runtime.sandbox import open_backend
 from app.runtime.sandbox_lifecycle import (
     SandboxInputMismatchError,
@@ -20,6 +26,7 @@ from app.runtime.sandbox_lifecycle import (
     delete_session_sandbox,
     open_e2b_session_backend,
     pause_session_sandbox,
+    persisted_input_descriptor_from_config,
     provision_session_sandbox,
     sandbox_policy_from_environment,
 )
@@ -166,26 +173,111 @@ class FakeLifecycleProvider:
         self.delete_count += 1
 
 
-async def _managed_session(*, workspace_id: str):
+def test_persisted_input_descriptor_preserves_existing_digest_and_manifest():
+    bundle = SandboxInputBundle(
+        files=(
+            SandboxInputFile(
+                path="/mnt/memory/customer/memory.md",
+                content=b"mutable seed",
+                read_only=False,
+                source="memory_seed",
+            ),
+            SandboxInputFile(
+                path="/mnt/session/uploads/input.txt",
+                content=b"immutable input",
+                read_only=True,
+                source="session_file",
+            ),
+        ),
+        skill_sources=("/skills/custom/research/v1/",),
+        memory_sources=("/mnt/memory/customer/AGENTS.md",),
+        mutable_roots=("/mnt/memory/customer",),
+    )
+
+    restored = SandboxInputDescriptor.from_dict(bundle.descriptor.to_dict())
+
+    assert restored == bundle.descriptor
+    assert restored.input_digest == bundle.input_digest
+    assert restored.input_digest == (
+        "sha256:083f9ee7c991dd6ad6a7307445a93997c3fbab79f0da245a6f13065c6339f006"
+    )
+    assert restored.immutable_manifest == bundle.immutable_manifest
+    assert restored.total_size_bytes == len(b"immutable input") + len(b"mutable seed")
+
+
+def test_modern_binding_derives_sources_from_validated_descriptor(monkeypatch):
+    _configure(monkeypatch)
+    descriptor = SandboxInputBundle(
+        files=(
+            SandboxInputFile(
+                path="/mnt/memory/customer/AGENTS.md",
+                content=b"memory index",
+                read_only=False,
+                source="memory_seed",
+            ),
+            SandboxInputFile(
+                path="/mnt/session/uploads/input.txt",
+                content=b"input",
+                read_only=True,
+                source="session_file",
+            ),
+            SandboxInputFile(
+                path="/skills/custom/research/v1/SKILL.md",
+                content=b"skill",
+                read_only=True,
+                source="skill",
+            ),
+        ),
+        skill_sources=("/skills/custom/research/v1/",),
+        memory_sources=("/mnt/memory/customer/AGENTS.md",),
+        mutable_roots=("/mnt/memory/customer",),
+    ).descriptor
+    policy = sandbox_policy_from_environment(
+        {"type": "cloud", "networking": {"type": "none"}}
+    )
+    config = {
+        "append_seal_schema": "vma-immutable-inputs-v2",
+        "sealed": True,
+        "input_descriptor": descriptor.to_dict(),
+        "input_total_size_bytes": descriptor.total_size_bytes,
+        "input_digest": descriptor.input_digest,
+        "immutable_manifest": descriptor.immutable_manifest,
+        "skill_sources": ["/skills/custom/research/v1/"],
+        "memory_sources": ["/mnt/memory/customer/AGENTS.md"],
+        "mutable_roots": ["/workspace", "/mnt/session/outputs", "/mnt/memory/customer"],
+    }
+
+    restored = persisted_input_descriptor_from_config(config, policy=policy)
+    assert restored == descriptor
+
+    forged_sources = {**config, "skill_sources": ["/skills/custom/forged/v1/"]}
+    with pytest.raises(SandboxInputMismatchError, match="Skill sources"):
+        persisted_input_descriptor_from_config(forged_sources, policy=policy)
+    forged_roots = {**config, "mutable_roots": ["/workspace", "/mnt/session/outputs"]}
+    with pytest.raises(SandboxInputMismatchError, match="mutable roots"):
+        persisted_input_descriptor_from_config(forged_roots, policy=policy)
+
+
+async def _managed_session(*, organization_id: str):
     async with session_scope() as db:
         agent, version = await agents_q.create_agent(
             db,
             name="E2B lifecycle",
             model={"id": "claude-sonnet-4-6"},
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         environment = await environments_q.create_environment(
             db,
             name="e2b-lifecycle",
             config={"type": "cloud", "networking": {"type": "none"}},
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         session = await sessions_q.create_session(
             db,
             agent=agent,
             agent_version=version.version,
             environment=environment,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         await db.commit()
         return session.id, environment.config, version
@@ -260,11 +352,11 @@ async def test_one_session_provisions_once_and_turns_only_reconnect(monkeypatch)
     _configure(monkeypatch)
     provider = FakeLifecycleProvider()
     monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
-    workspace_id = "wrkspc_e2b_single"
-    session_id, config, version = await _managed_session(workspace_id=workspace_id)
+    organization_id = "org_e2b_single"
+    session_id, config, version = await _managed_session(organization_id=organization_id)
 
     async with session_scope() as db:
-        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
         assert session is not None
         assert await provision_session_sandbox(
             db,
@@ -286,14 +378,13 @@ async def test_one_session_provisions_once_and_turns_only_reconnect(monkeypatch)
         mutable_roots=(),
     )
     async with open_e2b_session_backend(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
         environment_config=config,
-        input_bundle=empty_bundle,
     ) as first:
         assert first.reference.external_id == provider.external_id
     async with open_e2b_session_backend(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
         environment_config=config,
         input_bundle=empty_bundle,
@@ -309,11 +400,111 @@ async def test_one_session_provisions_once_and_turns_only_reconnect(monkeypatch)
         record = await sandboxes_q.get_session_sandbox(
             db,
             session_id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         assert record is not None
         assert record.external_sandbox_id == provider.external_id
         assert record.state == "paused"
+
+
+async def test_legacy_binding_requires_matching_full_bundle_before_resume(monkeypatch):
+    import app.runtime.sandbox_lifecycle as lifecycle
+
+    _configure(monkeypatch)
+    provider = FakeLifecycleProvider()
+    monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
+    organization_id = "org_e2b_legacy_resume"
+    session_id, config, version = await _managed_session(organization_id=organization_id)
+
+    async with session_scope() as db:
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
+        assert session is not None
+        await provision_session_sandbox(
+            db,
+            session=session,
+            agent_version=version,
+            environment_config=config,
+        )
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session_id,
+            organization_id=organization_id,
+            for_update=True,
+        )
+        assert record is not None
+        legacy = dict(record.config or {})
+        legacy.pop("append_seal_schema", None)
+        record.config = legacy
+        await db.commit()
+
+    empty_bundle = SandboxInputBundle(
+        files=(),
+        skill_sources=(),
+        memory_sources=(),
+        mutable_roots=(),
+    )
+    changed_bundle = SandboxInputBundle(
+        files=(
+            SandboxInputFile(
+                path="/mnt/session/uploads/changed.txt",
+                content=b"changed",
+                read_only=True,
+                source="session_file",
+            ),
+        ),
+        skill_sources=(),
+        memory_sources=(),
+        mutable_roots=(),
+    )
+
+    with pytest.raises(SandboxInputMismatchError, match="fully verified"):
+        async with open_e2b_session_backend(
+            organization_id=organization_id,
+            session_id=session_id,
+            environment_config=config,
+        ):
+            pass
+    with pytest.raises(SandboxInputMismatchError, match="create a new Session"):
+        async with open_e2b_session_backend(
+            organization_id=organization_id,
+            session_id=session_id,
+            environment_config=config,
+            input_bundle=changed_bundle,
+        ):
+            pass
+    assert provider.connect_count == 0
+
+    async with open_e2b_session_backend(
+        organization_id=organization_id,
+        session_id=session_id,
+        environment_config=config,
+        input_bundle=empty_bundle,
+    ):
+        pass
+    assert provider.connect_count == 1
+    assert provider.verify_count == 1
+
+    async with session_scope() as db:
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session_id,
+            organization_id=organization_id,
+            for_update=True,
+        )
+        assert record is not None
+        unsealed = dict(record.config or {})
+        unsealed["sealed"] = False
+        record.config = unsealed
+        await db.commit()
+    with pytest.raises(SandboxInputMismatchError, match="seal metadata"):
+        async with open_e2b_session_backend(
+            organization_id=organization_id,
+            session_id=session_id,
+            environment_config=config,
+            input_bundle=empty_bundle,
+        ):
+            pass
+    assert provider.connect_count == 1
 
 
 async def test_e2b_lifecycle_accumulates_local_cost_without_double_counting(monkeypatch):
@@ -350,11 +541,11 @@ async def test_e2b_lifecycle_accumulates_local_cost_without_double_counting(monk
     provider = TimedLifecycleProvider()
     monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
     monkeypatch.setattr(lifecycle, "_now", lambda: clock.current)
-    workspace_id = "wrkspc_e2b_cost"
-    session_id, config, version = await _managed_session(workspace_id=workspace_id)
+    organization_id = "org_e2b_cost"
+    session_id, config, version = await _managed_session(organization_id=organization_id)
 
     async with session_scope() as db:
-        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
         assert session is not None
         await provision_session_sandbox(
             db,
@@ -371,7 +562,7 @@ async def test_e2b_lifecycle_accumulates_local_cost_without_double_counting(monk
         mutable_roots=(),
     )
     async with open_e2b_session_backend(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
         environment_config=config,
         input_bundle=empty_bundle,
@@ -379,15 +570,15 @@ async def test_e2b_lifecycle_accumulates_local_cost_without_double_counting(monk
         clock.advance(2)
 
     assert await pause_session_sandbox(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
     )
     assert await delete_session_sandbox(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
     )
     assert not await delete_session_sandbox(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
     )
 
@@ -395,7 +586,7 @@ async def test_e2b_lifecycle_accumulates_local_cost_without_double_counting(monk
         record = await sandboxes_q.get_session_sandbox(
             db,
             session_id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         assert record is not None
         summary = session_sandbox_cost_summary(record, at=clock.current)
@@ -415,11 +606,11 @@ async def test_changed_immutable_inputs_require_a_new_session(monkeypatch):
     _configure(monkeypatch)
     provider = FakeLifecycleProvider()
     monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
-    workspace_id = "wrkspc_e2b_mismatch"
-    session_id, config, version = await _managed_session(workspace_id=workspace_id)
+    organization_id = "org_e2b_mismatch"
+    session_id, config, version = await _managed_session(organization_id=organization_id)
 
     async with session_scope() as db:
-        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
         assert session is not None
         await provision_session_sandbox(
             db,
@@ -444,7 +635,7 @@ async def test_changed_immutable_inputs_require_a_new_session(monkeypatch):
     )
     with pytest.raises(SandboxInputMismatchError, match="create a new Session"):
         async with open_e2b_session_backend(
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             environment_config=config,
             input_bundle=changed,
@@ -460,11 +651,11 @@ async def test_persisted_e2b_binding_cannot_silently_downgrade(monkeypatch):
     _configure(monkeypatch)
     provider = FakeLifecycleProvider()
     monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
-    workspace_id = "wrkspc_e2b_no_downgrade"
-    session_id, config, version = await _managed_session(workspace_id=workspace_id)
+    organization_id = "org_e2b_no_downgrade"
+    session_id, config, version = await _managed_session(organization_id=organization_id)
 
     async with session_scope() as db:
-        session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+        session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
         assert session is not None
         await provision_session_sandbox(
             db,
@@ -484,7 +675,7 @@ async def test_persisted_e2b_binding_cannot_silently_downgrade(monkeypatch):
     )
     changed_environment = {"type": "self_hosted", "networking": {"type": "none"}}
     async with open_backend(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         session_id=session_id,
         environment_config=changed_environment,
         input_bundle=empty_bundle,
@@ -591,7 +782,7 @@ async def test_session_api_appends_files_to_the_same_sandbox_and_keeps_them_seal
         record = await sandboxes_q.get_session_sandbox(
             db,
             session["id"],
-            workspace_id="wrkspc_default",
+            organization_id="org_test",
         )
         assert record is not None
         assert record.external_sandbox_id == provider.external_id

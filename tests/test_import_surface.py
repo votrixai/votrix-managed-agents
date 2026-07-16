@@ -1,3 +1,4 @@
+from contextvars import Context
 from pathlib import Path
 
 import pytest
@@ -5,12 +6,30 @@ from fastapi import FastAPI
 
 
 def test_votrix_managed_agents_exports_app_factory():
-    from votrix_managed_agents import CurrentWorkspace, create_app
+    from votrix_managed_agents import CurrentOrganization, create_app
 
     app = create_app(auth_provider=_HostedAuthProvider())
 
     assert isinstance(app, FastAPI)
-    assert CurrentWorkspace(id="ws_test").id == "ws_test"
+    assert CurrentOrganization(id="org_test").id == "org_test"
+
+
+def test_organization_context_has_no_implicit_fallback():
+    from app.organization import MissingOrganizationContextError, current_organization
+
+    with pytest.raises(MissingOrganizationContextError, match="Organization context"):
+        Context().run(current_organization)
+
+
+@pytest.mark.parametrize(
+    "organization_id",
+    ["tenant", "org_", "org_bad/path", "org_" + "default"],
+)
+def test_current_organization_rejects_invalid_or_reserved_ids(organization_id: str):
+    from app.organization import CurrentOrganization
+
+    with pytest.raises(ValueError, match="organization_id"):
+        CurrentOrganization(id=organization_id)
 
 
 def test_app_factory_loads_local_dotenv(monkeypatch):
@@ -63,9 +82,9 @@ def test_core_does_not_import_anthropic_sdk():
 
 class _HostedAuthProvider:
     async def authenticate(self, request, credentials):
-        from votrix_managed_agents import CurrentWorkspace
+        from votrix_managed_agents import CurrentOrganization
 
-        return CurrentWorkspace(id="ws_test", slug="test", source="test")
+        return CurrentOrganization(id="org_test", slug="test", source="test")
 
 
 @pytest.mark.parametrize("app_env", ["local", "test", "production"])
@@ -81,7 +100,7 @@ async def test_default_auth_uses_database_keys_and_ignores_legacy_environment_au
     monkeypatch.setenv("VMA_API_KEY", "legacy-single-key")
     monkeypatch.setenv("VMA_API_KEYS", "legacy-list-key")
     monkeypatch.setenv(
-        "VMA_API_KEY_WORKSPACES",
+        "VMA_API_KEY_ORGANIZATIONS",
         '{"legacy-single-key":"legacy_ws","legacy-list-key":"legacy_ws"}',
     )
     monkeypatch.setenv("VMA_ALLOW_ANONYMOUS_LOCAL", "true")

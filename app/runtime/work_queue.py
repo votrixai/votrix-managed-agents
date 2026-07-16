@@ -18,7 +18,7 @@ from app.db.queries import sessions as sessions_q
 from app.governance import QuotaExceededError
 from app.governance_runtime import governance_service
 from app.session_state import SESSION_RESCHEDULING, SESSION_TERMINATED
-from app.workspace import current_workspace, workspace_id_or_default
+from app.organization import current_organization, resolve_organization_id
 
 logger = structlog.get_logger()
 
@@ -47,7 +47,7 @@ async def get_active_session_work(
     stmt = (
         select(ManagedResource)
         .where(
-            ManagedResource.workspace_id == session.workspace_id,
+            ManagedResource.organization_id == session.organization_id,
             ManagedResource.resource_type == "environment_work",
             ManagedResource.name == f"session:{session.id}",
             ManagedResource.deleted_at.is_(None),
@@ -75,7 +75,7 @@ async def enqueue_session_run(
     if get_settings().vma_governance_enabled:
         token_decision = await service.preflight_model_tokens_in_session(
             db,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             source_type="session",
             source_id=session.id,
         )
@@ -90,19 +90,18 @@ async def enqueue_session_run(
         status="queued",
         data={
             "session_id": session.id,
-            "workspace_id": session.workspace_id,
             "trigger": trigger,
             "attempt": 0,
             "metadata": metadata or {},
             "queued_at": _utcnow_iso(),
         },
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     if get_settings().vma_governance_enabled:
-        actor = current_workspace()
+        actor = current_organization()
         active_decision = await service.acquire_active_work_in_session(
             db,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             reference_id=work.id,
             actor_id=actor.api_key_id,
             metadata={"session_id": session.id, "trigger": trigger},
@@ -171,7 +170,7 @@ async def execute_work_item(
 
         executed = await run_session_turn(
             str(data["session_id"]),
-            workspace_id=str(data.get("workspace_id") or work.workspace_id),
+            organization_id=resolve_organization_id(work.organization_id),
             work_lease=execution_lease,
         )
     except Exception as exc:
@@ -225,7 +224,7 @@ async def execute_work_item(
         session = await sessions_q.get_session(
             db,
             str((work.data or {}).get("session_id")),
-            workspace_id=work.workspace_id,
+            organization_id=work.organization_id,
         )
         data = dict(work.data or {})
         data["finished_at"] = _utcnow_iso()
@@ -269,14 +268,14 @@ async def lease_next_work(
     environment_id: str,
     worker_id: str,
     lease_seconds: int = 60,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedResource | None:
     return await _lease_next_work(
         db,
         environment_id=environment_id,
         worker_id=worker_id,
         lease_seconds=lease_seconds,
-        workspace_id=workspace_id_or_default(workspace_id),
+        organization_id=resolve_organization_id(organization_id),
     )
 
 
@@ -293,7 +292,7 @@ async def lease_next_work_for_worker(
         environment_id=environment_id,
         worker_id=worker_id,
         lease_seconds=lease_seconds,
-        workspace_id=None,
+        organization_id=None,
     )
 
 
@@ -303,7 +302,7 @@ async def _lease_next_work(
     environment_id: str | None,
     worker_id: str,
     lease_seconds: int,
-    workspace_id: str | None,
+    organization_id: str | None,
 ) -> ManagedResource | None:
     stmt = (
         select(ManagedResource)
@@ -318,8 +317,8 @@ async def _lease_next_work(
     )
     if environment_id is not None:
         stmt = stmt.where(ManagedResource.parent_id == environment_id)
-    if workspace_id is not None:
-        stmt = stmt.where(ManagedResource.workspace_id == workspace_id)
+    if organization_id is not None:
+        stmt = stmt.where(ManagedResource.organization_id == organization_id)
     result = await db.execute(stmt)
     candidates = list(result.scalars().all())
     now = datetime.now(timezone.utc)
@@ -448,7 +447,7 @@ async def _release_work_quota(
         return
     await governance_service().release_active_work_in_session(
         db,
-        workspace_id=work.workspace_id,
+        organization_id=work.organization_id,
         reference_id=work.id,
         actor_id=actor_id,
     )

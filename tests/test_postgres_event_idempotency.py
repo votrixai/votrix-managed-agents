@@ -9,7 +9,11 @@ from sqlalchemy.engine import make_url
 from app.config import get_settings
 from app.db.engine import get_engine, reset_engine_for_tests, session_scope
 from app.db.models import Base, ManagedResource, SessionEvent, SessionEventIdempotency
-from app.workspace import default_workspace, set_current_workspace
+from app.organization import (
+    CurrentOrganization,
+    reset_current_organization,
+    set_current_organization,
+)
 from tests.conftest import TEST_HEADERS
 
 
@@ -35,7 +39,9 @@ async def test_database(monkeypatch):
     monkeypatch.setenv("VMA_SANDBOX_PROVIDER", "state")
     monkeypatch.setenv("VMA_REQUIRE_BETA_HEADER", "true")
     monkeypatch.setenv("VMA_REQUIRE_ANTHROPIC_VERSION_HEADER", "true")
-    set_current_workspace(default_workspace())
+    organization_token = set_current_organization(
+        CurrentOrganization(id="org_test", slug="test", source="postgres_test")
+    )
     get_settings.cache_clear()
     await reset_engine_for_tests()
     engine = get_engine()
@@ -47,7 +53,7 @@ async def test_database(monkeypatch):
         await connection.run_sync(Base.metadata.drop_all)
     await reset_engine_for_tests()
     get_settings.cache_clear()
-    set_current_workspace(default_workspace())
+    reset_current_organization(organization_token)
 
 
 @pytest.fixture

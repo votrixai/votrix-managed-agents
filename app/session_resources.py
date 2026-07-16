@@ -38,7 +38,7 @@ async def create_session_resource(
         db,
         data,
         allowed_types=allowed_types,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
         session_id=session.id,
     )
     if normalized.get("type") == "file":
@@ -53,7 +53,7 @@ async def create_session_resource(
         parent_id=session.id,
         name=session_resource_name(normalized),
         data=normalized,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
 
 
@@ -80,7 +80,7 @@ async def find_existing_file_session_resource(
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     for resource in resources:
         current = dict(resource.data or {})
@@ -123,7 +123,7 @@ async def _ensure_file_resource_capacity(db: AsyncSession, session) -> None:
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     file_count = sum(1 for resource in resources if (resource.data or {}).get("type") == "file")
     if file_count >= MAX_SESSION_FILE_RESOURCES:
@@ -136,7 +136,7 @@ async def _ensure_memory_store_resource_capacity(db: AsyncSession, session) -> N
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     memory_store_count = sum(1 for resource in resources if (resource.data or {}).get("type") == "memory_store")
     if memory_store_count >= MAX_SESSION_MEMORY_STORE_RESOURCES:
@@ -154,7 +154,7 @@ async def _ensure_file_bytes_capacity(
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     current_size = sum(
         int(((resource.data or {}).get("session_file") or {}).get("size_bytes") or 0)
@@ -174,7 +174,7 @@ async def normalize_session_resource_data(
     data: dict[str, Any],
     *,
     allowed_types: set[str],
-    workspace_id: str,
+    organization_id: str,
     session_id: str,
 ) -> dict[str, Any]:
     if not isinstance(data, dict):
@@ -184,11 +184,11 @@ async def normalize_session_resource_data(
         allowed = ", ".join(sorted(allowed_types))
         raise HTTPException(status_code=422, detail=f"Session resource type must be one of: {allowed}")
     if resource_type == "file":
-        return await _normalize_file_session_resource(db, data, workspace_id=workspace_id, session_id=session_id)
+        return await _normalize_file_session_resource(db, data, organization_id=organization_id, session_id=session_id)
     if resource_type == "github_repository":
         return _normalize_github_session_resource(data)
     if resource_type == "memory_store":
-        return await _normalize_memory_store_session_resource(db, data, workspace_id=workspace_id)
+        return await _normalize_memory_store_session_resource(db, data, organization_id=organization_id)
     raise HTTPException(status_code=422, detail=f"Unsupported session resource type: {resource_type}")
 
 
@@ -216,7 +216,7 @@ async def delete_session_resource_file(db: AsyncSession, resource) -> None:
         db,
         resource_id=file_id,
         resource_type="file",
-        workspace_id=resource.workspace_id,
+        organization_id=resource.organization_id,
     )
     if scoped_file is None:
         return
@@ -229,7 +229,7 @@ async def delete_session_resource_file(db: AsyncSession, resource) -> None:
             resource_type="file",
             storage_backend=scoped_file.storage_backend,
             storage_key=scoped_file.storage_key,
-            workspace_id=resource.workspace_id,
+            organization_id=resource.organization_id,
         )
         if active_references <= 1:
             await storage.delete_file(scoped_file.storage_key)
@@ -247,7 +247,7 @@ async def session_resources_response(db: AsyncSession, session) -> list[dict[str
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     if resources:
         return [session_resource_response(resource) for resource in resources]
@@ -260,7 +260,7 @@ async def session_has_memory_store(db: AsyncSession, session, memory_store_id: s
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     if any((resource.data or {}).get("memory_store_id") == memory_store_id for resource in resources):
         return True
@@ -293,7 +293,7 @@ async def validate_user_message_file_references(
         resource_type="session_resource",
         parent_id=session.id,
         limit=1000,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     session_files: list[dict[str, Any]] = []
     for resource in resources:
@@ -381,18 +381,18 @@ async def _normalize_file_session_resource(
     db: AsyncSession,
     data: dict[str, Any],
     *,
-    workspace_id: str,
+    organization_id: str,
     session_id: str,
 ) -> dict[str, Any]:
     file_id = str(data.get("file_id") or "")
     if not file_id:
         raise HTTPException(status_code=422, detail="file session resources require file_id")
-    file_resource = await res_q.get_resource(db, resource_id=file_id, resource_type="file", workspace_id=workspace_id)
+    file_resource = await res_q.get_resource(db, resource_id=file_id, resource_type="file", organization_id=organization_id)
     if file_resource is None:
         raise HTTPException(status_code=404, detail="File not found")
     mount_path = str(data.get("mount_path") or f"{SESSION_UPLOAD_ROOT}/{file_id}")
     _validate_mount_path(mount_path)
-    copied = await _copy_file_for_session_resource(file_resource, session_id=session_id, workspace_id=workspace_id)
+    copied = await _copy_file_for_session_resource(file_resource, session_id=session_id, organization_id=organization_id)
     if copied is None:
         raise HTTPException(status_code=500, detail="File object is not stored in object storage")
     session_file = await _create_session_scoped_file(
@@ -400,7 +400,7 @@ async def _normalize_file_session_resource(
         source_file=file_resource,
         copied=copied,
         session_id=session_id,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
     normalized = {
         "type": "file",
@@ -413,13 +413,13 @@ async def _normalize_file_session_resource(
     return normalized
 
 
-async def _copy_file_for_session_resource(file_resource, *, session_id: str, workspace_id: str) -> dict[str, Any] | None:
+async def _copy_file_for_session_resource(file_resource, *, session_id: str, organization_id: str) -> dict[str, Any] | None:
     if not (storage.is_object_storage_backend(file_resource.storage_backend) and file_resource.storage_key):
         return None
-    if not str(file_resource.storage_key).startswith(f"workspaces/{workspace_id}/"):
+    if not str(file_resource.storage_key).startswith(f"organizations/{organization_id}/"):
         raise HTTPException(
             status_code=422,
-            detail="File object is outside the authenticated Workspace storage namespace",
+            detail="File object is outside the authenticated Organization storage namespace",
         )
     filename = file_resource.filename or file_resource.name or file_resource.id
     destination_key = storage.object_key(
@@ -427,7 +427,7 @@ async def _copy_file_for_session_resource(file_resource, *, session_id: str, wor
         category="resources",
         filename=filename,
         content_sha256=file_resource.sha256,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
     try:
         await storage.copy_file(
@@ -469,7 +469,7 @@ async def _create_session_scoped_file(
     source_file,
     copied: dict[str, Any],
     session_id: str,
-    workspace_id: str,
+    organization_id: str,
 ):
     storage_data = copied["storage"]
     return await res_q.create_resource(
@@ -489,7 +489,7 @@ async def _create_session_scoped_file(
         storage_url=None,
         size_bytes=copied.get("size_bytes"),
         sha256=copied.get("sha256"),
-        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
 
 
@@ -523,12 +523,12 @@ async def _normalize_memory_store_session_resource(
     db: AsyncSession,
     data: dict[str, Any],
     *,
-    workspace_id: str,
+    organization_id: str,
 ) -> dict[str, Any]:
     memory_store_id = str(data.get("memory_store_id") or "")
     if not memory_store_id:
         raise HTTPException(status_code=422, detail="memory_store session resources require memory_store_id")
-    store = await res_q.get_resource(db, resource_id=memory_store_id, resource_type="memory_store", workspace_id=workspace_id)
+    store = await res_q.get_resource(db, resource_id=memory_store_id, resource_type="memory_store", organization_id=organization_id)
     if store is None:
         raise HTTPException(status_code=404, detail="Memory store not found")
     if store.archived_at is not None:

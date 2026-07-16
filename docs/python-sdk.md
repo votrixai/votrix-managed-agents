@@ -44,7 +44,7 @@ python -m pip install votrix
 
 ## Client setup
 
-Supply the workspace API key and the URL of your VMA deployment explicitly, or
+Supply the Organization API key and the URL of your VMA deployment explicitly, or
 use `VOTRIX_API_KEY` and `VOTRIX_BASE_URL`:
 
 ```python
@@ -81,9 +81,9 @@ Typed SDK exceptions expose `status_code`, `error_type`, stable `error_code`,
 headers where applicable. Exception strings and representations never include
 request bodies or API secrets.
 
-## Workspace API keys
+## Organization API keys
 
-Tenant administrators can create, inspect, rotate, and revoke workspace-scoped
+Tenant administrators can create, inspect, rotate, and revoke Organization-scoped
 keys through either client:
 
 ```python
@@ -134,11 +134,16 @@ async with AsyncVotrix(
     )
 ```
 
-The catalog never returns keys, environment-variable names, provider base URLs,
-private model kwargs, or configured-key state. VMA resolves the provider to its
-private credential slot and stores the key encrypted according to the server's
-Vault configuration. Rotation keeps the same Credential ID, so already-bound
-Sessions pick up the new key without changing payer.
+The catalog never returns keys, internal credential-slot names, provider base
+URLs, private model kwargs, or Session-specific credential availability. VMA
+resolves the provider to its private credential slot and stores the key
+encrypted according to the server's Vault configuration. Rotation keeps the
+same Credential ID, so already-bound Sessions pick up the new key without
+changing payer.
+
+Model Credentials use the explicit `vaults.model_credentials` surface shown
+above. Generic Vault Credentials remain for MCP servers and other integrations;
+callers do not classify a raw generic secret by inventing a string type.
 
 When creating a Session, the trusted customer backend expresses preference only
 through Vault order:
@@ -158,7 +163,14 @@ create call. Event submission follows the same rule.
 Selection happens once at Session creation. The Session remains bound to that
 specific Credential ID; rotation of the same Credential takes effect on a
 later turn, while archive or deletion fails closed. VMA never silently changes
-the payer inside an existing Session.
+the payer inside an existing Session. If none of the submitted `vault_ids`
+contains a Credential for the Session model provider, Session creation returns
+HTTP `422` with code `model_credential_required`. VMA does not provide or fall
+back to a platform model key.
+
+The current multiagent MVP has one model-Credential binding per Session, so the
+coordinator and every pinned subagent must use the same provider. Create
+separate Sessions when different providers are required.
 
 The native lifecycle also provides typed `archive()` and `delete()` methods.
 Both purge the encrypted provider key before changing state. Native list and

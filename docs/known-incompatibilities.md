@@ -30,7 +30,7 @@ Status terms match the [compatibility matrix](./compatibility-matrix.md): **Impl
 | Production deployment scheduler | Gap | An idempotent tick exists, but no always-on scheduler service is included. |
 | Webhook delivery | Gap | Cryptographic helpers exist, but endpoint management and delivery do not; webhooks are not a public-beta product promise. |
 | User-profile enrollment and attribution | Gap | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |
-| Organization RBAC/SSO and Postgres RLS | Gap | Workspace-scoped API keys are the beta tenant boundary, not an enterprise identity system or database defense-in-depth policy. |
+| Organization RBAC/SSO and Postgres RLS | Gap | Organization-scoped API keys are the beta tenant boundary, not an enterprise identity system or database defense-in-depth policy. |
 | Tenant quotas and raw ledgers | Implemented | Request, active-work, daily token, and stored-byte limits plus append-only audit/usage facts provide the public-beta baseline, not enterprise policy or priced billing. |
 | Billing and payments | Deferred | The beta is BYOK/free; price books, balances/credits, top-ups, refunds, Stripe, and invoices are outside this release. |
 
@@ -111,7 +111,7 @@ If the graph runs in a worker while SSE is served by another process:
 
 Closing the gap requires a tenant-scoped cross-process broker such as Redis Streams or NATS, with:
 
-- Topics scoped by workspace and session.
+- Topics scoped by Organization and Session.
 - Per-run ordering and sequence metadata.
 - Backpressure and bounded subscriber queues.
 - Worker/web authentication.
@@ -123,7 +123,7 @@ Closing the gap requires a tenant-scoped cross-process broker such as Redis Stre
 The Session Events endpoint now supports an optional `Idempotency-Key`. A successful keyed request stores its canonical request hash and exact response in the same transaction as its input events and queued work. Reusing the key with the same body replays that response; reusing it with a different body returns `409`. `votrix-backend` supplies this header and reuses it across SDK and 529 transport retries.
 
 Session creation separately uses a generic tenant idempotency table scoped by
-workspace, operation, key hash, and request fingerprint; the native SDK
+Organization, operation, key hash, and request fingerprint; the native SDK
 generates a key when callers do not supply one. The mechanism is intentionally
 not presented as a guarantee for every mutation.
 
@@ -382,7 +382,7 @@ Private R2 or another private S3-compatible object store supplies uploaded
 files and custom Skill archives. VMA requires no bucket public URL and serves
 downloads through the authenticated Files API. Public GA hides the
 presign/complete routes; beta callers use the bounded authenticated upload.
-Workspace stored-byte quota is checked for File and Skill writes, but storage
+Organization stored-byte quota is checked for File and Skill writes, but storage
 retention and garbage-collection policy still need operational ownership.
 
 VMA materializes Skills, Memory Store seeds, and create-time
@@ -390,7 +390,7 @@ files into the one E2B sandbox during Session creation. A later file may be
 added only through the bounded append protocol: the Session and sandbox must be
 idle/paused, the path must be one direct filename under
 `/mnt/session/uploads`, and the existing manifest must remain an unchanged
-subset of the next revision. VMA checks Workspace ownership plus the copied
+subset of the next revision. VMA checks Organization ownership plus the copied
 object's size and SHA-256 before touching E2B. Skills and memory remain fixed;
 existing file mounts cannot be updated or removed. Immutable inputs cannot
 overlap `/workspace`, `/mnt/session/outputs`, or a read-write memory root. The
@@ -468,7 +468,7 @@ For E2B Sessions, LangGraph state and the persistent E2B sandbox solve different
 
 An interrupted run must resume with:
 
-- The same workspace-scoped internal thread ID.
+- The same Organization-scoped internal thread ID.
 - The same pinned agent revision.
 - The same E2B external ID, fixed Skills/Memory identity, and latest committed
   append-only input digest, manifest revision, and immutable-file seal.
@@ -479,7 +479,7 @@ Deploying a changed graph and resuming an old checkpoint can fail or behave diff
 
 ### Checkpoint isolation is application-enforced
 
-LangGraph checkpointers primarily key state by thread configuration. VMA must never authorize checkpoint access from a caller-supplied ID alone. Public session lookup must be workspace-scoped and map to a server-owned opaque thread ID. Stronger deployments should add database RLS, per-tenant schemas, or a checkpointer wrapper that incorporates tenant context.
+LangGraph checkpointers primarily key state by thread configuration. VMA must never authorize checkpoint access from a caller-supplied ID alone. Public session lookup must be Organization-scoped and map to a server-owned opaque thread ID. Stronger deployments should add database RLS, per-tenant schemas, or a checkpointer wrapper that incorporates tenant context.
 
 ### Compaction differs
 
@@ -519,10 +519,10 @@ Applications must poll or stream session events until a webhook delivery service
 
 ## Hosted and enterprise controls
 
-### Authentication is workspace-level only
+### Authentication is Organization-level only
 
 Every supported VMA environment uses database-backed API keys that resolve to
-exactly one workspace. Keys are hashed at rest, return plaintext only during
+exactly one Organization. Keys are hashed at rest, return plaintext only during
 create/rotate, can expire or be revoked independently, and use the small `api`,
 `api_keys:manage`, and `worker` scope set. A trusted CLI bootstraps the first
 management key without a process-global key or anonymous authentication path.
@@ -538,7 +538,7 @@ There are no built-in read/run/write/admin grants across agents, environments, v
 
 ### Public-beta quotas are intentionally narrow
 
-VMA atomically enforces workspace defaults/overrides for requests per minute,
+VMA atomically enforces Organization defaults/overrides for requests per minute,
 active queued/running work, daily model tokens, and stored File/Skill bytes.
 Quota denials return `429`, stable codes, reset metadata, and rate/quota headers.
 Active-work reservations are released idempotently on terminal work states, and
@@ -567,13 +567,13 @@ invoices, plans, seats, taxes, and spend alerts are explicitly deferred.
 
 ### Audit is a beta ledger, not an enterprise archive
 
-VMA appends workspace-attributed authorization decisions, HTTP completion,
+VMA appends Organization-attributed authorization decisions, HTTP completion,
 quota actions, and runtime governance events with actor, resource, outcome, and
 request IDs. ORM guards and database triggers reject updates/deletes to audit
 and usage ledger rows.
 
 Coverage is not yet every read/write/run/approval/secret access; an invalid key
-cannot be attributed to a workspace. Enterprise export, automated retention,
+cannot be attributed to an Organization. Enterprise export, automated retention,
 legal hold, external tamper anchoring, and administrator/support access history
 remain absent.
 
@@ -586,7 +586,7 @@ VMA claims no certification or parity with Anthropic's security/compliance postu
 When implementing a gap:
 
 1. Add tests for the internal behavior and the official SDK wire contract where applicable.
-2. Add cross-workspace and restart/retry tests.
+2. Add cross-Organization and restart/retry tests.
 3. Update the relevant focused document.
 4. Change the row in [compatibility matrix](./compatibility-matrix.md) only when the stated production property is true.
 5. Keep this ledger entry until the Claude behavior, remaining variance, and operational assumptions are all explicit.

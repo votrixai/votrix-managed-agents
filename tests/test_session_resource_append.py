@@ -7,27 +7,37 @@ import pytest
 from app import storage
 from app.config import get_settings
 from app.db.engine import session_scope
+from app.db.queries import resources as res_q
 from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
 from tests.conftest import TEST_HEADERS
 from tests.test_sandbox_lifecycle import FakeLifecycleProvider, _configure
 
 
-WORKSPACE_ID = "wrkspc_default"
+ORGANIZATION_ID = "org_test"
 UPLOAD_ROOT = "/mnt/session/uploads"
 
 
-async def _create_e2b_session(client, monkeypatch):
+async def _create_e2b_session(
+    client,
+    monkeypatch,
+    *,
+    skills: list[dict] | None = None,
+    resources: list[dict] | None = None,
+):
     import app.runtime.sandbox_lifecycle as lifecycle
 
     _configure(monkeypatch)
     provider = FakeLifecycleProvider()
     monkeypatch.setattr(lifecycle, "build_e2b_provider", lambda: provider)
 
+    agent_payload = {"name": "Append security agent", "model": {"id": "gpt-5.5"}}
+    if skills is not None:
+        agent_payload["skills"] = skills
     response = await client.post(
         "/v1/agents",
         headers=TEST_HEADERS,
-        json={"name": "Append security agent", "model": {"id": "gpt-5.5"}},
+        json=agent_payload,
     )
     assert response.status_code == 201, response.text
     agent = response.json()
@@ -43,10 +53,13 @@ async def _create_e2b_session(client, monkeypatch):
     assert response.status_code == 201, response.text
     environment = response.json()
 
+    session_payload = {"agent": agent["id"], "environment_id": environment["id"]}
+    if resources is not None:
+        session_payload["resources"] = resources
     response = await client.post(
         "/v1/sessions",
         headers=TEST_HEADERS,
-        json={"agent": agent["id"], "environment_id": environment["id"]},
+        json=session_payload,
     )
     assert response.status_code == 201, response.text
     return response.json(), provider
@@ -81,7 +94,7 @@ async def _set_session_state(
         session = await sessions_q.get_session(
             db,
             session_id,
-            workspace_id=WORKSPACE_ID,
+            organization_id=ORGANIZATION_ID,
             for_update=True,
         )
         assert session is not None
@@ -170,7 +183,7 @@ async def test_exact_retry_is_idempotent_and_revisions_are_monotonic(client, mon
         initial = await sandboxes_q.get_session_sandbox(
             db,
             session["id"],
-            workspace_id=WORKSPACE_ID,
+            organization_id=ORGANIZATION_ID,
         )
         assert initial is not None
         external_id = initial.external_sandbox_id
@@ -209,7 +222,7 @@ async def test_exact_retry_is_idempotent_and_revisions_are_monotonic(client, mon
         current = await sandboxes_q.get_session_sandbox(
             db,
             session["id"],
-            workspace_id=WORKSPACE_ID,
+            organization_id=ORGANIZATION_ID,
         )
         assert current is not None
         assert current.external_sandbox_id == external_id == provider.external_id
@@ -224,6 +237,191 @@ async def test_exact_retry_is_idempotent_and_revisions_are_monotonic(client, mon
     assert provider.bootstrap_count == 1
     assert provider.connect_count == 2
     assert provider.append_count == 2
+    assert provider.sealed_revision == 2
+
+
+async def test_persisted_descriptor_append_does_not_download_existing_file_or_skill(
+    client,
+    monkeypatch,
+):
+    skill_response = await client.post(
+        "/v1/skills",
+        headers=TEST_HEADERS,
+        files={
+            "files": (
+                "skill/SKILL.md",
+                b"---\nname: append-fast\ndescription: Existing skill.\n---\nUse it.",
+                "text/markdown",
+            )
+        },
+    )
+    assert skill_response.status_code == 201, skill_response.text
+    skill = skill_response.json()
+    initial_file = await _upload(client, "initial.txt", b"existing session input")
+    session, provider = await _create_e2b_session(
+        client,
+        monkeypatch,
+        skills=[
+            {
+                "type": "custom",
+                "skill_id": skill["id"],
+                "version": skill["latest_version"],
+            }
+        ],
+        resources=[
+            {
+                "type": "file",
+                "file_id": initial_file["id"],
+                "mount_path": f"{UPLOAD_ROOT}/initial.txt",
+            }
+        ],
+    )
+
+    async with session_scope() as db:
+        mounted_resources = await res_q.list_resources(
+            db,
+            resource_type="session_resource",
+            parent_id=session["id"],
+            limit=1000,
+            organization_id=ORGANIZATION_ID,
+        )
+        initial_resource = next(
+            item for item in mounted_resources if (item.data or {}).get("type") == "file"
+        )
+        initial_key = str(
+            (((initial_resource.data or {}).get("session_file") or {}).get("storage") or {}).get(
+                "key"
+            )
+        )
+        assert initial_key and initial_key != "None"
+        skill_version = await res_q.get_resource_version(
+            db,
+            resource_type="skill_version",
+            parent_id=skill["id"],
+            version=int(skill["latest_version"]),
+            organization_id=ORGANIZATION_ID,
+        )
+        assert skill_version is not None and skill_version.storage_key
+        skill_key = skill_version.storage_key
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session["id"],
+            organization_id=ORGANIZATION_ID,
+        )
+        assert record is not None
+        descriptor = record.config["input_descriptor"]
+        assert record.config["input_total_size_bytes"] == sum(
+            item["size_bytes"] for item in descriptor["files"]
+        )
+
+    appended_file = await _upload(client, "appended.txt", b"only this input is new")
+    original_download = storage.download_file
+    downloaded_keys: list[str] = []
+
+    async def tracked_download(key: str) -> bytes:
+        downloaded_keys.append(key)
+        return await original_download(key)
+
+    monkeypatch.setattr(storage, "download_file", tracked_download)
+    response = await _add(
+        client,
+        session["id"],
+        appended_file["id"],
+        f"{UPLOAD_ROOT}/appended.txt",
+    )
+
+    assert response.status_code == 201, response.text
+    assert downloaded_keys
+    assert initial_key not in downloaded_keys
+    assert skill_key not in downloaded_keys
+    assert provider.uploads[-1] == [
+        (f"{UPLOAD_ROOT}/appended.txt", b"only this input is new")
+    ]
+
+
+async def test_legacy_binding_hydrates_once_then_backfills_descriptor(client, monkeypatch):
+    initial_file = await _upload(client, "legacy-initial.txt", b"legacy input")
+    session, provider = await _create_e2b_session(
+        client,
+        monkeypatch,
+        resources=[
+            {
+                "type": "file",
+                "file_id": initial_file["id"],
+                "mount_path": f"{UPLOAD_ROOT}/legacy-initial.txt",
+            }
+        ],
+    )
+    async with session_scope() as db:
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session["id"],
+            organization_id=ORGANIZATION_ID,
+            for_update=True,
+        )
+        assert record is not None
+        legacy_config = dict(record.config or {})
+        legacy_config.pop("input_descriptor", None)
+        legacy_config.pop("input_total_size_bytes", None)
+        record.config = legacy_config
+        resources = await res_q.list_resources(
+            db,
+            resource_type="session_resource",
+            parent_id=session["id"],
+            limit=1000,
+            organization_id=ORGANIZATION_ID,
+        )
+        initial_resource = next(
+            item for item in resources if (item.data or {}).get("type") == "file"
+        )
+        initial_key = str(
+            (((initial_resource.data or {}).get("session_file") or {}).get("storage") or {}).get(
+                "key"
+            )
+        )
+        assert initial_key and initial_key != "None"
+        await db.commit()
+
+    original_download = storage.download_file
+    downloaded_keys: list[str] = []
+
+    async def tracked_download(key: str) -> bytes:
+        downloaded_keys.append(key)
+        return await original_download(key)
+
+    monkeypatch.setattr(storage, "download_file", tracked_download)
+    first_file = await _upload(client, "legacy-first.txt", b"first append")
+    first = await _add(
+        client,
+        session["id"],
+        first_file["id"],
+        f"{UPLOAD_ROOT}/legacy-first.txt",
+    )
+    assert first.status_code == 201, first.text
+    assert initial_key in downloaded_keys
+
+    async with session_scope() as db:
+        record = await sandboxes_q.get_session_sandbox(
+            db,
+            session["id"],
+            organization_id=ORGANIZATION_ID,
+        )
+        assert record is not None
+        assert record.config["input_descriptor"]["version"] == "vma-session-inputs-v1"
+        assert record.config["input_total_size_bytes"] == (
+            len(b"legacy input") + len(b"first append")
+        )
+
+    downloaded_keys.clear()
+    second_file = await _upload(client, "legacy-second.txt", b"second append")
+    second = await _add(
+        client,
+        session["id"],
+        second_file["id"],
+        f"{UPLOAD_ROOT}/legacy-second.txt",
+    )
+    assert second.status_code == 201, second.text
+    assert initial_key not in downloaded_keys
     assert provider.sealed_revision == 2
 
 
@@ -270,7 +468,7 @@ async def test_exact_retry_recovers_provider_ahead_of_rolled_back_database(
         record = await sandboxes_q.get_session_sandbox(
             db,
             session["id"],
-            workspace_id=WORKSPACE_ID,
+            organization_id=ORGANIZATION_ID,
         )
         assert record is not None
         assert record.external_sandbox_id == provider.external_id
@@ -389,7 +587,7 @@ async def test_non_paused_or_wrong_provider_binding_rejects_append_without_provi
         record = await sandboxes_q.get_session_sandbox(
             db,
             session["id"],
-            workspace_id=WORKSPACE_ID,
+            organization_id=ORGANIZATION_ID,
             for_update=True,
         )
         assert record is not None

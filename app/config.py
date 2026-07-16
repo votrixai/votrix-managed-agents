@@ -16,12 +16,13 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
-    anthropic_api_key: str = ""
+    vma_db_pool_size: int = Field(default=10, ge=0)
+    vma_db_max_overflow: int = Field(default=5, ge=0)
+    vma_db_pool_timeout_seconds: float = Field(default=10.0, gt=0)
+    vma_db_pool_recycle_seconds: int = Field(default=300, ge=-1)
     anthropic_base_url: str = ""
-    openai_api_key: str = ""
     openai_base_url: str = ""
     openai_use_responses: bool = False
-    deepseek_api_key: str = ""
     deepseek_api_base: str = ""
 
     vma_require_beta_header: bool = True
@@ -59,7 +60,7 @@ class Settings(BaseSettings):
     vma_web_allow_private_networks: bool = False
     vma_event_poll_interval_seconds: float = 0.5
     vma_max_file_upload_bytes: int = 50 * 1024 * 1024
-    vma_max_session_input_bytes: int = 512 * 1024 * 1024
+    vma_max_session_input_bytes: int = 64 * 1024 * 1024
     vma_max_skill_archive_bytes: int = 25 * 1024 * 1024
     vma_embedded_worker_enabled: bool = False
     vma_worker_concurrency: int = 1
@@ -71,7 +72,7 @@ class Settings(BaseSettings):
     vma_requests_per_minute: int = Field(default=120, ge=0)
     vma_max_active_work: int = Field(default=5, ge=0)
     vma_daily_model_tokens: int = Field(default=1_000_000, ge=0)
-    vma_workspace_storage_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=0)
+    vma_organization_storage_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=0)
     vma_encryption_key: str = ""
     vma_allow_plaintext_secrets_local: bool = True
 
@@ -105,7 +106,18 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return {}
         if isinstance(value, str):
-            return json.loads(value)
+            value = json.loads(value)
+        if isinstance(value, dict):
+            embedded = [
+                str(name)
+                for name, config in value.items()
+                if isinstance(config, dict) and config.get("api_key") not in (None, "")
+            ]
+            if embedded:
+                raise ValueError(
+                    "VMA_MODEL_PROVIDERS must not embed model API keys; "
+                    "create a model Credential in an Organization Vault"
+                )
         return value
 
     @field_validator("vma_e2b_template_resources", mode="before")

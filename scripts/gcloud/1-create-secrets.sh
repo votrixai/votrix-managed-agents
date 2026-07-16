@@ -92,7 +92,6 @@ while IFS='|' read -r variable_name base_secret_name; do
 done <<'SECRETS'
 DATABASE_URL|vma-database-url
 VMA_ENCRYPTION_KEY|vma-encryption-key
-OPENROUTER_API_KEY|vma-openrouter-api-key
 E2B_API_KEY|vma-e2b-api-key
 S3_ENDPOINT_URL|vma-s3-endpoint-url
 S3_ACCESS_KEY_ID|vma-s3-access-key-id

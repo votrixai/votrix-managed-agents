@@ -63,7 +63,7 @@ class ApiKeyRotateRequest(ApiModel):
 class ApiKeyResponse(ApiModel):
     id: str
     type: Literal["api_key"] = "api_key"
-    workspace_id: str = Field(description="Workspace that owns this API key.")
+    organization_id: str = Field(description="Organization that owns this API key.")
     name: str
     prefix: str = Field(description="Non-secret prefix used to identify the key safely.")
     scopes: list[ApiKeyScope] = Field(description="Permissions granted to this API key.")
@@ -90,7 +90,7 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
 def api_key_to_response(api_key) -> ApiKeyResponse:
     return ApiKeyResponse(
         id=api_key.id,
-        workspace_id=api_key.workspace_id,
+        organization_id=api_key.organization_id,
         name=api_key.name,
         prefix=api_key.prefix,
         scopes=list(api_key.scopes or []),

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedResource, ManagedSession
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 
 PREFIXES = {
@@ -44,11 +44,11 @@ async def create_resource(
     storage_url: str | None = None,
     size_bytes: int | None = None,
     sha256: str | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedResource:
     resource = ManagedResource(
         id=new_id(PREFIXES.get(resource_type, "res")),
-        workspace_id=workspace_id_or_default(workspace_id),
+        organization_id=resolve_organization_id(organization_id),
         resource_type=resource_type,
         parent_id=parent_id,
         version=version,
@@ -76,12 +76,12 @@ async def get_resource(
     resource_type: str | None = None,
     parent_id: str | None = None,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     for_update: bool = False,
 ) -> ManagedResource | None:
     stmt = select(ManagedResource).where(
         ManagedResource.id == resource_id,
-        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+        ManagedResource.organization_id == resolve_organization_id(organization_id),
     )
     if resource_type is not None:
         stmt = stmt.where(ManagedResource.resource_type == resource_type)
@@ -102,12 +102,12 @@ async def get_resource_by_name(
     name: str,
     parent_id: str | None = None,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedResource | None:
     stmt = select(ManagedResource).where(
         ManagedResource.resource_type == resource_type,
         ManagedResource.name == name,
-        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+        ManagedResource.organization_id == resolve_organization_id(organization_id),
     )
     if parent_id is not None:
         stmt = stmt.where(ManagedResource.parent_id == parent_id)
@@ -123,14 +123,14 @@ async def get_resource_by_sha256(
     resource_type: str,
     sha256: str,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedResource | None:
     stmt = (
         select(ManagedResource)
         .where(
             ManagedResource.resource_type == resource_type,
             ManagedResource.sha256 == sha256,
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
         )
         .order_by(ManagedResource.created_at.asc())
     )
@@ -147,13 +147,13 @@ async def count_resources_by_storage_key(
     storage_backend: str,
     storage_key: str,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> int:
     stmt = select(func.count()).select_from(ManagedResource).where(
         ManagedResource.resource_type == resource_type,
         ManagedResource.storage_backend == storage_backend,
         ManagedResource.storage_key == storage_key,
-        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+        ManagedResource.organization_id == resolve_organization_id(organization_id),
     )
     if not include_deleted:
         stmt = stmt.where(ManagedResource.deleted_at.is_(None))
@@ -169,7 +169,7 @@ async def list_resources_by_name_prefix(
     name_prefix: str,
     limit: int = 1000,
     include_archived: bool = True,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[ManagedResource]:
     escaped = _escape_like(name_prefix)
     stmt = (
@@ -177,7 +177,7 @@ async def list_resources_by_name_prefix(
         .where(
             ManagedResource.resource_type == resource_type,
             ManagedResource.parent_id == parent_id,
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
             ManagedResource.deleted_at.is_(None),
             or_(
                 ManagedResource.name == name_prefix,
@@ -200,13 +200,13 @@ async def get_resource_version(
     parent_id: str,
     version: int,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedResource | None:
     stmt = select(ManagedResource).where(
         ManagedResource.resource_type == resource_type,
         ManagedResource.parent_id == parent_id,
         ManagedResource.version == version,
-        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+        ManagedResource.organization_id == resolve_organization_id(organization_id),
     )
     if not include_deleted:
         stmt = stmt.where(ManagedResource.deleted_at.is_(None))
@@ -222,13 +222,13 @@ async def list_resources(
     limit: int = 50,
     include_archived: bool = True,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[ManagedResource]:
     stmt = (
         select(ManagedResource)
         .where(
             ManagedResource.resource_type == resource_type,
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
         )
         .order_by(ManagedResource.created_at.desc(), ManagedResource.id.desc())
         .limit(limit)
@@ -250,7 +250,7 @@ async def list_child_resources_for_update(
     parent_id: str,
     include_archived: bool = True,
     include_deleted: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[ManagedResource]:
     """Lock every matching child row in a stable order, without pagination.
 
@@ -264,7 +264,7 @@ async def list_child_resources_for_update(
         .where(
             ManagedResource.resource_type == resource_type,
             ManagedResource.parent_id == parent_id,
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
         )
         .order_by(ManagedResource.id.asc())
         .with_for_update()
@@ -281,7 +281,7 @@ async def find_session_resource_referencing_file(
     db: AsyncSession,
     *,
     file_id: str,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> ManagedResource | None:
     """Find an active Session resource whose mounted copy is ``file_id``."""
     result = await db.execute(
@@ -290,12 +290,12 @@ async def find_session_resource_referencing_file(
             ManagedSession,
             and_(
                 ManagedSession.id == ManagedResource.parent_id,
-                ManagedSession.workspace_id == ManagedResource.workspace_id,
+                ManagedSession.organization_id == ManagedResource.organization_id,
             ),
         )
         .where(
             ManagedResource.resource_type == "session_resource",
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
             ManagedResource.deleted_at.is_(None),
             ManagedResource.data["type"].as_string() == "file",
             ManagedResource.data["file_id"].as_string() == file_id,
@@ -312,9 +312,9 @@ async def list_files_for_session_scope(
     session_id: str,
     referenced_file_ids: set[str],
     limit: int = 1000,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[ManagedResource]:
-    """List files belonging to one Session without a workspace-wide pre-limit."""
+    """List files belonging to one Session without a organization-wide pre-limit."""
     ownership = [ManagedResource.parent_id == session_id]
     if referenced_file_ids:
         ownership.append(ManagedResource.id.in_(referenced_file_ids))
@@ -323,7 +323,7 @@ async def list_files_for_session_scope(
         select(ManagedResource)
         .where(
             ManagedResource.resource_type == "file",
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
             ManagedResource.deleted_at.is_(None),
             or_(*ownership),
         )
@@ -334,9 +334,9 @@ async def list_files_for_session_scope(
 
 
 async def get_work_item_for_worker(db: AsyncSession, work_id: str) -> ManagedResource | None:
-    """Resolve a queue item across workspaces for the trusted worker process.
+    """Resolve a queue item across organizations for the trusted worker process.
 
-    This intentionally bypasses request workspace context and is restricted to the
+    This intentionally bypasses request organization context and is restricted to the
     internal ``environment_work`` resource type. Public routes must use
     :func:`get_resource` instead.
     """
@@ -433,13 +433,13 @@ async def next_version(
     *,
     resource_type: str,
     parent_id: str,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> int:
     result = await db.execute(
         select(func.max(ManagedResource.version)).where(
             ManagedResource.resource_type == resource_type,
             ManagedResource.parent_id == parent_id,
-            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.organization_id == resolve_organization_id(organization_id),
         )
     )
     return int(result.scalar_one_or_none() or 0) + 1

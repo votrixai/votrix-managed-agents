@@ -1,4 +1,4 @@
-"""add workspace api keys
+"""add organization api keys
 
 Revision ID: 20260619_0007
 Revises: 20260619_0006
@@ -18,7 +18,7 @@ def upgrade() -> None:
     op.create_table(
         "api_keys",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("key_hash", sa.String(length=64), nullable=False),
         sa.Column("prefix", sa.String(length=32), nullable=False),
@@ -30,11 +30,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("key_hash", name="uq_api_keys_key_hash"),
     )
-    op.create_index(op.f("ix_api_keys_workspace_id"), "api_keys", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_api_keys_organization_id"), "api_keys", ["organization_id"], unique=False)
     op.create_index(op.f("ix_api_keys_key_hash"), "api_keys", ["key_hash"], unique=False)
 
 
 def downgrade() -> None:
     op.drop_index(op.f("ix_api_keys_key_hash"), table_name="api_keys")
-    op.drop_index(op.f("ix_api_keys_workspace_id"), table_name="api_keys")
+    op.drop_index(op.f("ix_api_keys_organization_id"), table_name="api_keys")
     op.drop_table("api_keys")

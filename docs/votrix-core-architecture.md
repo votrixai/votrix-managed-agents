@@ -3,7 +3,7 @@ title: Votrix Core Architecture
 description: Ownership boundaries across the public API, durable control plane, and agent runtime.
 ---
 
-VMA is the self-hosted, workspace-scoped Votrix core of a managed-agents platform. It exposes a Claude Managed Agents-shaped control plane and uses Deep Agents 0.6.12 as the execution kernel. A private hosted product should compose this package with enterprise identity, policy, infrastructure, and commercial services rather than fork the core.
+VMA is the self-hosted, Organization-scoped Votrix core of a managed-agents platform. It exposes a Claude Managed Agents-shaped control plane and uses Deep Agents 0.6.12 as the execution kernel. A private hosted product should compose this package with enterprise identity, policy, infrastructure, and commercial services rather than fork the core.
 
 The boundary is architectural, not a claim that the current core already provides Claude-equivalent managed infrastructure. See the [compatibility matrix](./compatibility-matrix.md) and [known incompatibilities](./known-incompatibilities.md).
 
@@ -11,12 +11,12 @@ The boundary is architectural, not a claim that the current core already provide
 
 ```text
 Hosted/private product
-  organizations, members, RBAC, SSO, RLS, paid billing, audit operations, support
+  members, RBAC, SSO, RLS, paid billing, audit operations, support
   hosted model gateway, secret manager, sandbox fleet, broker, scheduler
                               |
                               v
 Votrix Managed Agents core
-  workspace auth -> FastAPI compatibility routes -> durable resources/events
+  Organization auth -> FastAPI compatibility routes -> durable resources/events
                               |
                               v
 Deep Agents execution adapter
@@ -31,26 +31,28 @@ The Votrix core owns:
 
 - FastAPI paths and models for the covered `/v1` Managed Agents-shaped resources.
 - Beta/version-header validation and official-SDK contract tests.
-- Workspace-scoped authentication interfaces and API-key implementations.
+- Organization-scoped authentication interfaces and API-key implementations.
 - Database API-key create/list/retrieve/revoke/rotate lifecycle, expiration,
   `api`/`api_keys:manage`/`worker` scopes, and trusted first-key bootstrap.
 - Request IDs, stable error codes, and authenticated request audit correlation.
 - Agent/version immutability and session version pinning.
 - Environment and session resources, append-only events, session state, and work records.
 - Deep Agents graph compilation and translation of runtime events into public events.
-- Server-controlled model-provider resolution for Anthropic, OpenAI, DeepSeek, and approved extensions.
+- Server-controlled model-provider routing for Anthropic, OpenAI, DeepSeek, and
+  approved extensions, with model keys supplied only by Session-mounted
+  Organization Vault model Credentials.
 - LangGraph checkpointer selection.
 - A sandbox factory interface plus a safe no-shell default.
 - S3-compatible file and custom-skill bytes.
-- Workspace-scoped memory and credential resources.
+- Organization-scoped memory and credential resources.
 - Optional self-hosted worker mechanics and an importable deployment scheduler tick.
 - Durable work leases/generations, heartbeat, expired-attempt recovery, and
   stale-worker terminal-write fencing.
-- Atomic workspace request, active-work, daily model-token, and stored-byte
+- Atomic Organization request, active-work, daily model-token, and stored-byte
   quotas with append-only raw audit/usage ledgers.
 - Generic tenant idempotency for Session creation plus transactional event
   submission idempotency.
-- A bootstrapped workspace experience for local development.
+- A bootstrapped Organization experience for local development.
 
 The core may expose extension interfaces, but it must stay useful without a private repository.
 
@@ -58,15 +60,16 @@ The core may expose extension interfaces, but it must stay useful without a priv
 
 A hosted or enterprise layer owns:
 
-- Organizations, users, memberships, invitations, teams, and human/service-account identity.
+- Users, memberships, invitations, teams, and human/service-account identity.
 - RBAC/ABAC, SSO/SAML/OIDC, SCIM, trust grants, and support impersonation policy.
-- Advanced policy beyond the core's narrow workspace quotas, including sandbox
+- Advanced policy beyond the core's narrow Organization quotas, including sandbox
   compute/egress, tool/MCP, retention, and monetary spend controls.
 - Commercial billing after the BYOK/free beta: price books, currency amounts,
   balances/credits, top-ups, refunds, Stripe, invoices, plans, seats, and taxes.
 - Enterprise audit export, automated retention, legal hold, external tamper
   anchoring, and administrator/support access logging.
-- Hosted model gateways and tenant credential policy.
+- Hosted model gateways and tenant credential policy, while preserving VMA's
+  rule that tenant model traffic never falls back to a VMA-owned model key.
 - KMS-backed secret management, credential rotation, OAuth enrollment/refresh, and revocation.
 - Remote sandbox fleet selection, isolation, images, lifecycle, snapshots, and regional placement.
 - A cross-process preview broker and distributed run locks.
@@ -77,24 +80,24 @@ These concerns should not become required foreign keys or imports in the Votrix 
 
 ## Tenant model
 
-The only tenant boundary inside the core is `workspace_id`.
+The only tenant boundary inside the core is `organization_id`.
 
 ```text
 Hosted/private identity:
-  user or service account -> organization -> workspace -> role/policy
+  user or service account -> Organization -> role/policy
 
 VMA core request:
-  AuthProvider -> CurrentWorkspace(id=...) -> scoped resources and execution
+  AuthProvider -> CurrentOrganization(id=...) -> scoped resources and execution
 ```
 
-Local self-hosting bootstraps an explicit workspace and database-backed key:
+Local self-hosting bootstraps an explicit Organization and database-backed key:
 
 ```text
-bootstrap CLI -> workspace record + one-time administrator key
-request API key -> authenticated workspace_id
+bootstrap CLI -> Organization record + one-time administrator key
+request API key -> authenticated organization_id
 ```
 
-Public resource paths remain workspace-free:
+Public resource paths remain Organization-free:
 
 ```text
 /v1/agents
@@ -102,9 +105,9 @@ Public resource paths remain workspace-free:
 /v1/files
 ```
 
-The workspace comes from the authenticated request. Do not add public paths such as `/v1/workspaces/{workspace_id}/agents` to the compatibility API.
+The Organization comes from the authenticated request. Do not add public paths such as `/v1/organizations/{organization_id}/agents` to the compatibility API.
 
-Every core persistent resource and query must be scoped by workspace unless the function is explicitly internal and named accordingly. Object-storage keys must begin with a workspace partition. Public session IDs must resolve through a workspace-filtered database record before VMA uses the opaque internal LangGraph thread ID.
+Every core persistent resource and query must be scoped by Organization unless the function is explicitly internal and named accordingly. Object-storage keys must begin with an Organization partition. Public session IDs must resolve through an Organization-filtered database record before VMA uses the opaque internal LangGraph thread ID.
 
 ## Application composition
 
@@ -116,16 +119,16 @@ from votrix_managed_agents import create_app
 app = create_app(auth_provider=HostedAuthProvider())
 ```
 
-An auth provider implements the public `AuthProvider` protocol and returns `CurrentWorkspace`. Core routers and query helpers then operate inside that scope.
+An auth provider implements the public `AuthProvider` protocol and returns `CurrentOrganization`. Core routers and query helpers then operate inside that scope.
 
 The repository includes:
 
 - `DatabaseApiKeyAuthProvider` for keys stored in the core database.
 - The injectable `AuthProvider` path for hosted identity.
 
-Those providers authenticate a workspace. Core request/quota activity can be
+Those providers authenticate an Organization. Core request/quota activity can be
 written to the append-only audit ledger, but the providers do not add
-organization membership, roles, SSO, paid billing, or enterprise audit policy.
+membership, roles, SSO, paid billing, or enterprise audit policy.
 
 Prefer in-process provider injection over copying routers or placing an API-shape translation proxy in front of core. Run VMA as a separate internal service only when the deployment intentionally wants a network boundary and accepts the additional identity, tracing, and consistency work.
 
@@ -133,13 +136,29 @@ Prefer in-process provider injection over copying routers or placing an API-shap
 
 ### Models
 
-Agent resources select a provider/model, while credentials and endpoints remain server-owned. Built-in settings and `VMA_MODEL_PROVIDERS` construct LangChain models explicitly. Tenant-specific values must not be registered in Deep Agents' process-global profile registries.
+Agent resources select a provider/model. Built-in settings and
+`VMA_MODEL_PROVIDERS` control approved adapters, endpoints, routing policy,
+defaults, capabilities, and an internal Vault credential-slot name. They never
+contain a model API key, and VMA never reads model API keys from process
+environment. Each key-based Session must select a matching model Credential
+from its ordered `vault_ids`; absence returns `422` with code
+`model_credential_required`. Keyless `fake` and `ollama` adapters use source
+`none`.
 
-A hosted product may replace direct provider keys with a tenant-aware model gateway, but must preserve the provider capability checks and usage attribution. See [model providers](./openai-compatible-providers.md).
+The public model-Credential API is deliberately distinct from generic Vault
+Credentials used by MCP servers or other integrations. The provider ID maps to
+the private slot internally, so callers do not submit names such as
+`OPENROUTER_API_KEY`. One immutable model-Credential binding is stored per
+Session in the MVP, which requires a multiagent coordinator and its pinned
+subagents to use the same provider.
+
+A hosted product may route a tenant-supplied Vault credential through a
+tenant-aware model gateway, but must preserve provider capability checks,
+credential isolation, and usage attribution. See [model providers](./openai-compatible-providers.md).
 
 ### Sandboxes
 
-`VMA_SANDBOX_FACTORY=module:attribute` injects a backend for a workspace/session/environment. A hosted implementation should return a remote `SandboxBackendProtocol` backed by containers or VMs. It is responsible for all actual security policy and lifecycle behavior.
+`VMA_SANDBOX_FACTORY=module:attribute` injects a backend for an Organization/Session/Environment. A hosted implementation should return a remote `SandboxBackendProtocol` backed by containers or VMs. It is responsible for all actual security policy and lifecycle behavior.
 
 The default `StateBackend` is safe because it has no shell, not because it is a production sandbox. The opt-in `LocalShellBackend` executes on the host and is excluded from untrusted production. See [sandbox runtime](./sandbox-runtime.md).
 
@@ -147,7 +166,7 @@ The default `StateBackend` is safe because it has no shell, not because it is a 
 
 LangGraph checkpoints preserve graph state and interrupts. VMA chooses Postgres for production-style DSNs and a separate SQLite checkpoint database locally. Checkpoints are internal runtime state; SQLAlchemy resource/event tables remain the public control-plane source of truth.
 
-Cross-thread memory, files, and artifacts should use explicitly tenant-namespaced stores or object storage. No backend namespace may be derived from a caller-controlled public ID without a workspace lookup.
+Cross-thread memory, files, and artifacts should use explicitly tenant-namespaced stores or object storage. No backend namespace may be derived from a caller-controlled public ID without an Organization lookup.
 
 ### MCP and secrets
 
@@ -193,7 +212,7 @@ Core tables should remain independently migratable:
 
 ```text
 Core:
-  workspaces
+  organizations
   api_keys
   agents
   agent_versions
@@ -201,14 +220,12 @@ Core:
   sessions
   session_events
   managed_resources and versions
-  workspace_quotas and quota counters/reservations
+  organization_quotas and quota counters/reservations
   audit_ledger and usage_ledger
   tenant_idempotency and session_event_idempotency
 
 Hosted/private:
-  organizations
   organization_members
-  workspace_members
   roles and grants
   service_accounts
   billing_accounts, price books, balances, invoices, and payments
@@ -217,7 +234,7 @@ Hosted/private:
   support_access
 ```
 
-Hosted tables may reference core workspaces. Core migrations and queries must not require hosted tables to exist.
+Hosted tables may reference core Organizations. Core migrations and queries must not require hosted tables to exist.
 
 The same rule applies to code dependencies: hosted code may import VMA, but VMA must not import private hosted packages. Provider hooks may accept implementations from the application at runtime.
 
@@ -244,12 +261,13 @@ See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations
 
 ## Votrix core invariants
 
-- Every persistent core resource is workspace-scoped.
-- Every public lookup resolves the current workspace before returning or mutating data.
-- Object-storage keys include a workspace partition.
+- Every persistent core resource is Organization-scoped.
+- Every public lookup resolves the current Organization before returning or mutating data.
+- Object-storage keys include an Organization partition.
 - Public session IDs are never accepted as raw checkpoint authorization.
 - Agent revisions are immutable; sessions resume with their pinned revision.
-- Model endpoints, API keys, MCP headers, and sandbox IDs are server-controlled and redacted.
+- Model endpoints and routing are server-controlled; model API keys are
+  Organization Vault-only. Model keys, MCP headers, and sandbox IDs are redacted.
 - Tenant-specific Deep Agents provider/harness profiles are never registered globally.
 - Tenant shell execution never occurs in the web/worker host unless explicit unsafe local mode is enabled.
 - Durable public events are persisted independently from best-effort previews.
@@ -257,12 +275,12 @@ See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations
   lease generation before terminal writes.
 - Audit and usage facts are append-only; raw usage is not priced billing.
 - Hosted features may extend core but cannot become prerequisites for basic self-hosting.
-- New resource families include cross-workspace non-visibility tests.
+- New resource families include cross-Organization non-visibility tests.
 - Documentation labels wire compatibility separately from runtime and production semantics.
 
 ## Current boundary gaps
 
-The interfaces for hosted implementations are not equally mature. Workspace
+The interfaces for hosted implementations are not equally mature. Organization
 auth, narrow quotas, raw append-only ledgers, sandbox injection, and
 server-controlled model configuration exist. A cross-process preview broker,
 complete distributed Session/checkpoint ownership, KMS secret management,

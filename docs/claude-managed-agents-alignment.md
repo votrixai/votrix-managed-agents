@@ -44,7 +44,7 @@ Claude Managed Agents combines a versioned control plane with managed execution 
 | Public concept | VMA control-plane representation | Deep Agents/runtime representation | Status |
 | --- | --- | --- | --- |
 | Agent | Mutable `agents` pointer plus immutable `agent_versions` snapshot | A graph compiled from the pinned snapshot | Implemented control plane; partial execution |
-| Environment | Workspace-scoped environment config | A backend selected from `StateBackend`, explicit unsafe local shell, built-in Session-bound E2B, or `VMA_SANDBOX_FACTORY` | Implemented config; provider-specific enforcement |
+| Environment | Organization-scoped environment config | A backend selected from `StateBackend`, explicit unsafe local shell, built-in Session-bound E2B, or `VMA_SANDBOX_FACTORY` | Implemented config; provider-specific enforcement |
 | Session | Pinned agent version, environment, resources, state, event sequence, checkpoint thread ID | One LangGraph thread plus run context | Partial |
 | Events | Append-only database records and SSE | LangGraph message/update chunks translated to public events | Partial |
 | Tool policy | Versioned toolset configuration and session continuation events | Deep Agents tool filtering plus LangGraph human-in-the-loop interrupts | Partial |
@@ -63,7 +63,7 @@ See [known incompatibilities](./known-incompatibilities.md) for the exact places
 The FastAPI layer owns:
 
 - `/v1` paths, beta/version headers, request validation, response models, errors, and pagination.
-- Workspace authentication and lookup.
+- Organization authentication and lookup.
 - Public resource IDs and relationships.
 - Optimistic agent versioning and immutable snapshots.
 - Session state and append-only public event history.
@@ -94,7 +94,7 @@ Deep Agents owns the in-process graph loop:
 
 Deep Agents does not provide tenant authentication, API resources, durable work
 ownership, a remote sandbox fleet, quotas, audit, billing, or Claude-compatible
-events. VMA now supplies the public-beta workspace auth, durable work,
+events. VMA now supplies the public-beta Organization auth, durable work,
 quota/raw-ledger, and event responsibilities; remote sandbox infrastructure and
 enterprise/commercial policy remain separate layers.
 
@@ -122,7 +122,7 @@ Provider profiles and harness profiles in Deep Agents are process-global. VMA mu
 
 A normal turn is expected to move through this sequence:
 
-1. Authenticate the caller and resolve the workspace.
+1. Authenticate the caller and resolve the Organization.
 2. Lock or claim the session work item.
 3. Load the pinned agent revision, environment, event history, resources, vault credentials, memory context, and subagent roster.
 4. Open the run-scoped backend and durable checkpointer.
@@ -190,7 +190,7 @@ Deep Agents also adds a general-purpose subagent by default when `task` is enabl
 
 ## Votrix core and hosted boundary
 
-The Votrix core stops at workspace-scoped resources and injectable providers. A hosted layer may import:
+The Votrix core stops at Organization-scoped resources and injectable providers. A hosted layer may import:
 
 ```python
 from votrix_managed_agents import create_app
@@ -198,7 +198,7 @@ from votrix_managed_agents import create_app
 app = create_app(auth_provider=HostedAuthProvider())
 ```
 
-The core includes database API keys, narrow workspace quotas, and append-only
+The core includes database API keys, narrow Organization quotas, and append-only
 raw audit/usage ledgers for the public beta. The hosted layer still owns
 organizations, membership, RBAC, SSO, Postgres RLS, paid billing/pricing,
 enterprise audit export/retention, managed secrets, sandbox fleets, and

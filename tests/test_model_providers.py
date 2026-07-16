@@ -1,7 +1,9 @@
 import base64
 import json
 
-from app.config import get_settings
+import pytest
+
+from app.config import Settings, get_settings
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
 from app.secret_cipher import ENCRYPTED_PREFIX, decrypt_secret
@@ -16,7 +18,6 @@ async def test_model_provider_catalog_is_stable_and_secret_free(client, monkeypa
                 "open-router": {
                     "display_name": "OpenRouter Fast",
                     "adapter": "openrouter",
-                    "api_key": "server-secret-value",
                     "api_key_env": "INTERNAL_OPENROUTER_SECRET_NAME",
                     "base_url": "https://private-gateway.example/v1",
                     "default_model": "deepseek/deepseek-v4-pro",
@@ -71,7 +72,6 @@ async def test_model_provider_catalog_is_stable_and_secret_free(client, monkeypa
 
     serialized = response.text
     for forbidden in (
-        "server-secret-value",
         "INTERNAL_OPENROUTER_SECRET_NAME",
         "private-gateway.example",
         "private_routing_token",
@@ -80,6 +80,19 @@ async def test_model_provider_catalog_is_stable_and_secret_free(client, monkeypa
         "model_kwargs",
     ):
         assert forbidden not in serialized
+
+
+def test_model_provider_registry_rejects_embedded_api_keys():
+    with pytest.raises(ValueError, match="must not embed model API keys"):
+        Settings(
+            _env_file=None,
+            vma_model_providers={
+                "openrouter": {
+                    "adapter": "openrouter",
+                    "api_key": "must-never-be-stored-in-provider-config",
+                }
+            },
+        )
 
 
 async def test_retrieve_model_provider_and_not_found(client, monkeypatch):

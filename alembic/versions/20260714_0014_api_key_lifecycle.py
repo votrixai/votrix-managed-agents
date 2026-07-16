@@ -44,15 +44,15 @@ def upgrade() -> None:
         )
     )
     op.create_index(
-        "ix_api_keys_workspace_revoked",
+        "ix_api_keys_organization_revoked",
         "api_keys",
-        ["workspace_id", "revoked_at"],
+        ["organization_id", "revoked_at"],
         unique=False,
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_api_keys_workspace_revoked", table_name="api_keys")
+    op.drop_index("ix_api_keys_organization_revoked", table_name="api_keys")
     op.drop_column("api_keys", "replaces_key_id")
     op.drop_column("api_keys", "replaced_by_key_id")
     op.drop_column("api_keys", "revocation_reason")

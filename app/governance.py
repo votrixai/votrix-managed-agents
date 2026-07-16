@@ -35,7 +35,7 @@ class GovernanceLimits:
 
 
 @dataclass(frozen=True)
-class WorkspaceQuotaOverrides:
+class OrganizationQuotaOverrides:
     requests_per_minute: int | None = None
     max_active_work: int | None = None
     daily_model_tokens: int | None = None
@@ -88,7 +88,7 @@ class GovernanceCleanupResult:
 class TenantIdempotencyClaim:
     disposition: Literal["acquired", "replay", "in_progress", "conflict"]
     record_id: str
-    workspace_id: str
+    organization_id: str
     operation: str
     request_fingerprint: str
     response_status: int | None = None
@@ -115,7 +115,7 @@ class QuotaExceededError(RuntimeError):
     def __init__(self, decision: QuotaDecision):
         self.decision = decision
         super().__init__(
-            f"Workspace quota exceeded for {decision.metric}: "
+            f"Organization quota exceeded for {decision.metric}: "
             f"used={decision.used}, limit={decision.limit}"
         )
 
@@ -133,14 +133,14 @@ class GovernanceService:
     def __init__(self, defaults: GovernanceLimits = DEFAULT_GOVERNANCE_LIMITS):
         self.defaults = defaults
 
-    async def effective_limits(self, workspace_id: str) -> GovernanceLimits:
+    async def effective_limits(self, organization_id: str) -> GovernanceLimits:
         async with session_scope() as db:
-            return await resolve_workspace_limits(db, workspace_id, defaults=self.defaults)
+            return await resolve_organization_limits(db, organization_id, defaults=self.defaults)
 
-    async def configure_workspace(
+    async def configure_organization(
         self,
-        workspace_id: str,
-        overrides: WorkspaceQuotaOverrides,
+        organization_id: str,
+        overrides: OrganizationQuotaOverrides,
         *,
         actor_type: str = "system",
         actor_id: str | None = None,
@@ -148,9 +148,9 @@ class GovernanceService:
         metadata: dict[str, Any] | None = None,
     ) -> GovernanceLimits:
         async with session_scope() as db:
-            await governance_q.set_workspace_quota_overrides(
+            await governance_q.set_organization_quota_overrides(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 requests_per_minute=overrides.requests_per_minute,
                 max_active_work=overrides.max_active_work,
                 daily_model_tokens=overrides.daily_model_tokens,
@@ -160,13 +160,13 @@ class GovernanceService:
             limits = _resolve_limits(overrides, self.defaults)
             await governance_q.append_audit_entry(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 actor_type=actor_type,
                 actor_id=actor_id,
-                action="workspace.quota.configure",
+                action="organization.quota.configure",
                 outcome="success",
-                resource_type="workspace",
-                resource_id=workspace_id,
+                resource_type="organization",
+                resource_id=organization_id,
                 request_id=request_id,
                 data={
                     "overrides": _limits_dict(overrides),
@@ -178,7 +178,7 @@ class GovernanceService:
 
     async def authorize_request(
         self,
-        workspace_id: str,
+        organization_id: str,
         *,
         actor_type: str = "api_key",
         actor_id: str | None = None,
@@ -194,10 +194,10 @@ class GovernanceService:
         window_start = instant.replace(second=0, microsecond=0)
         reset_at = window_start + timedelta(minutes=1)
         async with session_scope() as db:
-            limits = await resolve_workspace_limits(db, workspace_id, defaults=self.defaults)
+            limits = await resolve_organization_limits(db, organization_id, defaults=self.defaults)
             allowed, used = await governance_q.consume_counter(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.REQUESTS_METRIC,
                 window_start=window_start,
                 window_seconds=60,
@@ -216,7 +216,7 @@ class GovernanceService:
             if audit:
                 await governance_q.append_audit_entry(
                     db,
-                    workspace_id=workspace_id,
+                    organization_id=organization_id,
                     actor_type=actor_type,
                     actor_id=actor_id,
                     action="api.request.authorize",
@@ -237,7 +237,7 @@ class GovernanceService:
 
     async def acquire_active_work(
         self,
-        workspace_id: str,
+        organization_id: str,
         reference_id: str,
         *,
         actor_id: str | None = None,
@@ -250,7 +250,7 @@ class GovernanceService:
         async with session_scope() as db:
             decision = await self.acquire_active_work_in_session(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 reference_id=reference_id,
                 actor_id=actor_id,
                 request_id=request_id,
@@ -264,7 +264,7 @@ class GovernanceService:
         self,
         db: AsyncSession,
         *,
-        workspace_id: str,
+        organization_id: str,
         reference_id: str,
         actor_id: str | None = None,
         request_id: str | None = None,
@@ -273,10 +273,10 @@ class GovernanceService:
     ) -> QuotaDecision:
         reference_id = _required_text(reference_id, "reference_id", max_length=255)
         instant = _as_utc(now)
-        limits = await resolve_workspace_limits(db, workspace_id, defaults=self.defaults)
+        limits = await resolve_organization_limits(db, organization_id, defaults=self.defaults)
         reservation, created = await governance_q.claim_quota_reservation(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             quota_name=governance_q.ACTIVE_WORK_METRIC,
             reference_id=reference_id,
             amount=1,
@@ -286,7 +286,7 @@ class GovernanceService:
         if not created:
             used = await governance_q.get_counter_value(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.ACTIVE_WORK_METRIC,
                 window_start=ACTIVE_GAUGE_WINDOW,
             )
@@ -300,7 +300,7 @@ class GovernanceService:
         else:
             allowed, used = await governance_q.consume_counter(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.ACTIVE_WORK_METRIC,
                 window_start=ACTIVE_GAUGE_WINDOW,
                 window_seconds=0,
@@ -318,7 +318,7 @@ class GovernanceService:
 
         await governance_q.append_audit_entry(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             actor_type="worker",
             actor_id=actor_id,
             action="work.quota.acquire",
@@ -333,7 +333,7 @@ class GovernanceService:
 
     async def release_active_work(
         self,
-        workspace_id: str,
+        organization_id: str,
         reference_id: str,
         *,
         actor_id: str | None = None,
@@ -345,7 +345,7 @@ class GovernanceService:
         async with session_scope() as db:
             result = await self.release_active_work_in_session(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 reference_id=reference_id,
                 actor_id=actor_id,
                 request_id=request_id,
@@ -358,7 +358,7 @@ class GovernanceService:
         self,
         db: AsyncSession,
         *,
-        workspace_id: str,
+        organization_id: str,
         reference_id: str,
         actor_id: str | None = None,
         request_id: str | None = None,
@@ -368,7 +368,7 @@ class GovernanceService:
         instant = _as_utc(now)
         reservation, released = await governance_q.release_quota_reservation(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             quota_name=governance_q.ACTIVE_WORK_METRIC,
             reference_id=reference_id,
             released_at=instant,
@@ -376,7 +376,7 @@ class GovernanceService:
         if reservation is None:
             used = await governance_q.get_counter_value(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.ACTIVE_WORK_METRIC,
                 window_start=ACTIVE_GAUGE_WINDOW,
             )
@@ -384,7 +384,7 @@ class GovernanceService:
         elif not released:
             used = await governance_q.get_counter_value(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.ACTIVE_WORK_METRIC,
                 window_start=ACTIVE_GAUGE_WINDOW,
             )
@@ -392,7 +392,7 @@ class GovernanceService:
         else:
             used = await governance_q.adjust_counter(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.ACTIVE_WORK_METRIC,
                 window_start=ACTIVE_GAUGE_WINDOW,
                 window_seconds=0,
@@ -401,7 +401,7 @@ class GovernanceService:
             result = WorkReleaseResult(True, used)
         await governance_q.append_audit_entry(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             actor_type="worker",
             actor_id=actor_id,
             action="work.quota.release",
@@ -420,7 +420,7 @@ class GovernanceService:
 
     async def preflight_model_tokens(
         self,
-        workspace_id: str,
+        organization_id: str,
         *,
         estimated_tokens: int = 0,
         actor_id: str | None = None,
@@ -434,7 +434,7 @@ class GovernanceService:
         async with session_scope() as db:
             decision = await self.preflight_model_tokens_in_session(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 estimated_tokens=estimated_tokens,
                 actor_id=actor_id,
                 request_id=request_id,
@@ -450,7 +450,7 @@ class GovernanceService:
         self,
         db: AsyncSession,
         *,
-        workspace_id: str,
+        organization_id: str,
         estimated_tokens: int = 0,
         actor_id: str | None = None,
         request_id: str | None = None,
@@ -461,18 +461,18 @@ class GovernanceService:
     ) -> QuotaDecision:
         """Check a turn before provider execution without pretending usage is known.
 
-        A zero estimate admits a turn while the workspace is below its daily
+        A zero estimate admits a turn while the organization is below its daily
         limit. If that turn's actual usage crosses the limit, postflight still
         records all tokens and reports the overrun; subsequent preflights fail.
         """
         _nonnegative_int(estimated_tokens, "estimated_tokens")
         instant = _as_utc(now)
-        limits = await resolve_workspace_limits(db, workspace_id, defaults=self.defaults)
+        limits = await resolve_organization_limits(db, organization_id, defaults=self.defaults)
         window_start = instant.replace(hour=0, minute=0, second=0, microsecond=0)
         reset_at = window_start + timedelta(days=1)
         used = await governance_q.get_counter_value(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             metric=governance_q.MODEL_TOKENS_METRIC,
             window_start=window_start,
         )
@@ -496,7 +496,7 @@ class GovernanceService:
         if audit:
             await governance_q.append_audit_entry(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 actor_type="runtime",
                 actor_id=actor_id,
                 action="model_tokens.preflight",
@@ -514,7 +514,7 @@ class GovernanceService:
 
     async def postflight_model_tokens(
         self,
-        workspace_id: str,
+        organization_id: str,
         total_tokens: int,
         *,
         idempotency_key: str,
@@ -532,7 +532,7 @@ class GovernanceService:
         async with session_scope() as db:
             decision = await self.postflight_model_tokens_in_session(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 total_tokens=total_tokens,
                 idempotency_key=idempotency_key,
                 provider=provider,
@@ -552,7 +552,7 @@ class GovernanceService:
         self,
         db: AsyncSession,
         *,
-        workspace_id: str,
+        organization_id: str,
         total_tokens: int,
         idempotency_key: str,
         provider: str | None = None,
@@ -573,7 +573,7 @@ class GovernanceService:
         usage_data["accounting_phase"] = "postflight_actual"
         entry, created = await governance_q.append_usage_entry_once(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             metric=governance_q.MODEL_TOKENS_METRIC,
             quantity=total_tokens,
             unit="token",
@@ -600,16 +600,16 @@ class GovernanceService:
             )
             decision = await _model_token_idempotent_decision(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 entry=entry,
                 defaults=self.defaults,
             )
         else:
-            limits = await resolve_workspace_limits(db, workspace_id, defaults=self.defaults)
+            limits = await resolve_organization_limits(db, organization_id, defaults=self.defaults)
             window_start = instant.replace(hour=0, minute=0, second=0, microsecond=0)
             used = await governance_q.adjust_counter(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 metric=governance_q.MODEL_TOKENS_METRIC,
                 window_start=window_start,
                 window_seconds=24 * 60 * 60,
@@ -631,7 +631,7 @@ class GovernanceService:
             )
         await governance_q.append_audit_entry(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             actor_type="runtime",
             actor_id=actor_id,
             action="model_tokens.postflight",
@@ -654,7 +654,7 @@ class GovernanceService:
 
     async def consume_model_tokens(
         self,
-        workspace_id: str,
+        organization_id: str,
         total_tokens: int,
         *,
         idempotency_key: str,
@@ -670,7 +670,7 @@ class GovernanceService:
     ) -> QuotaDecision:
         """Backward-compatible alias for postflight actual-usage accounting."""
         return await self.postflight_model_tokens(
-            workspace_id,
+            organization_id,
             total_tokens,
             idempotency_key=idempotency_key,
             provider=provider,
@@ -686,7 +686,7 @@ class GovernanceService:
 
     async def record_audit(
         self,
-        workspace_id: str,
+        organization_id: str,
         *,
         actor_type: str,
         actor_id: str | None,
@@ -701,7 +701,7 @@ class GovernanceService:
         async with session_scope() as db:
             entry = await governance_q.append_audit_entry(
                 db,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 actor_type=actor_type,
                 actor_id=actor_id,
                 action=action,
@@ -717,7 +717,7 @@ class GovernanceService:
 
     async def record_usage(
         self,
-        workspace_id: str,
+        organization_id: str,
         *,
         metric: str,
         quantity: int,
@@ -742,7 +742,7 @@ class GovernanceService:
                 )
                 entry, created = await governance_q.append_usage_entry_once(
                     db,
-                    workspace_id=workspace_id,
+                    organization_id=organization_id,
                     metric=metric,
                     quantity=quantity,
                     unit=unit,
@@ -770,7 +770,7 @@ class GovernanceService:
             else:
                 entry = await governance_q.append_usage_entry(
                     db,
-                    workspace_id=workspace_id,
+                    organization_id=organization_id,
                     metric=metric,
                     quantity=quantity,
                     unit=unit,
@@ -789,12 +789,12 @@ class GovernanceService:
     async def enforce_storage_quota(
         self,
         db: AsyncSession,
-        workspace_id: str,
+        organization_id: str,
         incoming_bytes: int,
     ) -> QuotaDecision:
         return await enforce_storage_quota(
             db,
-            workspace_id,
+            organization_id,
             incoming_bytes,
             defaults=self.defaults,
         )
@@ -803,14 +803,14 @@ class GovernanceService:
         self,
         db: AsyncSession,
         *,
-        workspace_id: str,
+        organization_id: str,
         operation: str,
         idempotency_key: str,
         request_payload: Any,
     ) -> TenantIdempotencyClaim:
         return await claim_tenant_idempotency(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             operation=operation,
             idempotency_key=idempotency_key,
             request_payload=request_payload,
@@ -853,7 +853,7 @@ class GovernanceService:
 async def acquire_active_work_in_session(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     reference_id: str,
     actor_id: str | None = None,
     request_id: str | None = None,
@@ -864,7 +864,7 @@ async def acquire_active_work_in_session(
     """Public transaction-scoped active-work acquisition helper."""
     return await GovernanceService(defaults).acquire_active_work_in_session(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         reference_id=reference_id,
         actor_id=actor_id,
         request_id=request_id,
@@ -876,7 +876,7 @@ async def acquire_active_work_in_session(
 async def release_active_work_in_session(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     reference_id: str,
     actor_id: str | None = None,
     request_id: str | None = None,
@@ -886,7 +886,7 @@ async def release_active_work_in_session(
     """Public transaction-scoped idempotent active-work release helper."""
     return await GovernanceService(defaults).release_active_work_in_session(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         reference_id=reference_id,
         actor_id=actor_id,
         request_id=request_id,
@@ -919,13 +919,13 @@ async def cleanup_retained_state_in_session(
     )
 
 
-async def resolve_workspace_limits(
+async def resolve_organization_limits(
     db: AsyncSession,
-    workspace_id: str,
+    organization_id: str,
     *,
     defaults: GovernanceLimits = DEFAULT_GOVERNANCE_LIMITS,
 ) -> GovernanceLimits:
-    quota = await governance_q.get_workspace_quota(db, workspace_id)
+    quota = await governance_q.get_organization_quota(db, organization_id)
     if quota is None:
         return defaults
     return GovernanceLimits(
@@ -952,7 +952,7 @@ async def resolve_workspace_limits(
 
 async def enforce_storage_quota(
     db: AsyncSession,
-    workspace_id: str,
+    organization_id: str,
     incoming_bytes: int,
     *,
     defaults: GovernanceLimits = DEFAULT_GOVERNANCE_LIMITS,
@@ -961,10 +961,10 @@ async def enforce_storage_quota(
 
     The caller must insert the File/Skill resource and commit using this same
     ``db`` session. Releasing the transaction before the insert would also
-    release the per-workspace serialization lock.
+    release the per-organization serialization lock.
     """
     _nonnegative_int(incoming_bytes, "incoming_bytes")
-    quota = await governance_q.ensure_and_lock_workspace_quota(db, workspace_id)
+    quota = await governance_q.ensure_and_lock_organization_quota(db, organization_id)
     limits = GovernanceLimits(
         requests_per_minute=(
             quota.requests_per_minute
@@ -985,7 +985,7 @@ async def enforce_storage_quota(
             quota.storage_bytes if quota.storage_bytes is not None else defaults.storage_bytes
         ),
     )
-    used = await governance_q.workspace_storage_bytes(db, workspace_id)
+    used = await governance_q.organization_storage_bytes(db, organization_id)
     projected = used + incoming_bytes
     allowed = projected <= limits.storage_bytes
     decision = QuotaDecision(
@@ -1004,7 +1004,7 @@ async def enforce_storage_quota(
 async def claim_tenant_idempotency(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     operation: str,
     idempotency_key: str,
     request_payload: Any,
@@ -1022,7 +1022,7 @@ async def claim_tenant_idempotency(
     request_fingerprint = fingerprint_idempotency_request(request_payload)
     record, created = await governance_q.claim_tenant_idempotency(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         operation=operation,
         key_hash=key_hash,
         request_fingerprint=request_fingerprint,
@@ -1038,7 +1038,7 @@ async def claim_tenant_idempotency(
     return TenantIdempotencyClaim(
         disposition=disposition,
         record_id=record.id,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         operation=operation,
         request_fingerprint=request_fingerprint,
         response_status=record.response_status,
@@ -1059,7 +1059,7 @@ async def complete_tenant_idempotency(
         raise ValueError("response_status must be a valid HTTP status")
     record = await governance_q.get_tenant_idempotency_record(
         db,
-        workspace_id=claim.workspace_id,
+        organization_id=claim.organization_id,
         record_id=claim.record_id,
         for_update=True,
     )
@@ -1102,16 +1102,16 @@ def fingerprint_idempotency_request(request_payload: Any) -> str:
 async def _model_token_idempotent_decision(
     db: AsyncSession,
     *,
-    workspace_id: str,
+    organization_id: str,
     entry,
     defaults: GovernanceLimits,
 ) -> QuotaDecision:
-    limits = await resolve_workspace_limits(db, workspace_id, defaults=defaults)
+    limits = await resolve_organization_limits(db, organization_id, defaults=defaults)
     occurred_at = _as_utc(entry.occurred_at)
     window_start = occurred_at.replace(hour=0, minute=0, second=0, microsecond=0)
     used = await governance_q.get_counter_value(
         db,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         metric=governance_q.MODEL_TOKENS_METRIC,
         window_start=window_start,
     )
@@ -1171,7 +1171,7 @@ def _require_matching_usage(
 
 
 def _resolve_limits(
-    overrides: WorkspaceQuotaOverrides,
+    overrides: OrganizationQuotaOverrides,
     defaults: GovernanceLimits,
 ) -> GovernanceLimits:
     return GovernanceLimits(
@@ -1260,7 +1260,7 @@ def _decision_data(decision: QuotaDecision) -> dict[str, Any]:
     }
 
 
-def _limits_dict(value: GovernanceLimits | WorkspaceQuotaOverrides) -> dict[str, int | None]:
+def _limits_dict(value: GovernanceLimits | OrganizationQuotaOverrides) -> dict[str, int | None]:
     return {
         "requests_per_minute": value.requests_per_minute,
         "max_active_work": value.max_active_work,

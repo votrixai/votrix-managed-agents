@@ -16,8 +16,9 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.db.engine import session_scope
-from app.db.models import Workspace
+from app.db.models import Organization
 from app.db.queries import api_keys as api_keys_q
+from app.organization import resolve_organization_id
 
 
 class BootstrapConflict(RuntimeError):
@@ -27,46 +28,56 @@ class BootstrapConflict(RuntimeError):
 @dataclass(frozen=True)
 class BootstrapResult:
     key_id: str
-    workspace_id: str
+    organization_id: str
     prefix: str
     secret: str
-    workspace_created: bool
+    organization_created: bool
 
 
 async def bootstrap_api_key(
     *,
-    workspace_id: str,
-    workspace_slug: str | None = None,
-    workspace_name: str | None = None,
+    organization_id: str,
+    organization_slug: str | None = None,
+    organization_name: str | None = None,
     key_name: str = "Bootstrap admin",
     allow_additional_admin_key: bool = False,
 ) -> BootstrapResult:
-    workspace_id = _required_text(workspace_id, "workspace_id", max_length=64)
-    workspace_slug = _required_text(workspace_slug or workspace_id, "workspace_slug", max_length=255)
-    workspace_name = _required_text(workspace_name or workspace_id, "workspace_name", max_length=255)
+    organization_id = resolve_organization_id(
+        _required_text(organization_id, "organization_id", max_length=64)
+    )
+    organization_slug = _required_text(
+        organization_slug or organization_id,
+        "organization_slug",
+        max_length=255,
+    )
+    organization_name = _required_text(
+        organization_name or organization_id,
+        "organization_name",
+        max_length=255,
+    )
     key_name = _required_text(key_name, "key_name", max_length=255)
 
     async with session_scope() as db:
         result = await db.execute(
-            select(Workspace).where(Workspace.id == workspace_id).with_for_update()
+            select(Organization).where(Organization.id == organization_id).with_for_update()
         )
-        workspace = result.scalar_one_or_none()
-        workspace_created = workspace is None
-        if workspace is None:
-            workspace = Workspace(
-                id=workspace_id,
-                slug=workspace_slug,
-                name=workspace_name,
+        organization = result.scalar_one_or_none()
+        organization_created = organization is None
+        if organization is None:
+            organization = Organization(
+                id=organization_id,
+                slug=organization_slug,
+                name=organization_name,
                 metadata_={"provisioned_by": "bootstrap_api_key"},
             )
-            db.add(workspace)
+            db.add(organization)
             await db.flush()
-        elif workspace.archived_at is not None:
-            raise BootstrapConflict(f"Workspace {workspace_id} is archived")
+        elif organization.archived_at is not None:
+            raise BootstrapConflict(f"Organization {organization_id} is archived")
 
         existing = await api_keys_q.list_api_keys(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             include_revoked=False,
         )
         active_admins = [
@@ -78,14 +89,14 @@ async def bootstrap_api_key(
         if active_admins and not allow_additional_admin_key:
             prefixes = ", ".join(item.prefix for item in active_admins)
             raise BootstrapConflict(
-                f"Workspace {workspace_id} already has an active management key ({prefixes}); "
+                f"Organization {organization_id} already has an active management key ({prefixes}); "
                 "use the authenticated API rotation flow or pass "
                 "--allow-additional-admin-key deliberately"
             )
 
         api_key, secret = await api_keys_q.create_api_key(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             name=key_name,
             scopes=[api_keys_q.API_SCOPE, api_keys_q.API_KEYS_MANAGE_SCOPE],
             created_by="bootstrap_api_key",
@@ -94,10 +105,10 @@ async def bootstrap_api_key(
         await db.commit()
         return BootstrapResult(
             key_id=api_key.id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             prefix=api_key.prefix,
             secret=secret,
-            workspace_created=workspace_created,
+            organization_created=organization_created,
         )
 
 
@@ -112,25 +123,25 @@ def _required_text(value: str, field: str, *, max_length: int) -> str:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create the first database-backed administrator API key for one workspace."
+        description="Create the first database-backed administrator API key for one Organization."
     )
-    parser.add_argument("--workspace-id", required=True)
-    parser.add_argument("--workspace-slug")
-    parser.add_argument("--workspace-name")
+    parser.add_argument("--organization-id", required=True)
+    parser.add_argument("--organization-slug")
+    parser.add_argument("--organization-name")
     parser.add_argument("--key-name", default="Bootstrap admin")
     parser.add_argument(
         "--allow-additional-admin-key",
         action="store_true",
-        help="Explicitly allow another active management key in the same workspace.",
+        help="Explicitly allow another active management key in the same Organization.",
     )
     return parser
 
 
 async def _run(args: argparse.Namespace) -> BootstrapResult:
     return await bootstrap_api_key(
-        workspace_id=args.workspace_id,
-        workspace_slug=args.workspace_slug,
-        workspace_name=args.workspace_name,
+        organization_id=args.organization_id,
+        organization_slug=args.organization_slug,
+        organization_name=args.organization_name,
         key_name=args.key_name,
         allow_additional_admin_key=args.allow_additional_admin_key,
     )
@@ -150,10 +161,10 @@ def main() -> None:
         json.dumps(
             {
                 "id": result.key_id,
-                "workspace_id": result.workspace_id,
+                "organization_id": result.organization_id,
                 "prefix": result.prefix,
                 "secret": result.secret,
-                "workspace_created": result.workspace_created,
+                "organization_created": result.organization_created,
             },
             separators=(",", ":"),
         )

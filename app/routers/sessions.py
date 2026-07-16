@@ -50,15 +50,16 @@ from app.models.sessions import (
     SessionUpdateRequest,
     session_to_response,
 )
-from app.runtime.agent_resolution import effective_agent_version, resolve_session_agent_config
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
+from app.runtime.agent_resolution import effective_agent_version, resolve_session_agent_config
+from app.runtime.model_credentials import ModelCredentialRequiredError
 from app.runtime.sandbox_lifecycle import (
     SandboxInputMismatchError,
     SandboxLifecycleConfigurationError,
     SandboxLifecycleStateError,
     append_session_file_to_sandbox,
-    build_appended_session_input_bundle,
-    build_session_input_bundle,
+    build_appended_session_input_descriptor,
+    build_session_input_descriptor_for_append,
     delete_session_sandbox,
     lock_session_sandbox_for_file_append,
     pause_session_sandbox,
@@ -100,7 +101,7 @@ from app.session_state import (
     pending_action_ids,
     starts_work,
 )
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 SESSION_LIST_STATUSES = {SESSION_IDLE, SESSION_RUNNING, SESSION_RESCHEDULING, SESSION_TERMINATED}
 VMA_PREVIEWABLE_EVENT_TYPES = frozenset({"agent.message", "agent.thinking"})
@@ -178,7 +179,7 @@ async def create_session(
         _validate_idempotency_key(idempotency_key)
         idempotency_claim = await claim_tenant_idempotency(
             db,
-            workspace_id=workspace_id_or_default(),
+            organization_id=resolve_organization_id(),
             operation="sessions.create",
             idempotency_key=idempotency_key,
             request_payload=body.model_dump(mode="json", exclude_none=False),
@@ -200,25 +201,38 @@ async def create_session(
         db,
         agent_version,
         overrides,
-        workspace_id=agent.workspace_id,
+        organization_id=agent.organization_id,
     )
 
     environment = await env_q.get_environment(db, body.environment_id)
     if environment is None or environment.deleted_at is not None or environment.archived_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
-    vault_ids = await _validate_session_vault_ids(db, body.vault_ids, workspace_id=agent.workspace_id)
+    vault_ids = await _validate_session_vault_ids(db, body.vault_ids, organization_id=agent.organization_id)
 
-    session = await sessions_q.create_session(
-        db,
-        agent=agent,
-        agent_version=agent_version.version,
-        environment=environment,
-        title=body.title,
-        metadata=normalize_metadata(body.metadata),
-        resources=[],
-        vault_ids=vault_ids,
-        agent_config=agent_config,
-    )
+    try:
+        session = await sessions_q.create_session(
+            db,
+            agent=agent,
+            agent_version=agent_version.version,
+            environment=environment,
+            title=body.title,
+            metadata=normalize_metadata(body.metadata),
+            resources=[],
+            vault_ids=vault_ids,
+            agent_config=agent_config,
+        )
+    except ModelCredentialRequiredError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "model_credential_required",
+                    "message": str(exc),
+                },
+            },
+        ) from exc
     for resource_data in body.resources:
         await create_session_resource(db, session, resource_data, allowed_types={"file", "github_repository", "memory_store"})
     await _create_multiagent_session_threads(db, session, agent_version)
@@ -370,7 +384,7 @@ async def archive_session(
     await _stop_active_session_work(db, session, reason="session.archived")
     try:
         await pause_session_sandbox(
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             session_id=session.id,
             db=db,
         )
@@ -394,7 +408,7 @@ async def delete_session(
     await _stop_active_session_work(db, session, reason="session.deleted")
     try:
         await delete_session_sandbox(
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             session_id=session.id,
             db=db,
         )
@@ -421,7 +435,7 @@ async def cancel_session(
         raise HTTPException(status_code=404, detail="Session not found")
     try:
         await pause_session_sandbox(
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             session_id=session.id,
             db=db,
         )
@@ -495,7 +509,7 @@ async def send_events(
         key_hash, request_sha256 = idempotency_identity
         existing = await idempotency_q.get_submission(
             db,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             session_id=session.id,
             key_hash=key_hash,
         )
@@ -570,7 +584,7 @@ async def send_events(
         key_hash, request_sha256 = idempotency_identity
         await idempotency_q.create_submission(
             db,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
             session_id=session.id,
             key_hash=key_hash,
             request_sha256=request_sha256,
@@ -703,7 +717,7 @@ async def add_session_resource(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SandboxLifecycleConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    previous_bundle = None
+    previous_descriptor = None
     environment = None
     if has_managed_sandbox:
         mount_path = str(
@@ -715,30 +729,43 @@ async def add_session_resource(
             db,
             agent_id=session.agent_id,
             version=session.agent_version,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if agent_version is None:
             raise HTTPException(status_code=404, detail="Agent version not found")
         environment = await env_q.get_environment(
             db,
             session.environment_id,
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if environment is None or environment.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Environment not found")
-        previous_bundle = await build_session_input_bundle(db, session, agent_version)
+        try:
+            previous_descriptor = await build_session_input_descriptor_for_append(
+                db,
+                session,
+                agent_version,
+            )
+        except (SandboxInputMismatchError, SandboxLifecycleStateError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SandboxLifecycleConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     resource = await create_session_resource(db, session, data, allowed_types={"file"})
     if has_managed_sandbox:
-        assert previous_bundle is not None and environment is not None
+        assert previous_descriptor is not None and environment is not None
         try:
-            next_bundle = await build_appended_session_input_bundle(previous_bundle, resource)
+            next_descriptor, new_file = await build_appended_session_input_descriptor(
+                previous_descriptor,
+                resource,
+            )
             await append_session_file_to_sandbox(
                 db,
                 session=session,
                 environment_config=environment.config,
-                previous_bundle=previous_bundle,
-                next_bundle=next_bundle,
+                previous_descriptor=previous_descriptor,
+                next_descriptor=next_descriptor,
+                new_file=new_file,
                 new_path=str((resource.data or {}).get("mount_path") or ""),
             )
         except (SandboxInputMismatchError, SandboxLifecycleStateError) as exc:
@@ -1105,7 +1132,7 @@ async def _session_response(db: AsyncSession, session) -> SessionResponse:
         db,
         agent_id=session.agent_id,
         version=session.agent_version,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     agent = _session_agent_snapshot(version, session.status_details or {}) if version is not None else None
     resources = await session_resources_response(db, session)
@@ -1133,7 +1160,7 @@ async def _validate_session_vault_ids(
     db: AsyncSession,
     vault_ids: list[str],
     *,
-    workspace_id: str,
+    organization_id: str,
 ) -> list[str]:
     resolved: list[str] = []
     seen: set[str] = set()
@@ -1143,7 +1170,7 @@ async def _validate_session_vault_ids(
             raise HTTPException(status_code=422, detail="vault_ids must not contain empty values")
         if vault_id in seen:
             continue
-        vault = await res_q.get_resource(db, resource_id=vault_id, resource_type="vault", workspace_id=workspace_id)
+        vault = await res_q.get_resource(db, resource_id=vault_id, resource_type="vault", organization_id=organization_id)
         if vault is None or vault.archived_at is not None:
             raise HTTPException(status_code=404, detail="Vault not found")
         resolved.append(vault_id)
@@ -1156,7 +1183,7 @@ async def _session_thread_response(db: AsyncSession, session, thread, *, archive
         db,
         agent_id=session.agent_id,
         version=session.agent_version,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     data = dict(getattr(thread, "data", None) or {})
     created_at = getattr(thread, "created_at", session.created_at)
@@ -1197,7 +1224,7 @@ async def _must_get_session_thread(db: AsyncSession, session, thread_id: str):
         resource_id=thread_id,
         resource_type="session_thread",
         parent_id=session.id,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
     )
     if thread is None:
         raise HTTPException(status_code=404, detail="Session thread not found")
@@ -1223,7 +1250,7 @@ async def _create_multiagent_session_threads(db: AsyncSession, session, version)
             db,
             agent_id=str(agent_id),
             version=int(agent_version),
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
         if referenced_version is None:
             raise HTTPException(status_code=422, detail=f"Referenced multiagent version not found: {agent_id}@{agent_version}")
@@ -1243,7 +1270,7 @@ async def _create_multiagent_session_threads(db: AsyncSession, session, version)
                     "coordinator_agent_version": session.agent_version,
                 },
             },
-            workspace_id=session.workspace_id,
+            organization_id=session.organization_id,
         )
 
 
@@ -1309,7 +1336,7 @@ async def _must_get_session(
 async def _ensure_session_inputs_mutable(db: AsyncSession, session) -> None:
     if await session_has_managed_sandbox(
         db,
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
         session_id=session.id,
     ):
         raise HTTPException(
@@ -1325,8 +1352,8 @@ async def _stream_response(
     thread_id: str | None = None,
     event_deltas: frozenset[str] = frozenset(),
 ) -> StreamingResponse:
-    workspace = getattr(request.state, "current_workspace", None)
-    workspace_id = getattr(workspace, "id", None)
+    organization = getattr(request.state, "current_organization", None)
+    organization_id = getattr(organization, "id", None)
     if after_seq is None:
         # The official SDK does not send a cursor for a newly opened stream.
         # Snapshot the durable head before returning the streaming response so
@@ -1337,7 +1364,7 @@ async def _stream_response(
             current_seq = await events_q.get_latest_event_seq(
                 db,
                 session_id=session_id,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
             )
     else:
         current_seq = after_seq
@@ -1352,14 +1379,14 @@ async def _stream_response(
             preview_queue = None
             if event_deltas:
                 preview_queue = await stack.enter_async_context(
-                    vma_preview_bus.subscribe(session_id, workspace_id=workspace_id)
+                    vma_preview_bus.subscribe(session_id, organization_id=organization_id)
                 )
 
             while True:
                 if await request.is_disconnected():
                     break
                 async with session_scope() as db:
-                    session = await sessions_q.get_session(db, session_id, workspace_id=workspace_id)
+                    session = await sessions_q.get_session(db, session_id, organization_id=organization_id)
                     if session is None or session.deleted_at is not None:
                         yield "event: error\ndata: {\"type\":\"not_found_error\",\"message\":\"Session not found\"}\n\n"
                         break
@@ -1368,7 +1395,7 @@ async def _stream_response(
                         session_id=session_id,
                         after_seq=current_seq,
                         limit=100,
-                        workspace_id=workspace_id,
+                        organization_id=organization_id,
                     )
 
                 if events:

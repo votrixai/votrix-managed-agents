@@ -396,7 +396,7 @@ async def test_session_create_resolves_full_agent_overrides_without_mutating_age
                 "type": "agent_with_overrides",
                 "id": agent["id"],
                 "version": agent["version"],
-                "model": {"id": "deepseek-chat", "provider": "deepseek"},
+                "model": {"id": "override-model", "provider": "fake"},
                 "system": None,
                 "tools": [{"type": "custom", "name": "session_lookup"}],
                 "mcp_servers": [],
@@ -407,7 +407,7 @@ async def test_session_create_resolves_full_agent_overrides_without_mutating_age
     )
     assert response.status_code == 201, response.text
     session = response.json()
-    assert session["agent"]["model"] == {"id": "deepseek-chat", "provider": "deepseek"}
+    assert session["agent"]["model"] == {"id": "override-model", "provider": "fake"}
     assert session["agent"]["system"] is None
     assert session["agent"]["tools"][0]["name"] == "session_lookup"
     assert session["agent"]["mcp_servers"] == []
@@ -579,7 +579,7 @@ async def test_model_byok_uses_first_matching_vault_and_fails_closed_on_revocati
                 db,
                 agent_id=session.agent_id,
                 version=session.agent_version,
-                workspace_id=session.workspace_id,
+                organization_id=session.organization_id,
             )
             effective = effective_agent_version(version, session.status_details)
             context = await _runtime_context_for_session(db, session, effective)
@@ -655,7 +655,9 @@ async def test_file_session_resource_creates_session_scoped_copy(client):
     stored = resources[0].data["session_file"]
     assert stored["source_file_id"] == file["id"]
     assert stored["filename"] == "notes.txt"
-    assert stored["storage"]["key"].startswith(f"workspaces/wrkspc_default/sessions_{session['id']}/resources/")
+    assert stored["storage"]["key"].startswith(
+        f"organizations/org_test/sessions_{session['id']}/resources/"
+    )
 
     response = await client.delete(f"/v1/files/{file['id']}", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text

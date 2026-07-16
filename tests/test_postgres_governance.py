@@ -11,7 +11,11 @@ from app.config import get_settings
 from app.db.engine import get_engine, reset_engine_for_tests, session_scope
 from app.db.models import Base
 from app.governance import GovernanceLimits, GovernanceService, claim_tenant_idempotency
-from app.workspace import default_workspace, set_current_workspace
+from app.organization import (
+    CurrentOrganization,
+    reset_current_organization,
+    set_current_organization,
+)
 
 
 POSTGRES_URL = os.environ.get("VMA_TEST_POSTGRES_URL", "")
@@ -31,7 +35,9 @@ async def test_database(monkeypatch):
     if not database_name.endswith("_test"):
         raise RuntimeError("VMA_TEST_POSTGRES_URL must target a database ending in _test")
     monkeypatch.setenv("DATABASE_URL", POSTGRES_URL)
-    set_current_workspace(default_workspace())
+    organization_token = set_current_organization(
+        CurrentOrganization(id="org_test", slug="test", source="postgres_test")
+    )
     get_settings.cache_clear()
     await reset_engine_for_tests()
     engine = get_engine()
@@ -43,29 +49,29 @@ async def test_database(monkeypatch):
         await connection.run_sync(Base.metadata.drop_all)
     await reset_engine_for_tests()
     get_settings.cache_clear()
-    set_current_workspace(default_workspace())
+    reset_current_organization(organization_token)
 
 
 async def test_postgres_governance_writes_are_atomic_under_concurrency() -> None:
     now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
     rate_service = GovernanceService(GovernanceLimits(requests_per_minute=5))
     decisions = await asyncio.gather(
-        *(rate_service.authorize_request("ws-rate", now=now, audit=False) for _ in range(12))
+        *(rate_service.authorize_request("org_rate", now=now, audit=False) for _ in range(12))
     )
     assert sum(decision.allowed for decision in decisions) == 5
     assert max(decision.used for decision in decisions) == 5
 
     active_service = GovernanceService(GovernanceLimits(max_active_work=1))
     same = await asyncio.gather(
-        active_service.acquire_active_work("ws-active", "work-same"),
-        active_service.acquire_active_work("ws-active", "work-same"),
+        active_service.acquire_active_work("org_active", "work-same"),
+        active_service.acquire_active_work("org_active", "work-same"),
     )
     assert all(decision.allowed for decision in same)
     assert {decision.idempotent for decision in same} == {False, True}
 
     competing = await asyncio.gather(
-        active_service.acquire_active_work("ws-compete", "work-a"),
-        active_service.acquire_active_work("ws-compete", "work-b"),
+        active_service.acquire_active_work("org_compete", "work-a"),
+        active_service.acquire_active_work("org_compete", "work-b"),
     )
     assert sum(decision.allowed for decision in competing) == 1
 
@@ -75,7 +81,7 @@ async def test_postgres_generic_idempotency_claim_has_one_owner() -> None:
         async with session_scope() as db:
             claim = await claim_tenant_idempotency(
                 db,
-                workspace_id="ws",
+                organization_id="org_test",
                 operation="agent.create",
                 idempotency_key="same-key",
                 request_payload={"name": "agent"},

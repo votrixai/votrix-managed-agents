@@ -7,7 +7,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.db.models import ManagedSession, SessionEvent
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 
 async def append_event(
@@ -25,7 +25,7 @@ async def append_event(
         update(ManagedSession)
         .where(
             ManagedSession.id == session.id,
-            ManagedSession.workspace_id == session.workspace_id,
+            ManagedSession.organization_id == session.organization_id,
         )
         .values(last_event_seq=ManagedSession.last_event_seq + 1)
         .returning(ManagedSession.last_event_seq)
@@ -35,7 +35,7 @@ async def append_event(
     set_committed_value(session, "last_event_seq", seq)
     event = SessionEvent(
         id=event_id or new_id("evt"),
-        workspace_id=session.workspace_id,
+        organization_id=session.organization_id,
         session_id=session.id,
         seq=seq,
         type=event_type,
@@ -53,13 +53,13 @@ async def list_events(
     session_id: str,
     after_seq: int = 0,
     limit: int = 100,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[SessionEvent]:
     result = await db.execute(
         select(SessionEvent)
         .where(
             SessionEvent.session_id == session_id,
-            SessionEvent.workspace_id == workspace_id_or_default(workspace_id),
+            SessionEvent.organization_id == resolve_organization_id(organization_id),
             SessionEvent.seq > after_seq,
         )
         .order_by(SessionEvent.seq.asc())
@@ -69,13 +69,13 @@ async def list_events(
 
 
 async def get_latest_event_seq(
-    db: AsyncSession, *, session_id: str, workspace_id: str | None = None
+    db: AsyncSession, *, session_id: str, organization_id: str | None = None
 ) -> int:
     result = await db.execute(
         select(SessionEvent.seq)
         .where(
             SessionEvent.session_id == session_id,
-            SessionEvent.workspace_id == workspace_id_or_default(workspace_id),
+            SessionEvent.organization_id == resolve_organization_id(organization_id),
         )
         .order_by(SessionEvent.seq.desc())
         .limit(1)

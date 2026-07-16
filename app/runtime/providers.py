@@ -1,9 +1,9 @@
 """Model provider resolution for the Deep Agents runtime.
 
 Provider routing is deliberately server-controlled. Agent resources select a provider
-and model, while credentials and endpoint URLs come from service configuration or a
-session vault. This keeps tenant-supplied JSON from silently redirecting requests to an
-arbitrary endpoint.
+and model, endpoint URLs come from service configuration, and credentials come only
+from a Session Vault. This keeps tenant-supplied JSON from silently redirecting requests
+to an arbitrary endpoint and prevents VMA from paying for tenant model traffic.
 """
 
 from __future__ import annotations
@@ -66,9 +66,9 @@ def runtime_provider_catalog(
 ) -> tuple[RuntimeProviderCatalogEntry, ...]:
     """Return the sanitized, deterministic model-provider catalog.
 
-    Provider registry entries may contain API keys, environment-variable names,
-    base URLs, and model kwargs.  This projection deliberately exposes none of
-    those values (including whether a server key is currently configured).
+    Provider registry entries contain private credential-slot names, base URLs,
+    and model kwargs, but never model API keys. This projection deliberately
+    exposes none of those private routing values.
     """
 
     resolved_settings = settings or get_settings()
@@ -115,7 +115,7 @@ def registered_runtime_provider_api_key_env(
     """Return a registered provider's internal BYOK slot.
 
     This is intentionally a server-side helper.  Public catalog responses must
-    never expose the returned environment-variable name.
+    never expose the returned credential-slot name.
     """
 
     resolved_settings = settings or get_settings()
@@ -129,7 +129,12 @@ def registered_runtime_provider_api_key_env(
     )
     if adapter in {"fake", "ollama"}:
         return None
-    return _clean_optional_str(config.get("api_key_env"))
+    credential_slot = _clean_optional_str(config.get("api_key_env"))
+    if credential_slot is None:
+        raise ProviderConfigurationError(
+            f"Provider {_normalize_provider_name(provider_id)} requires an api_key_env credential slot"
+        )
+    return credential_slot
 
 
 def runtime_provider_configured(
@@ -153,7 +158,7 @@ def runtime_provider_api_key_env(
     *,
     runtime: dict[str, Any] | None = None,
 ) -> str | None:
-    """Return the server-approved environment-variable name for model BYOK.
+    """Return the server-approved Vault credential-slot name for model BYOK.
 
     Vault credentials never get to choose an endpoint or adapter.  They may only
     supply the API key slot declared by the provider registry that would already
@@ -170,7 +175,12 @@ def runtime_provider_api_key_env(
     adapter = _clean_optional_str(provider_config.get("adapter")) or provider
     if adapter in {"ollama", "fake"}:
         return None
-    return _clean_optional_str(provider_config.get("api_key_env"))
+    credential_slot = _clean_optional_str(provider_config.get("api_key_env"))
+    if credential_slot is None:
+        raise ProviderConfigurationError(
+            f"Provider {provider} requires an api_key_env credential slot"
+        )
+    return credential_slot
 
 
 def runtime_provider_id(
@@ -213,7 +223,7 @@ def resolve_runtime_provider(
         raise ProviderConfigurationError(f"Provider {provider} requires a model id")
 
     api_key_env = _clean_optional_str(provider_config.get("api_key_env"))
-    api_key = _resolve_secret(api_key_env, provider_config, secrets or {})
+    api_key = _resolve_secret(api_key_env, secrets or {})
     if not api_key and adapter not in {"ollama", "fake"}:
         key_hint = api_key_env or f"{provider.upper()}_API_KEY"
         raise ProviderConfigurationError(f"Provider {provider} requires an API key in {key_hint}")
@@ -289,7 +299,6 @@ def _provider_registry(settings: Settings) -> dict[str, dict[str, Any]]:
     registry: dict[str, dict[str, Any]] = {
         "openai": {
             "adapter": "openai",
-            "api_key": getattr(settings, "openai_api_key", "") or os.getenv("OPENAI_API_KEY", ""),
             "api_key_env": "OPENAI_API_KEY",
             "base_url": getattr(settings, "openai_base_url", "") or os.getenv("OPENAI_BASE_URL", ""),
             "default_model": _setting(settings, "vma_default_openai_model", default="gpt-5.5"),
@@ -304,7 +313,6 @@ def _provider_registry(settings: Settings) -> dict[str, dict[str, Any]]:
         },
         "anthropic": {
             "adapter": "anthropic",
-            "api_key": getattr(settings, "anthropic_api_key", "") or os.getenv("ANTHROPIC_API_KEY", ""),
             "api_key_env": "ANTHROPIC_API_KEY",
             "default_model": _setting(settings, "vma_default_anthropic_model", default="claude-sonnet-4-6"),
             "capabilities": {
@@ -315,7 +323,6 @@ def _provider_registry(settings: Settings) -> dict[str, dict[str, Any]]:
         },
         "deepseek": {
             "adapter": "deepseek",
-            "api_key": getattr(settings, "deepseek_api_key", "") or os.getenv("DEEPSEEK_API_KEY", ""),
             "api_key_env": "DEEPSEEK_API_KEY",
             "base_url": getattr(settings, "deepseek_api_base", "") or os.getenv("DEEPSEEK_API_BASE", ""),
             "default_model": _setting(settings, "vma_default_deepseek_model", default="deepseek-chat"),
@@ -332,6 +339,9 @@ def _provider_registry(settings: Settings) -> dict[str, dict[str, Any]]:
         if not name or not isinstance(raw_config, dict):
             continue
         config = dict(raw_config)
+        # Provider profiles describe routing and the private Vault credential
+        # slot. They must never embed a service-owned model credential.
+        config.pop("api_key", None)
         config.setdefault("adapter", "openai")
         config.setdefault("api_key_env", f"{name.upper()}_API_KEY")
         registry[name] = config
@@ -373,15 +383,13 @@ def _provider_and_model(
 
 def _resolve_secret(
     env_name: str | None,
-    config: dict[str, Any],
     secrets: dict[str, str],
 ) -> str | None:
+    """Resolve only a run-scoped secret loaded from the Session Vault."""
+
     if env_name and secrets.get(env_name):
         return secrets[env_name]
-    direct = _clean_optional_str(config.get("api_key"))
-    if direct:
-        return direct
-    return _clean_optional_str(os.getenv(env_name, "")) if env_name else None
+    return None
 
 
 def _provider_capabilities(adapter: str, config: dict[str, Any]) -> RuntimeProviderCapabilities:

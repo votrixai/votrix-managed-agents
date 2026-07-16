@@ -7,8 +7,10 @@ import httpx
 import pytest
 
 from app.config import get_settings
+from app.db.engine import session_scope
+from app.db.models import Organization
 from app.factory import create_app
-from app.workspace import CurrentWorkspace
+from app.organization import CurrentOrganization
 
 
 SDK_SOURCE = Path(__file__).resolve().parents[2] / "sdks" / "python" / "src"
@@ -20,7 +22,7 @@ from votrix import AsyncVotrix, ConflictError  # noqa: E402
 
 class _SDKContractAuthProvider:
     async def authenticate(self, request, credentials):
-        return CurrentWorkspace(id="ws_sdk_contract", slug="sdk-contract", source="test")
+        return CurrentOrganization(id="org_sdk_contract", slug="sdk-contract", source="test")
 
 
 @pytest.fixture
@@ -40,6 +42,17 @@ async def sdk(monkeypatch):
         ),
     )
     get_settings.cache_clear()
+
+    async with session_scope() as db:
+        db.add(
+            Organization(
+                id="org_sdk_contract",
+                slug="sdk-contract",
+                name="SDK contract organization",
+                metadata_={},
+            )
+        )
+        await db.commit()
 
     app = create_app(auth_provider=_SDKContractAuthProvider())
     transport = httpx.ASGITransport(app=app)

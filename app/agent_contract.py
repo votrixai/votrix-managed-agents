@@ -58,7 +58,7 @@ async def normalize_agent_skill_refs(
     db: AsyncSession,
     skills: list[dict],
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     pin_latest: bool = False,
 ) -> list[dict]:
     if not isinstance(skills, list):
@@ -96,7 +96,7 @@ async def normalize_agent_skill_refs(
             db,
             resource_id=skill_id,
             resource_type="skill",
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         if skill is None:
             raise HTTPException(status_code=422, detail=f"Skill not found: {skill_id}")
@@ -112,7 +112,7 @@ async def normalize_agent_skill_refs(
                     resource_type="skill_version",
                     parent_id=skill_id,
                     version=int(latest_version),
-                    workspace_id=workspace_id,
+                    organization_id=organization_id,
                 )
                 if skill_version is None:
                     raise HTTPException(
@@ -129,7 +129,7 @@ async def normalize_agent_skill_refs(
                 resource_type="skill_version",
                 parent_id=skill_id,
                 version=version_int,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
             )
             if skill_version is None:
                 raise HTTPException(status_code=422, detail=f"Skill version not found: {skill_id}@{version}")

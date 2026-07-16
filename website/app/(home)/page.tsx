@@ -52,7 +52,7 @@ export default function HomePage() {
             Run long-lived agents on infrastructure you control.
           </h1>
           <p className="mt-7 max-w-[680px] text-pretty text-lg leading-8 text-fd-muted-foreground sm:text-xl">
-            A durable, workspace-scoped control plane aligned with the public Claude Managed
+            A durable, Organization-scoped control plane aligned with the public Claude Managed
             Agents resource and SDK shape, powered by Deep Agents and LangGraph.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">

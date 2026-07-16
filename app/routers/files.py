@@ -31,7 +31,7 @@ from app.storage import (
     save_file_bytes,
     should_store_in_object_storage,
 )
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 UPLOAD_READ_CHUNK_BYTES = 64 * 1024
 
@@ -70,7 +70,7 @@ async def upload_file(
     mime_type = file.content_type or "application/octet-stream"
     sha256 = hashlib.sha256(content).hexdigest()
     existing = await _find_deduplicated_file(db, sha256=sha256)
-    await _enforce_workspace_storage_quota(db, incoming_bytes=len(content))
+    await _enforce_organization_storage_quota(db, incoming_bytes=len(content))
     if existing is None:
         try:
             should_store_in_object_storage()
@@ -80,6 +80,7 @@ async def upload_file(
                 namespace="vma",
                 filename=file.filename or "upload",
                 category="files",
+                organization_id=resolve_organization_id(),
             )
         except StorageConfigurationError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -133,6 +134,7 @@ async def presign_file_upload(body: PresignFileBody):
         namespace=body.namespace,
         category="staged-uploads",
         filename=body.filename,
+        organization_id=resolve_organization_id(),
     )
     upload_url = await create_presigned_upload_url(
         key,
@@ -186,13 +188,14 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
     sha256 = body.sha256 or staged_sha256
     filename = body.filename or body.key.split("/")[-1]
     existing = await _find_deduplicated_file(db, sha256=sha256)
-    await _enforce_workspace_storage_quota(db, incoming_bytes=actual_size)
+    await _enforce_organization_storage_quota(db, incoming_bytes=actual_size)
     if existing is None:
         permanent_key = object_key(
             namespace="vma",
             category="files",
             filename=filename,
             content_sha256=sha256,
+            organization_id=resolve_organization_id(),
         )
         await copy_file(body.key, permanent_key, content_type=mime_type)
         storage_key = permanent_key
@@ -338,7 +341,7 @@ async def _read_upload_file_bounded(file: UploadFile, *, max_bytes: int) -> byte
     return bytes(content)
 
 
-async def _enforce_workspace_storage_quota(
+async def _enforce_organization_storage_quota(
     db: AsyncSession,
     *,
     incoming_bytes: int,
@@ -347,7 +350,7 @@ async def _enforce_workspace_storage_quota(
         return
     await governance_service().enforce_storage_quota(
         db,
-        workspace_id_or_default(),
+        resolve_organization_id(),
         incoming_bytes,
     )
 
@@ -396,9 +399,9 @@ async def _find_deduplicated_file(db: AsyncSession, *, sha256: str | None):
 
 
 def _validate_staged_upload_key(key: str) -> None:
-    workspace_prefix = f"workspaces/{workspace_id_or_default()}/"
-    if not key.startswith(workspace_prefix) or "/staged-uploads/" not in key:
+    organization_prefix = f"organizations/{resolve_organization_id()}/"
+    if not key.startswith(organization_prefix) or "/staged-uploads/" not in key:
         raise HTTPException(
             status_code=422,
-            detail="Only staged upload keys for the current workspace can be completed",
+            detail="Only staged upload keys for the current organization can be completed",
         )

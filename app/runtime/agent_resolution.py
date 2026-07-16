@@ -49,7 +49,7 @@ async def resolve_session_agent_config(
     version,
     overrides: Any | None,
     *,
-    workspace_id: str,
+    organization_id: str,
 ) -> dict[str, Any]:
     """Resolve and validate CMA create-time Agent overrides for one Session."""
     fields = overrides.model_fields_set if overrides is not None else set()
@@ -88,7 +88,7 @@ async def resolve_session_agent_config(
     skills = await normalize_agent_skill_refs(
         db,
         raw_skills,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         pin_latest=True,
     )
 

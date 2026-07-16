@@ -217,7 +217,7 @@ def provider(*, loader=None) -> E2BSandboxProvider:
 
 
 async def test_provision_returns_async_deepagents_backend_and_safe_record():
-    owner = SandboxOwner("wrkspc_private", "session_private")
+    owner = SandboxOwner("org_private", "session_private")
     policy = SandboxPolicy(
         network_access="limited",
         allowed_egress=("api.example.com", "*.files.example.com"),
@@ -251,7 +251,7 @@ async def test_provision_returns_async_deepagents_backend_and_safe_record():
     assert create["domain"] == "sandboxes.example.test"
     assert create["api_url"] == "https://control.example.test"
     assert create["sandbox_url"] == "https://runtime.example.test"
-    assert "wrkspc_private" not in repr(create["metadata"])
+    assert "org_private" not in repr(create["metadata"])
     assert "session_private" not in repr(create["metadata"])
 
     assert connection.config["policy"]["network_access"] == "limited"
@@ -281,7 +281,7 @@ async def test_provision_returns_async_deepagents_backend_and_safe_record():
     ],
 )
 async def test_network_modes_always_disable_public_traffic(policy, allow_internet):
-    await provider().provision(SandboxOwner("wrkspc_a", "session_a"), policy)
+    await provider().provision(SandboxOwner("org_a", "session_a"), policy)
 
     create = FakeSDK.create_calls[0]
     assert create["allow_internet_access"] is allow_internet
@@ -291,12 +291,12 @@ async def test_network_modes_always_disable_public_traffic(policy, allow_interne
 
 async def test_connect_checks_owner_and_policy_before_touching_e2b():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     policy = SandboxPolicy()
     created = await instance.provision(owner, policy)
 
     with pytest.raises(SandboxOwnershipError):
-        await instance.connect(created.reference, SandboxOwner("wrkspc_b", "session_a"), policy)
+        await instance.connect(created.reference, SandboxOwner("org_b", "session_a"), policy)
     with pytest.raises(SandboxPolicyError):
         await instance.connect(
             created.reference,
@@ -326,7 +326,7 @@ async def test_connect_checks_owner_and_policy_before_touching_e2b():
 
 async def test_remote_metadata_mismatch_fails_before_resume_or_mutation():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     policy = SandboxPolicy()
     created = await instance.provision(owner, policy)
     native = FakeSDK.registry[created.external_id]
@@ -346,7 +346,7 @@ async def test_remote_metadata_mismatch_fails_before_resume_or_mutation():
 
 async def test_pause_and_delete_use_static_calls_without_resuming():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     created = await instance.provision(owner, SandboxPolicy())
 
     await instance.pause(created.reference, owner)
@@ -365,7 +365,7 @@ async def test_pause_and_delete_use_static_calls_without_resuming():
 
 async def test_bootstrap_uploads_once_as_root_and_verifies_seal():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     created = await instance.provision(
         owner,
         SandboxPolicy(network_access="none", workdir="/workspace"),
@@ -432,7 +432,7 @@ async def test_bootstrap_uploads_once_as_root_and_verifies_seal():
 async def test_bootstrap_always_protects_upload_root_and_rejects_other_session_roots():
     instance = provider()
     created = await instance.provision(
-        SandboxOwner("wrkspc_a", "session_a"),
+        SandboxOwner("org_a", "session_a"),
         SandboxPolicy(workdir="/workspace"),
     )
     await instance.bootstrap(
@@ -459,7 +459,7 @@ async def test_bootstrap_always_protects_upload_root_and_rejects_other_session_r
 async def test_append_immutable_file_stages_as_root_and_advances_one_revision():
     instance = provider()
     created = await instance.provision(
-        SandboxOwner("wrkspc_a", "session_a"),
+        SandboxOwner("org_a", "session_a"),
         SandboxPolicy(workdir="/workspace"),
     )
     content = b"append-only"
@@ -538,7 +538,7 @@ async def test_append_rejects_non_canonical_or_non_cas_updates(
 ):
     instance = provider()
     created = await instance.provision(
-        SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy()
+        SandboxOwner("org_a", "session_a"), SandboxPolicy()
     )
     with pytest.raises(SandboxPolicyError, match=match):
         await instance.append_immutable_files(
@@ -557,7 +557,7 @@ async def test_append_rejects_non_canonical_or_non_cas_updates(
 async def test_discover_outputs_decodes_bounded_direct_regular_files():
     instance = provider()
     created = await instance.provision(
-        SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy()
+        SandboxOwner("org_a", "session_a"), SandboxPolicy()
     )
     native = FakeSDK.registry[created.external_id]
     native.command_stdout = json.dumps(
@@ -601,7 +601,7 @@ async def test_discover_outputs_decodes_bounded_direct_regular_files():
 async def test_discover_outputs_rejects_provider_metadata_and_decoded_size_drift():
     instance = provider()
     created = await instance.provision(
-        SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy()
+        SandboxOwner("org_a", "session_a"), SandboxPolicy()
     )
     native = FakeSDK.registry[created.external_id]
     native.command_stdout = json.dumps(
@@ -627,7 +627,7 @@ async def test_discover_outputs_rejects_provider_metadata_and_decoded_size_drift
 
 async def test_bootstrap_rejects_read_only_content_inside_mutable_root():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     created = await instance.provision(owner, SandboxPolicy(workdir="/workspace"))
 
     with pytest.raises(SandboxPolicyError, match="overlap"):
@@ -643,7 +643,7 @@ async def test_bootstrap_rejects_read_only_content_inside_mutable_root():
 
 async def test_guest_execution_is_bound_and_unsafe_template_fails_closed():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     created = await instance.provision(owner, SandboxPolicy(workdir="/workspace"))
     native = FakeSDK.registry[created.external_id]
 
@@ -665,7 +665,7 @@ async def test_guest_execution_is_bound_and_unsafe_template_fails_closed():
 
 async def test_missing_sandbox_and_sdk_failures_are_safe_provider_errors():
     instance = provider()
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     policy = SandboxPolicy()
     resolved = policy.resolved(default_timeout_seconds=900, default_command_timeout_seconds=300)
     reference = SandboxReference(
@@ -706,14 +706,14 @@ async def test_optional_dependencies_are_lazy_and_adapter_is_validated():
 
     instance = provider(loader=lazy_loader)
     assert calls == 0
-    await instance.provision(SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy())
+    await instance.provision(SandboxOwner("org_a", "session_a"), SandboxPolicy())
     assert calls == 1
 
     invalid = provider(
         loader=lambda: E2BDependencies(sandbox_class=object, backend_class=FakeBackend)
     )
     with pytest.raises(SandboxDependencyError, match="missing Sandbox.create"):
-        await invalid.provision(SandboxOwner("wrkspc_a", "session_a"), SandboxPolicy())
+        await invalid.provision(SandboxOwner("org_a", "session_a"), SandboxPolicy())
 
 
 def test_real_dependency_loader_selects_true_async_sdk_and_adapter():
@@ -725,6 +725,10 @@ def test_real_dependency_loader_selects_true_async_sdk_and_adapter():
 
 
 def test_policy_reference_and_capability_validation_are_fail_closed():
+    with pytest.raises(ValueError, match="org_\\*"):
+        SandboxOwner("tenant_a", "session_a")
+    with pytest.raises(ValueError, match="reserved"):
+        SandboxOwner("org_" + "default", "session_a")
     with pytest.raises(SandboxPolicyError, match="requires allowed_egress"):
         SandboxPolicy(network_access="limited")
     with pytest.raises(SandboxPolicyError, match="only valid with limited"):
@@ -734,7 +738,7 @@ def test_policy_reference_and_capability_validation_are_fail_closed():
     with pytest.raises(SandboxPolicyError, match="normalized absolute"):
         SandboxPolicy(workdir="/workspace/../escape")
 
-    owner = SandboxOwner("wrkspc_a", "session_a")
+    owner = SandboxOwner("org_a", "session_a")
     policy = SandboxPolicy().resolved(
         default_timeout_seconds=900,
         default_command_timeout_seconds=300,

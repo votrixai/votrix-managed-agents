@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Environment
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 
 async def create_environment(
@@ -16,11 +16,11 @@ async def create_environment(
     config: dict[str, Any],
     description: str | None = None,
     metadata: dict[str, Any] | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> Environment:
     environment = Environment(
         id=new_id("env"),
-        workspace_id=workspace_id_or_default(workspace_id),
+        organization_id=resolve_organization_id(organization_id),
         name=name,
         description=description or "",
         config=config,
@@ -35,12 +35,12 @@ async def get_environment(
     db: AsyncSession,
     environment_id: str,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> Environment | None:
     result = await db.execute(
         select(Environment).where(
             Environment.id == environment_id,
-            Environment.workspace_id == workspace_id_or_default(workspace_id),
+            Environment.organization_id == resolve_organization_id(organization_id),
         )
     )
     return result.scalar_one_or_none()
@@ -51,13 +51,13 @@ async def list_environments(
     *,
     limit: int = 50,
     include_archived: bool = False,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> list[Environment]:
     stmt = (
         select(Environment)
         .where(
             Environment.deleted_at.is_(None),
-            Environment.workspace_id == workspace_id_or_default(workspace_id),
+            Environment.organization_id == resolve_organization_id(organization_id),
         )
         .order_by(Environment.created_at.desc())
         .limit(limit)

@@ -3,8 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.db.engine import session_scope
 from app.db.models import ManagedResource
 from app.ids import new_id
-from app.workspace import DEFAULT_WORKSPACE_ID
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_HEADERS, TEST_ORGANIZATION_ID
 
 
 async def _create_store(client):
@@ -585,7 +584,7 @@ async def test_memory_version_retrieve_requires_matching_store(client):
 def _memory_resource(memory_store_id: str, path_key: str, created_at: datetime) -> ManagedResource:
     return ManagedResource(
         id=new_id("mem"),
-        workspace_id=DEFAULT_WORKSPACE_ID,
+        organization_id=TEST_ORGANIZATION_ID,
         resource_type="memory",
         parent_id=memory_store_id,
         name=path_key,

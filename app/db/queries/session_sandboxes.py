@@ -8,11 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedSession, SessionSandbox
 from app.ids import new_id
-from app.workspace import workspace_id_or_default
+from app.organization import resolve_organization_id
 
 
 class SessionSandboxSessionNotFoundError(RuntimeError):
-    """Raised when the parent session is outside the requested workspace."""
+    """Raised when the parent session is outside the requested organization."""
 
 
 class SessionSandboxLockConflictError(RuntimeError):
@@ -30,15 +30,15 @@ async def get_session_sandbox(
     db: AsyncSession,
     session_id: str,
     *,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     for_update: bool = False,
 ) -> SessionSandbox | None:
     """Return the one sandbox belonging to a tenant-scoped session."""
-    scoped_workspace_id = workspace_id_or_default(workspace_id)
+    scoped_organization_id = resolve_organization_id(organization_id)
     parent = await _get_scoped_session(
         db,
         session_id=session_id,
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
         for_update=for_update,
     )
     if parent is None:
@@ -47,7 +47,7 @@ async def get_session_sandbox(
     stmt = (
         select(SessionSandbox)
         .where(
-            SessionSandbox.workspace_id == scoped_workspace_id,
+            SessionSandbox.organization_id == scoped_organization_id,
             SessionSandbox.session_id == session_id,
         )
         .execution_options(populate_existing=True)
@@ -63,15 +63,15 @@ async def get_session_sandbox_by_external_id(
     *,
     provider: str,
     external_sandbox_id: str,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
     for_update: bool = False,
 ) -> SessionSandbox | None:
-    """Resolve a provider ID without allowing it to cross workspace scope."""
-    scoped_workspace_id = workspace_id_or_default(workspace_id)
+    """Resolve a provider ID without allowing it to cross organization scope."""
+    scoped_organization_id = resolve_organization_id(organization_id)
     stmt = (
         select(SessionSandbox)
         .where(
-            SessionSandbox.workspace_id == scoped_workspace_id,
+            SessionSandbox.organization_id == scoped_organization_id,
             SessionSandbox.provider == provider,
             SessionSandbox.external_sandbox_id == external_sandbox_id,
         )
@@ -84,7 +84,7 @@ async def get_session_sandbox_by_external_id(
         parent = await _get_scoped_session(
             db,
             session_id=candidate.session_id,
-            workspace_id=scoped_workspace_id,
+            organization_id=scoped_organization_id,
             for_update=True,
         )
         if parent is None:
@@ -108,7 +108,7 @@ async def upsert_session_sandbox(
     error: dict[str, Any] | None = None,
     last_active_at: datetime | None = None,
     expires_at: datetime | None = None,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> SessionSandbox:
     """Create or update the single provider record for a session.
 
@@ -116,18 +116,18 @@ async def upsert_session_sandbox(
     written. The database uniqueness constraint remains the final guard against
     two workers creating a second row for the same session.
     """
-    scoped_workspace_id = workspace_id_or_default(workspace_id)
+    scoped_organization_id = resolve_organization_id(organization_id)
     await _require_scoped_session(
         db,
         session_id=session_id,
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
         for_update=True,
     )
 
     now = datetime.now(timezone.utc)
     values = {
         "id": new_id("sbx"),
-        "workspace_id": scoped_workspace_id,
+        "organization_id": scoped_organization_id,
         "session_id": session_id,
         "provider": provider,
         "external_sandbox_id": external_sandbox_id,
@@ -157,7 +157,7 @@ async def upsert_session_sandbox(
 
     insert_stmt = insert(SessionSandbox).values(**values)
     stmt = insert_stmt.on_conflict_do_update(
-        index_elements=[SessionSandbox.workspace_id, SessionSandbox.session_id],
+        index_elements=[SessionSandbox.organization_id, SessionSandbox.session_id],
         set_={
             "provider": insert_stmt.excluded.provider,
             "external_sandbox_id": insert_stmt.excluded.external_sandbox_id,
@@ -179,7 +179,7 @@ async def upsert_session_sandbox(
     sandbox = await get_session_sandbox(
         db,
         session_id,
-        workspace_id=scoped_workspace_id,
+        organization_id=scoped_organization_id,
         for_update=True,
     )
     if sandbox is None:  # pragma: no cover - guarded by insert + unique key
@@ -201,10 +201,10 @@ async def update_session_sandbox_state(
     error: dict[str, Any] | None | _Unset = _UNSET,
     last_active_at: datetime | None | _Unset = _UNSET,
     expires_at: datetime | None | _Unset = _UNSET,
-    workspace_id: str | None = None,
+    organization_id: str | None = None,
 ) -> SessionSandbox:
     """Apply one tenant-scoped lifecycle transition using optimistic locking."""
-    scoped_workspace_id = workspace_id_or_default(workspace_id)
+    scoped_organization_id = resolve_organization_id(organization_id)
     expected_version = (
         sandbox.lock_version if expected_lock_version is None else expected_lock_version
     )
@@ -233,7 +233,7 @@ async def update_session_sandbox_state(
         update(SessionSandbox)
         .where(
             SessionSandbox.id == sandbox.id,
-            SessionSandbox.workspace_id == scoped_workspace_id,
+            SessionSandbox.organization_id == scoped_organization_id,
             SessionSandbox.session_id == sandbox.session_id,
             SessionSandbox.lock_version == expected_version,
         )
@@ -254,7 +254,7 @@ async def list_expired_session_sandboxes_for_cleanup(
     provider: str | None = None,
     limit: int = 50,
 ) -> list[SessionSandbox]:
-    """List safe cleanup candidates for the trusted cross-workspace janitor."""
+    """List safe cleanup candidates for the trusted cross-organization janitor."""
     cutoff = now or datetime.now(timezone.utc)
     stmt = select(SessionSandbox).where(
         SessionSandbox.external_sandbox_id.is_not(None),
@@ -275,12 +275,12 @@ async def _get_scoped_session(
     db: AsyncSession,
     *,
     session_id: str,
-    workspace_id: str,
+    organization_id: str,
     for_update: bool = False,
 ) -> ManagedSession | None:
     stmt = select(ManagedSession).where(
         ManagedSession.id == session_id,
-        ManagedSession.workspace_id == workspace_id,
+        ManagedSession.organization_id == organization_id,
     )
     if for_update:
         stmt = stmt.with_for_update()
@@ -292,18 +292,18 @@ async def _require_scoped_session(
     db: AsyncSession,
     *,
     session_id: str,
-    workspace_id: str,
+    organization_id: str,
     for_update: bool = False,
 ) -> ManagedSession:
     session = await _get_scoped_session(
         db,
         session_id=session_id,
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         for_update=for_update,
     )
     if session is None:
         raise SessionSandboxSessionNotFoundError(
-            f"Session {session_id} was not found in workspace {workspace_id}"
+            f"Session {session_id} was not found in organization {organization_id}"
         )
     return session
 

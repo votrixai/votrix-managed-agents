@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from app.organization import resolve_organization_id
+
 if TYPE_CHECKING:
     from deepagents.backends.protocol import SandboxBackendProtocol
 
@@ -57,11 +59,15 @@ class SandboxOperationError(SandboxProviderError):
 class SandboxOwner:
     """Trusted ownership scope for one session sandbox."""
 
-    workspace_id: str
+    organization_id: str
     session_id: str
 
     def __post_init__(self) -> None:
-        _validate_identifier(self.workspace_id, "workspace_id", max_bytes=_MAX_OWNER_ID_BYTES)
+        object.__setattr__(
+            self,
+            "organization_id",
+            resolve_organization_id(self.organization_id),
+        )
         _validate_identifier(self.session_id, "session_id", max_bytes=_MAX_OWNER_ID_BYTES)
 
     @property
@@ -70,7 +76,7 @@ class SandboxOwner:
 
         return _fingerprint(
             "owner-v1",
-            {"workspace_id": self.workspace_id, "session_id": self.session_id},
+            {"organization_id": self.organization_id, "session_id": self.session_id},
         )
 
 

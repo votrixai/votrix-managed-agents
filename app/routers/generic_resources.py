@@ -39,14 +39,18 @@ from app.models.vaults import (
     VaultUpdateRequest,
 )
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
-from app.runtime.sandbox_lifecycle import (
-    SandboxLifecycleConfigurationError,
-    provision_session_sandbox,
-)
 from app.runtime.agent_resolution import resolve_session_agent_config
+from app.runtime.model_credentials import (
+    MODEL_CREDENTIAL_KIND,
+    ModelCredentialRequiredError,
+)
 from app.runtime.providers import (
     registered_runtime_provider_api_key_env,
     retrieve_runtime_provider_catalog_entry,
+)
+from app.runtime.sandbox_lifecycle import (
+    SandboxLifecycleConfigurationError,
+    provision_session_sandbox,
 )
 from app.runtime.sandbox_providers import SandboxProviderError
 from app.session_resources import (
@@ -80,7 +84,7 @@ MAX_DEPLOYMENT_VAULT_IDS = 50
 MAX_CREDENTIALS_PER_VAULT = 20
 CREDENTIAL_AUTH_TYPES = {"environment_variable", "mcp_oauth", "static_bearer"}
 CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES = {"client_secret_basic", "client_secret_post", "none"}
-MODEL_CREDENTIAL_KIND = "model_provider_api_key"
+RESERVED_MODEL_CREDENTIAL_FIELDS = {"credential_kind", "model_provider"}
 
 
 @router.post("/v1/vaults", response_model=VaultResponse, status_code=201)
@@ -136,10 +140,12 @@ async def archive_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
 
 @router.post("/v1/vaults/{vault_id}/credentials", status_code=201)
 async def create_credential(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
+    raw_data = body.model_dump(mode="json")
+    _reject_reserved_model_credential_fields(raw_data)
     resource = await _create_credential_resource(
         db,
         vault_id=vault_id,
-        raw_data=body.model_dump(mode="json"),
+        raw_data=raw_data,
     )
     return _credential_response(resource)
 
@@ -208,7 +214,7 @@ async def list_model_credentials(
         parent_id=vault_id,
         limit=MAX_CREDENTIALS_PER_VAULT + 1,
         include_archived=include_archived,
-        workspace_id=vault.workspace_id,
+        organization_id=vault.organization_id,
     )
     model_credentials = [
         credential
@@ -351,7 +357,7 @@ async def _create_credential_resource(
         parent_id=vault_id,
         limit=MAX_CREDENTIALS_PER_VAULT + 1,
         include_archived=False,
-        workspace_id=vault.workspace_id,
+        organization_id=vault.organization_id,
     )
     if len(credentials) >= MAX_CREDENTIALS_PER_VAULT:
         raise HTTPException(status_code=400, detail="A vault supports at most 20 active credentials")
@@ -369,7 +375,7 @@ async def _create_credential_resource(
         parent_id=vault_id,
         name=data.get("name") or data.get("display_name"),
         data=data,
-        workspace_id=vault.workspace_id,
+        organization_id=vault.organization_id,
     )
     await db.commit()
     return resource
@@ -390,7 +396,7 @@ async def list_credentials(
         parent_id=vault_id,
         limit=MAX_CREDENTIALS_PER_VAULT + 1,
         include_archived=include_archived,
-        workspace_id=vault.workspace_id,
+        organization_id=vault.organization_id,
     )
     generic_credentials = [
         credential
@@ -426,11 +432,13 @@ async def update_credential(
         raise HTTPException(status_code=409, detail="Vault is archived")
     if credential.archived_at is not None:
         raise HTTPException(status_code=409, detail="Credential is archived")
+    raw_data = body.model_dump(mode="json")
+    _reject_reserved_model_credential_fields(raw_data)
     return await _update_resource(
         db,
         credential,
         "credential",
-        body.model_dump(mode="json"),
+        raw_data,
     )
 
 
@@ -1314,7 +1322,7 @@ async def _revoke_vault_credentials(db: AsyncSession, vault, *, delete: bool) ->
         resource_type="credential",
         parent_id=vault.id,
         include_archived=True,
-        workspace_id=vault.workspace_id,
+        organization_id=vault.organization_id,
     )
     for credential in credentials:
         await res_q.update_resource(
@@ -1701,6 +1709,9 @@ def _model_credential_provider_id(resource) -> str | None:
     """
 
     data = resource.data or {}
+    credential_kind = data.get("credential_kind")
+    if credential_kind not in {None, MODEL_CREDENTIAL_KIND}:
+        return None
     provider_id = data.get("model_provider")
     if not isinstance(provider_id, str) or not provider_id:
         return None
@@ -1708,6 +1719,14 @@ def _model_credential_provider_id(resource) -> str | None:
     if not isinstance(auth, dict) or auth.get("type") != "environment_variable":
         return None
     return provider_id
+
+
+def _reject_reserved_model_credential_fields(data: dict[str, Any]) -> None:
+    if RESERVED_MODEL_CREDENTIAL_FIELDS & data.keys():
+        raise HTTPException(
+            status_code=422,
+            detail="Use the model_credentials API for model-provider credentials",
+        )
 
 
 def _require_generic_credential(resource) -> None:
@@ -2673,7 +2692,7 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
         db,
         agent_version,
         None,
-        workspace_id=agent.workspace_id,
+        organization_id=agent.organization_id,
     )
     try:
         async with db.begin_nested():
@@ -2706,6 +2725,11 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
                 agent_version=agent_version,
                 environment_config=environment.config,
             )
+    except ModelCredentialRequiredError as exc:
+        raise DeploymentRunCreationError(
+            "model_credential_required",
+            str(exc),
+        ) from exc
     except (SandboxLifecycleConfigurationError, SandboxProviderError) as exc:
         raise DeploymentRunCreationError(
             "sandbox_provision_error",

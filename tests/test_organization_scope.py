@@ -1,13 +1,15 @@
 from httpx import ASGITransport, AsyncClient
 
-from app.workspace import CurrentWorkspace
+from app.db.engine import session_scope
+from app.db.models import Organization
+from app.organization import CurrentOrganization
 from votrix_managed_agents import AuthProvider, create_app
 from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
 
-async def test_api_keys_scope_resources_to_workspaces(client, database_api_key_factory):
-    await database_api_key_factory(token="key-a", workspace_id="ws_a")
-    await database_api_key_factory(token="key-b", workspace_id="ws_b")
+async def test_api_keys_scope_resources_to_organizations(client, database_api_key_factory):
+    await database_api_key_factory(token="key-a", organization_id="org_a")
+    await database_api_key_factory(token="key-b", organization_id="org_b")
 
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -43,7 +45,7 @@ async def test_api_keys_scope_resources_to_workspaces(client, database_api_key_f
 
 
 async def test_database_api_key_authorizes_bearer_token(client, database_api_key_factory):
-    await database_api_key_factory(token="single-key", workspace_id="ws_single")
+    await database_api_key_factory(token="single-key", organization_id="org_single")
 
     response = await client.post(
         "/v1/agents",
@@ -59,12 +61,12 @@ async def test_database_api_key_authorizes_bearer_token(client, database_api_key
     assert response.status_code == 401
 
 
-async def test_api_keys_scope_generic_resource_families_to_workspaces(
+async def test_api_keys_scope_generic_resource_families_to_organizations(
     client,
     database_api_key_factory,
 ):
-    await database_api_key_factory(token="key-a", workspace_id="ws_a")
-    await database_api_key_factory(token="key-b", workspace_id="ws_b")
+    await database_api_key_factory(token="key-a", organization_id="org_a")
+    await database_api_key_factory(token="key-b", organization_id="org_b")
 
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -95,7 +97,7 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(
     response = await client.post(
         f"/v1/memory_stores/{memory_store['id']}/memories",
         headers=headers_a,
-        json={"path": "/private/note.md", "content": "workspace scoped"},
+        json={"path": "/private/note.md", "content": "organization scoped"},
     )
     assert response.status_code == 201, response.text
     memory = response.json()
@@ -151,7 +153,7 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(
         f"/v1/vaults/{vault['id']}/credentials",
         headers=headers_b,
         json={
-            "display_name": "Cross Workspace Credential",
+            "display_name": "Cross Organization Credential",
             "auth": {
                 "type": "static_bearer",
                 "mcp_server_url": "https://mcp.example.invalid",
@@ -172,7 +174,7 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(
     response = await client.post(
         "/v1/agents",
         headers=headers_b,
-        json={"name": "Workspace B Agent", "model": {"id": "gpt-5.5"}},
+        json={"name": "Organization B Agent", "model": {"id": "gpt-5.5"}},
     )
     assert response.status_code == 201, response.text
     agent_b = response.json()
@@ -180,7 +182,7 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(
     response = await client.post(
         "/v1/environments",
         headers=headers_b,
-        json={"name": "workspace-b-env", "config": {"type": "self_hosted"}},
+        json={"name": "organization-b-env", "config": {"type": "self_hosted"}},
     )
     assert response.status_code == 201, response.text
     environment_b = response.json()
@@ -197,12 +199,12 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(
     assert response.status_code == 404
 
 
-async def test_api_keys_scope_deployments_and_runs_to_workspaces(
+async def test_api_keys_scope_deployments_and_runs_to_organizations(
     client,
     database_api_key_factory,
 ):
-    await database_api_key_factory(token="key-a", workspace_id="ws_a")
-    await database_api_key_factory(token="key-b", workspace_id="ws_b")
+    await database_api_key_factory(token="key-a", organization_id="org_a")
+    await database_api_key_factory(token="key-b", organization_id="org_b")
 
     headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
     headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
@@ -261,9 +263,20 @@ async def test_api_keys_scope_deployments_and_runs_to_workspaces(
 async def test_create_app_accepts_hosted_auth_provider():
     class HostedAuthProvider:
         async def authenticate(self, request, credentials):
-            return CurrentWorkspace(id="ws_hosted", slug="hosted", source="hosted_test")
+            return CurrentOrganization(id="org_hosted", slug="hosted", source="hosted_test")
 
     assert isinstance(HostedAuthProvider(), AuthProvider)
+
+    async with session_scope() as db:
+        db.add(
+            Organization(
+                id="org_hosted",
+                slug="hosted",
+                name="Hosted auth organization",
+                metadata_={},
+            )
+        )
+        await db.commit()
 
     app = create_app(auth_provider=HostedAuthProvider())
     transport = ASGITransport(app=app)
@@ -278,3 +291,18 @@ async def test_create_app_accepts_hosted_auth_provider():
         response = await client.get("/v1/agents", headers=TEST_HEADERS)
         assert response.status_code == 200, response.text
         assert [item["name"] for item in response.json()["data"]] == ["Hosted Agent"]
+
+
+async def test_custom_auth_provider_cannot_bypass_organization_registry():
+    class OrphanedAuthProvider:
+        async def authenticate(self, request, credentials):
+            return CurrentOrganization(id="org_missing", source="hosted_test")
+
+    app = create_app(auth_provider=OrphanedAuthProvider())
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get("/v1/agents", headers=TEST_HEADERS)
+
+    assert response.status_code == 401

@@ -9,40 +9,40 @@ from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
 
 
-async def _create_session(*, workspace_id: str, suffix: str = "default") -> str:
+async def _create_session(*, organization_id: str, suffix: str = "default") -> str:
     async with session_scope() as db:
         agent, version = await agents_q.create_agent(
             db,
-            name=f"Sandbox agent {workspace_id} {suffix}",
+            name=f"Sandbox agent {organization_id} {suffix}",
             model={"id": "claude-sonnet-4-6"},
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         environment = await environments_q.create_environment(
             db,
-            name=f"sandbox-{workspace_id}-{suffix}",
+            name=f"sandbox-{organization_id}-{suffix}",
             config={"type": "cloud"},
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         session = await sessions_q.create_session(
             db,
             agent=agent,
             agent_version=version.version,
             environment=environment,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
         await db.commit()
         return session.id
 
 
 async def test_session_sandbox_upsert_keeps_exactly_one_row_per_session():
-    workspace_id = "wrkspc_sandbox_a"
-    session_id = await _create_session(workspace_id=workspace_id)
+    organization_id = "org_sandbox_a"
+    session_id = await _create_session(organization_id=organization_id)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
     async with session_scope() as db:
         created = await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             provider="e2b",
             state="provisioning",
@@ -56,7 +56,7 @@ async def test_session_sandbox_upsert_keeps_exactly_one_row_per_session():
 
         updated = await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             provider="e2b",
             external_sandbox_id="e2b_session_123",
@@ -75,14 +75,14 @@ async def test_session_sandbox_upsert_keeps_exactly_one_row_per_session():
         locked = await sandboxes_q.get_session_sandbox(
             db,
             session_id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             for_update=True,
         )
         by_external_id = await sandboxes_q.get_session_sandbox_by_external_id(
             db,
             provider="e2b",
             external_sandbox_id="e2b_session_123",
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             for_update=True,
         )
         await db.commit()
@@ -91,50 +91,50 @@ async def test_session_sandbox_upsert_keeps_exactly_one_row_per_session():
     assert by_external_id is not None and by_external_id.id == created_id
 
 
-async def test_session_sandbox_queries_and_upserts_are_workspace_safe():
-    owner_workspace_id = "wrkspc_sandbox_owner"
-    other_workspace_id = "wrkspc_sandbox_other"
-    session_id = await _create_session(workspace_id=owner_workspace_id)
+async def test_session_sandbox_queries_and_upserts_are_organization_safe():
+    owner_organization_id = "org_sandbox_owner"
+    other_organization_id = "org_sandbox_other"
+    session_id = await _create_session(organization_id=owner_organization_id)
 
     async with session_scope() as db:
         sandbox = await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=owner_workspace_id,
+            organization_id=owner_organization_id,
             session_id=session_id,
             provider="e2b",
             external_sandbox_id="e2b_tenant_123",
         )
-        assert sandbox.workspace_id == owner_workspace_id
+        assert sandbox.organization_id == owner_organization_id
         assert await sandboxes_q.get_session_sandbox(
             db,
             session_id,
-            workspace_id=other_workspace_id,
+            organization_id=other_organization_id,
         ) is None
         assert await sandboxes_q.get_session_sandbox_by_external_id(
             db,
             provider="e2b",
             external_sandbox_id="e2b_tenant_123",
-            workspace_id=other_workspace_id,
+            organization_id=other_organization_id,
         ) is None
 
         with pytest.raises(sandboxes_q.SessionSandboxSessionNotFoundError):
             await sandboxes_q.upsert_session_sandbox(
                 db,
-                workspace_id=other_workspace_id,
+                organization_id=other_organization_id,
                 session_id=session_id,
                 provider="e2b",
             )
 
 
 async def test_session_sandbox_state_update_uses_optimistic_lock_version():
-    workspace_id = "wrkspc_sandbox_state"
-    session_id = await _create_session(workspace_id=workspace_id)
+    organization_id = "org_sandbox_state"
+    session_id = await _create_session(organization_id=organization_id)
     now = datetime.now(timezone.utc)
 
     async with session_scope() as db:
         sandbox = await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=session_id,
             provider="e2b",
             state="provisioning",
@@ -144,7 +144,7 @@ async def test_session_sandbox_state_update_uses_optimistic_lock_version():
         transitioned = await sandboxes_q.update_session_sandbox_state(
             db,
             sandbox,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             state="paused",
             expected_lock_version=0,
             external_sandbox_id="e2b_state_123",
@@ -164,7 +164,7 @@ async def test_session_sandbox_state_update_uses_optimistic_lock_version():
             await sandboxes_q.update_session_sandbox_state(
                 db,
                 sandbox,
-                workspace_id=workspace_id,
+                organization_id=organization_id,
                 state="deleted",
                 expected_lock_version=0,
             )
@@ -172,7 +172,7 @@ async def test_session_sandbox_state_update_uses_optimistic_lock_version():
         refreshed = await sandboxes_q.get_session_sandbox(
             db,
             session_id,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
         )
 
     assert refreshed is not None
@@ -181,17 +181,17 @@ async def test_session_sandbox_state_update_uses_optimistic_lock_version():
 
 
 async def test_expired_cleanup_only_returns_inactive_provider_sandboxes():
-    workspace_id = "wrkspc_sandbox_cleanup"
+    organization_id = "org_sandbox_cleanup"
     expired_session_id = await _create_session(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         suffix="expired",
     )
     running_session_id = await _create_session(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         suffix="running",
     )
     future_session_id = await _create_session(
-        workspace_id=workspace_id,
+        organization_id=organization_id,
         suffix="future",
     )
     now = datetime.now(timezone.utc)
@@ -199,7 +199,7 @@ async def test_expired_cleanup_only_returns_inactive_provider_sandboxes():
     async with session_scope() as db:
         expired = await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=expired_session_id,
             provider="e2b",
             external_sandbox_id="e2b_expired",
@@ -208,7 +208,7 @@ async def test_expired_cleanup_only_returns_inactive_provider_sandboxes():
         )
         await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=running_session_id,
             provider="e2b",
             external_sandbox_id="e2b_running",
@@ -217,7 +217,7 @@ async def test_expired_cleanup_only_returns_inactive_provider_sandboxes():
         )
         await sandboxes_q.upsert_session_sandbox(
             db,
-            workspace_id=workspace_id,
+            organization_id=organization_id,
             session_id=future_session_id,
             provider="e2b",
             external_sandbox_id="e2b_future",

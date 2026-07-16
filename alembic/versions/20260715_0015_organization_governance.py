@@ -1,4 +1,4 @@
-"""add workspace quotas and append-only governance ledgers
+"""add organization quotas and append-only governance ledgers
 
 Revision ID: 20260715_0015
 Revises: 20260714_0014
@@ -17,8 +17,8 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
-        "workspace_quotas",
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        "organization_quotas",
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("requests_per_minute", sa.Integer(), nullable=True),
         sa.Column("max_active_work", sa.Integer(), nullable=True),
         sa.Column("daily_model_tokens", sa.BigInteger(), nullable=True),
@@ -28,50 +28,50 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint(
             "requests_per_minute IS NULL OR requests_per_minute >= 0",
-            name="ck_workspace_quotas_requests_nonnegative",
+            name="ck_organization_quotas_requests_nonnegative",
         ),
         sa.CheckConstraint(
             "max_active_work IS NULL OR max_active_work >= 0",
-            name="ck_workspace_quotas_active_work_nonnegative",
+            name="ck_organization_quotas_active_work_nonnegative",
         ),
         sa.CheckConstraint(
             "daily_model_tokens IS NULL OR daily_model_tokens >= 0",
-            name="ck_workspace_quotas_model_tokens_nonnegative",
+            name="ck_organization_quotas_model_tokens_nonnegative",
         ),
         sa.CheckConstraint(
             "storage_bytes IS NULL OR storage_bytes >= 0",
-            name="ck_workspace_quotas_storage_nonnegative",
+            name="ck_organization_quotas_storage_nonnegative",
         ),
-        sa.PrimaryKeyConstraint("workspace_id"),
+        sa.PrimaryKeyConstraint("organization_id"),
     )
 
     op.create_table(
-        "workspace_quota_counters",
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        "organization_quota_counters",
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("metric", sa.String(length=64), nullable=False),
         sa.Column("window_start", sa.DateTime(timezone=True), nullable=False),
         sa.Column("window_seconds", sa.Integer(), nullable=False),
         sa.Column("value", sa.BigInteger(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.CheckConstraint("value >= 0", name="ck_workspace_quota_counters_value_nonnegative"),
+        sa.CheckConstraint("value >= 0", name="ck_organization_quota_counters_value_nonnegative"),
         sa.CheckConstraint(
             "window_seconds >= 0",
-            name="ck_workspace_quota_counters_window_nonnegative",
+            name="ck_organization_quota_counters_window_nonnegative",
         ),
-        sa.PrimaryKeyConstraint("workspace_id", "metric", "window_start"),
+        sa.PrimaryKeyConstraint("organization_id", "metric", "window_start"),
     )
     op.create_index(
-        "ix_workspace_quota_counters_metric_window",
-        "workspace_quota_counters",
+        "ix_organization_quota_counters_metric_window",
+        "organization_quota_counters",
         ["metric", "window_start"],
         unique=False,
     )
 
     op.create_table(
-        "workspace_quota_reservations",
+        "organization_quota_reservations",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("quota_name", sa.String(length=64), nullable=False),
         sa.Column("reference_id", sa.String(length=255), nullable=False),
         sa.Column("amount", sa.Integer(), nullable=False),
@@ -81,36 +81,36 @@ def upgrade() -> None:
         sa.Column("metadata", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.CheckConstraint("amount > 0", name="ck_workspace_quota_reservations_amount_positive"),
+        sa.CheckConstraint("amount > 0", name="ck_organization_quota_reservations_amount_positive"),
         sa.CheckConstraint(
             "state IN ('active', 'released')",
-            name="ck_workspace_quota_reservations_state",
+            name="ck_organization_quota_reservations_state",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "quota_name",
             "reference_id",
-            name="uq_workspace_quota_reservations_reference",
+            name="uq_organization_quota_reservations_reference",
         ),
     )
     op.create_index(
-        op.f("ix_workspace_quota_reservations_workspace_id"),
-        "workspace_quota_reservations",
-        ["workspace_id"],
+        op.f("ix_organization_quota_reservations_organization_id"),
+        "organization_quota_reservations",
+        ["organization_id"],
         unique=False,
     )
     op.create_index(
-        "ix_workspace_quota_reservations_workspace_state",
-        "workspace_quota_reservations",
-        ["workspace_id", "quota_name", "state"],
+        "ix_organization_quota_reservations_organization_state",
+        "organization_quota_reservations",
+        ["organization_id", "quota_name", "state"],
         unique=False,
     )
 
     op.create_table(
         "audit_ledger",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("actor_type", sa.String(length=64), nullable=False),
         sa.Column("actor_id", sa.String(length=128), nullable=True),
         sa.Column("action", sa.String(length=128), nullable=False),
@@ -122,25 +122,25 @@ def upgrade() -> None:
         sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_audit_ledger_workspace_id"), "audit_ledger", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_audit_ledger_organization_id"), "audit_ledger", ["organization_id"], unique=False)
     op.create_index("ix_audit_ledger_request_id", "audit_ledger", ["request_id"], unique=False)
     op.create_index(
-        "ix_audit_ledger_workspace_occurred",
+        "ix_audit_ledger_organization_occurred",
         "audit_ledger",
-        ["workspace_id", "occurred_at"],
+        ["organization_id", "occurred_at"],
         unique=False,
     )
     op.create_index(
-        "ix_audit_ledger_workspace_action_occurred",
+        "ix_audit_ledger_organization_action_occurred",
         "audit_ledger",
-        ["workspace_id", "action", "occurred_at"],
+        ["organization_id", "action", "occurred_at"],
         unique=False,
     )
 
     op.create_table(
         "usage_ledger",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("metric", sa.String(length=64), nullable=False),
         sa.Column("quantity", sa.BigInteger(), nullable=False),
         sa.Column("unit", sa.String(length=32), nullable=False),
@@ -155,29 +155,29 @@ def upgrade() -> None:
         sa.CheckConstraint("quantity >= 0", name="ck_usage_ledger_quantity_nonnegative"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "idempotency_key",
-            name="uq_usage_ledger_workspace_idempotency",
+            name="uq_usage_ledger_organization_idempotency",
         ),
     )
-    op.create_index(op.f("ix_usage_ledger_workspace_id"), "usage_ledger", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_usage_ledger_organization_id"), "usage_ledger", ["organization_id"], unique=False)
     op.create_index(
-        "ix_usage_ledger_workspace_metric_occurred",
+        "ix_usage_ledger_organization_metric_occurred",
         "usage_ledger",
-        ["workspace_id", "metric", "occurred_at"],
+        ["organization_id", "metric", "occurred_at"],
         unique=False,
     )
     op.create_index(
-        "ix_usage_ledger_workspace_source",
+        "ix_usage_ledger_organization_source",
         "usage_ledger",
-        ["workspace_id", "source_type", "source_id"],
+        ["organization_id", "source_type", "source_id"],
         unique=False,
     )
 
     op.create_table(
         "tenant_idempotency",
         sa.Column("id", sa.String(length=64), nullable=False),
-        sa.Column("workspace_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("operation", sa.String(length=128), nullable=False),
         sa.Column("key_hash", sa.String(length=64), nullable=False),
         sa.Column("request_fingerprint", sa.String(length=64), nullable=False),
@@ -196,22 +196,22 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "workspace_id",
+            "organization_id",
             "operation",
             "key_hash",
-            name="uq_tenant_idempotency_workspace_operation_key",
+            name="uq_tenant_idempotency_organization_operation_key",
         ),
     )
     op.create_index(
-        op.f("ix_tenant_idempotency_workspace_id"),
+        op.f("ix_tenant_idempotency_organization_id"),
         "tenant_idempotency",
-        ["workspace_id"],
+        ["organization_id"],
         unique=False,
     )
     op.create_index(
-        "ix_tenant_idempotency_workspace_created",
+        "ix_tenant_idempotency_organization_created",
         "tenant_idempotency",
-        ["workspace_id", "created_at"],
+        ["organization_id", "created_at"],
         unique=False,
     )
     op.create_index(
@@ -232,42 +232,42 @@ def downgrade() -> None:
         table_name="tenant_idempotency",
     )
     op.drop_index(
-        "ix_tenant_idempotency_workspace_created",
+        "ix_tenant_idempotency_organization_created",
         table_name="tenant_idempotency",
     )
     op.drop_index(
-        op.f("ix_tenant_idempotency_workspace_id"),
+        op.f("ix_tenant_idempotency_organization_id"),
         table_name="tenant_idempotency",
     )
     op.drop_table("tenant_idempotency")
 
-    op.drop_index("ix_usage_ledger_workspace_source", table_name="usage_ledger")
-    op.drop_index("ix_usage_ledger_workspace_metric_occurred", table_name="usage_ledger")
-    op.drop_index(op.f("ix_usage_ledger_workspace_id"), table_name="usage_ledger")
+    op.drop_index("ix_usage_ledger_organization_source", table_name="usage_ledger")
+    op.drop_index("ix_usage_ledger_organization_metric_occurred", table_name="usage_ledger")
+    op.drop_index(op.f("ix_usage_ledger_organization_id"), table_name="usage_ledger")
     op.drop_table("usage_ledger")
 
-    op.drop_index("ix_audit_ledger_workspace_action_occurred", table_name="audit_ledger")
-    op.drop_index("ix_audit_ledger_workspace_occurred", table_name="audit_ledger")
+    op.drop_index("ix_audit_ledger_organization_action_occurred", table_name="audit_ledger")
+    op.drop_index("ix_audit_ledger_organization_occurred", table_name="audit_ledger")
     op.drop_index("ix_audit_ledger_request_id", table_name="audit_ledger")
-    op.drop_index(op.f("ix_audit_ledger_workspace_id"), table_name="audit_ledger")
+    op.drop_index(op.f("ix_audit_ledger_organization_id"), table_name="audit_ledger")
     op.drop_table("audit_ledger")
 
     op.drop_index(
-        "ix_workspace_quota_reservations_workspace_state",
-        table_name="workspace_quota_reservations",
+        "ix_organization_quota_reservations_organization_state",
+        table_name="organization_quota_reservations",
     )
     op.drop_index(
-        op.f("ix_workspace_quota_reservations_workspace_id"),
-        table_name="workspace_quota_reservations",
+        op.f("ix_organization_quota_reservations_organization_id"),
+        table_name="organization_quota_reservations",
     )
-    op.drop_table("workspace_quota_reservations")
+    op.drop_table("organization_quota_reservations")
 
     op.drop_index(
-        "ix_workspace_quota_counters_metric_window",
-        table_name="workspace_quota_counters",
+        "ix_organization_quota_counters_metric_window",
+        table_name="organization_quota_counters",
     )
-    op.drop_table("workspace_quota_counters")
-    op.drop_table("workspace_quotas")
+    op.drop_table("organization_quota_counters")
+    op.drop_table("organization_quotas")
 
 
 def _create_append_only_triggers() -> None:

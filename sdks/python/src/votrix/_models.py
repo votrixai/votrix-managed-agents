@@ -26,7 +26,7 @@ class ApiKey(VotrixModel):
 
     id: str
     type: str = "api_key"
-    workspace_id: str
+    organization_id: str
     name: str
     prefix: str
     scopes: list[ApiKeyScope]

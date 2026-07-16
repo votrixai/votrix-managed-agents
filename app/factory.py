@@ -271,8 +271,8 @@ async def _record_request_completion(
     duration_ms: float,
     enabled: bool,
 ) -> None:
-    workspace = getattr(request.state, "current_workspace", None)
-    if not enabled or workspace is None:
+    organization = getattr(request.state, "current_organization", None)
+    if not enabled or organization is None:
         return
 
     route = request.scope.get("route")
@@ -292,9 +292,9 @@ async def _record_request_completion(
         from app.governance_runtime import governance_service
 
         await governance_service().record_audit(
-            workspace.id,
-            actor_type=workspace.source,
-            actor_id=workspace.api_key_id,
+            organization.id,
+            actor_type=organization.source,
+            actor_id=organization.api_key_id,
             action="api.request.complete",
             outcome=outcome,
             resource_type="http_endpoint",

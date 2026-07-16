@@ -13,7 +13,8 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def get_engine():
     global _engine
     if _engine is None:
-        url = get_settings().database_url
+        settings = get_settings()
+        url = settings.database_url
         connect_args = {}
         if url.startswith("postgresql+asyncpg"):
             connect_args = {
@@ -24,10 +25,31 @@ def get_engine():
             }
         _engine = create_async_engine(
             url,
-            poolclass=NullPool,
             connect_args=connect_args,
+            **_pool_options(url, settings),
         )
     return _engine
+
+
+def _pool_options(url: str, settings) -> dict:
+    """Return bounded application-pool options for hosted Postgres.
+
+    SQLite and non-Postgres development backends retain their historical
+    connection-per-session behavior. Setting ``VMA_DB_POOL_SIZE=0`` provides
+    the same explicit escape hatch for Postgres deployments whose external
+    pooler should own every connection lifecycle.
+    """
+
+    pool_size = int(getattr(settings, "vma_db_pool_size", 0))
+    if not url.startswith(("postgres://", "postgresql://", "postgresql+")) or pool_size == 0:
+        return {"poolclass": NullPool}
+    return {
+        "pool_size": pool_size,
+        "max_overflow": int(getattr(settings, "vma_db_max_overflow", 0)),
+        "pool_timeout": float(getattr(settings, "vma_db_pool_timeout_seconds", 10.0)),
+        "pool_recycle": int(getattr(settings, "vma_db_pool_recycle_seconds", 300)),
+        "pool_pre_ping": True,
+    }
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:

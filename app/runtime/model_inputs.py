@@ -30,6 +30,28 @@ class ModelInputValidationError(ValueError):
     """A public content block cannot be bound to this Session safely."""
 
 
+def referenced_managed_file_ids(content: Any) -> frozenset[str]:
+    """Return file IDs named by supported Managed Agents content blocks.
+
+    The public event remains the source of truth for which immutable Session
+    copies the current model request needs.  Callers may use this lightweight
+    pass before reading object bytes; validation against the Session manifest
+    still happens in :func:`validate_user_message_content`.
+
+    A malformed image/document source is rejected here as well as by the full
+    validator so a lazy loader never turns an invalid reference into an
+    unbounded or best-effort object-store lookup.
+    """
+
+    if not isinstance(content, list):
+        return frozenset()
+    return frozenset(
+        _managed_file_id(block)
+        for block in content
+        if isinstance(block, dict) and block.get("type") in {"image", "document"}
+    )
+
+
 def validate_user_message_content(
     content: Any,
     *,
@@ -276,5 +298,6 @@ __all__ = [
     "SUPPORTED_DOCUMENT_MIME_TYPES",
     "SUPPORTED_IMAGE_MIME_TYPES",
     "adapt_user_message_content",
+    "referenced_managed_file_ids",
     "validate_user_message_content",
 ]

@@ -16,10 +16,11 @@ identity and a migration gate before every service rollout.
 | Runtime service account | `vma-runtime@votrixai-480422.iam.gserviceaccount.com` |
 
 Production and staging each run exactly one warm instance. Both revisions use
-one web worker plus two embedded durable-work consumers, keep CPU allocated,
+one web worker plus five embedded durable-work consumers, keep CPU allocated,
 expose only the public-GA API surface, allow browser calls only from
 `https://docs.votrixai.com`, and run the same startup and database liveness
-probes.
+probes. Each instance is pinned to one vCPU, 4 GiB memory, and 40 concurrent
+HTTP requests; this is a vertical public-beta baseline, not horizontal scale.
 
 ## Prerequisites
 
@@ -63,7 +64,6 @@ Each unquoted `KEY=value` file contains exactly these required values:
 ```env
 DATABASE_URL=
 VMA_ENCRYPTION_KEY=
-OPENROUTER_API_KEY=
 E2B_API_KEY=
 S3_ENDPOINT_URL=
 S3_ACCESS_KEY_ID=
@@ -85,7 +85,6 @@ only these names:
 |---|---|---|
 | `DATABASE_URL` | `vma-database-url` | `vma-database-url-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
-| `OPENROUTER_API_KEY` | `vma-openrouter-api-key` | `vma-openrouter-api-key-staging` |
 | `E2B_API_KEY` | `vma-e2b-api-key` | `vma-e2b-api-key-staging` |
 | `S3_ENDPOINT_URL` | `vma-s3-endpoint-url` | `vma-s3-endpoint-url-staging` |
 | `S3_ACCESS_KEY_ID` | `vma-s3-access-key-id` | `vma-s3-access-key-id-staging` |
@@ -106,23 +105,42 @@ for direct browser uploads, and serves downloads through the authenticated
 using presigned URLs still require a bucket CORS policy for the application
 origins; CORS does not make the bucket public.
 
-The platform-level default route uses the shared OpenRouter key and the static
-latency-first Fireworks/Together provider policy. Anthropic, OpenAI, DeepSeek,
-and operator-registered providers can instead resolve tenant-specific keys from
-a Session-mounted VMA Vault; those tenant keys do not belong in these deployment
-files.
+The platform-level default route keeps the static latency-first
+Fireworks/Together OpenRouter policy, but it does not include a shared model
+key. Anthropic, OpenAI, DeepSeek, OpenRouter, and operator-registered providers
+resolve every key from a Session-mounted Organization Vault model Credential.
+Model API keys do not belong in Cloud Run environment variables, Secret
+Manager deployment inputs, or `VMA_MODEL_PROVIDERS`.
 
 The Cloud Run manifests pin these non-secret runtime settings rather than
 loading them from Secret Manager:
 
 ```env
 VMA_EMBEDDED_WORKER_ENABLED=true
-VMA_WORKER_CONCURRENCY=2
+VMA_WORKER_CONCURRENCY=5
 VMA_WORKER_POLL_INTERVAL_SECONDS=0.5
 VMA_WORKER_LEASE_SECONDS=120
+VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
+VMA_MAX_SESSION_INPUT_BYTES=67108864
+VMA_DB_POOL_SIZE=10
+VMA_DB_MAX_OVERFLOW=5
+VMA_DB_POOL_TIMEOUT_SECONDS=10
+VMA_DB_POOL_RECYCLE_SECONDS=300
+VMA_REQUESTS_PER_MINUTE=600
+VMA_MAX_ACTIVE_WORK=20
+VMA_ORGANIZATION_STORAGE_BYTES=5368709120
 VMA_PUBLIC_GA_ONLY=true
 VMA_CORS_ORIGINS=https://docs.votrixai.com
 ```
+
+The 64 MiB aggregate Session-input cap bounds create-time materialization and
+one-time E2B injection. E2B turns resume from the sealed filesystem and do not
+rehydrate all inputs from R2. The PostgreSQL pool reuses connections for API,
+SSE, and embedded-worker traffic instead of opening a new database connection
+for every poll. Keep the combined pool ceiling within the selected Supabase
+plan's connection limit.
+The hosted Organization defaults admit bursts of up to 20 queued/running turns;
+five execute concurrently and the durable queue absorbs the remainder.
 
 ## Manual deploys
 
@@ -141,6 +159,33 @@ Both scripts enforce the same sequence:
 The web entrypoint has no migration branch, so restarts never race to run
 Alembic themselves.
 
+## Staging acceptance gates
+
+After staging deploys, run the controlled one-Session acceptance first:
+
+```bash
+VMA_SMOKE_BASE_URL=https://YOUR-STAGING-CLOUD-RUN-URL \
+VMA_SMOKE_API_KEY=... \
+uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
+```
+
+Then use an existing staging Vault containing the selected model Credential to
+run the ten-Session burst:
+
+```bash
+VMA_PERF_BASE_URL=https://YOUR-STAGING-CLOUD-RUN-URL \
+VMA_PERF_API_KEY=... \
+VMA_PERF_VAULT_IDS=vault_... \
+uv run python scripts/performance_smoke.py
+```
+
+The performance smoke creates disposable Sessions and, unless existing IDs are
+provided, a disposable Agent and Environment. It never modifies a supplied
+Vault, Agent, or Environment; cleanup deletes Sessions and the Environment and
+archives the Agent. It reports provision, trigger, queue, first-event, and
+total latency with p50/p95/max summaries. The run makes real model and E2B calls
+and therefore consumes the corresponding provider quotas.
+
 ## Bootstrap the first tenant API key
 
 Authentication is database-backed in every environment. After the first
@@ -152,13 +197,13 @@ set -a
 . ./.env.production
 set +a
 uv run python -m scripts.bootstrap_api_key \
-  --workspace-id wrkspc_votrix \
-  --workspace-slug votrix \
-  --workspace-name "Votrix"
+  --organization-id org_votrix \
+  --organization-slug votrix \
+  --organization-name "Votrix"
 unset DATABASE_URL
 ```
 
-Use `.env.staging` and a distinct workspace ID for staging. The command prints
+Use `.env.staging` and a distinct Organization ID for staging. The command prints
 the plaintext key exactly once; place it directly in the intended password
 manager or client secret store. VMA persists only its digest. Do not redirect
 the output into the repository or Cloud Run logs. Future key creation and
@@ -189,7 +234,7 @@ After both services exist:
 ./scripts/gcloud/5-allow-public.sh
 ```
 
-This exposes the Cloud Run URLs. VMA still requires a database-backed workspace
+This exposes the Cloud Run URLs. VMA still requires a database-backed Organization
 API key; public ingress does not add an anonymous authentication path.
 
 ## Status
