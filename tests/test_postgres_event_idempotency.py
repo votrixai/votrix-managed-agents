@@ -8,13 +8,20 @@ from sqlalchemy.engine import make_url
 
 from app.config import get_settings
 from app.db.engine import get_engine, reset_engine_for_tests, session_scope
-from app.db.models import Base, ManagedResource, SessionEvent, SessionEventIdempotency
+from app.db.models import (
+    Base,
+    ManagedResource,
+    Organization,
+    SessionEvent,
+    SessionEventIdempotency,
+)
+from app.db.queries import api_keys as api_keys_q
 from app.organization import (
     CurrentOrganization,
     reset_current_organization,
     set_current_organization,
 )
-from tests.conftest import TEST_HEADERS
+from tests.conftest import TEST_API_KEY, TEST_HEADERS, TEST_ORGANIZATION_ID
 
 
 POSTGRES_URL = os.environ.get("VMA_TEST_POSTGRES_URL", "")
@@ -37,10 +44,19 @@ async def test_database(monkeypatch):
 
     monkeypatch.setenv("DATABASE_URL", POSTGRES_URL)
     monkeypatch.setenv("VMA_SANDBOX_PROVIDER", "state")
+    monkeypatch.setenv("VMA_DEFAULT_MODEL_PROVIDER", "fake")
+    monkeypatch.setenv(
+        "VMA_MODEL_PROVIDERS",
+        '{"fake":{"adapter":"fake","default_model":"test-model"}}',
+    )
     monkeypatch.setenv("VMA_REQUIRE_BETA_HEADER", "true")
     monkeypatch.setenv("VMA_REQUIRE_ANTHROPIC_VERSION_HEADER", "true")
     organization_token = set_current_organization(
-        CurrentOrganization(id="org_test", slug="test", source="postgres_test")
+        CurrentOrganization(
+            id=TEST_ORGANIZATION_ID,
+            slug="test",
+            source="postgres_test",
+        )
     )
     get_settings.cache_clear()
     await reset_engine_for_tests()
@@ -48,6 +64,24 @@ async def test_database(monkeypatch):
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
+    async with session_scope() as db:
+        db.add(
+            Organization(
+                id=TEST_ORGANIZATION_ID,
+                slug="test",
+                name="PostgreSQL integration test",
+                metadata_={"provisioned_by": "test_fixture"},
+            )
+        )
+        await api_keys_q.create_api_key(
+            db,
+            organization_id=TEST_ORGANIZATION_ID,
+            name="PostgreSQL integration key",
+            token=TEST_API_KEY,
+            scopes=(api_keys_q.API_SCOPE,),
+            created_by="test_fixture",
+        )
+        await db.commit()
     yield
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
