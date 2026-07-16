@@ -97,11 +97,13 @@ empty arrays clear tools, MCP servers, or Skills; null is rejected for those
 arrays; and `model: null` is rejected. The response returns the resolved Agent
 snapshot while the base Agent and version remain unchanged. Custom Skill
 `latest` references are pinned before the Session sandbox is provisioned.
-Every key-based model requires a matching model Credential in one of the
-submitted `vault_ids`; otherwise creation returns `422` with code
-`model_credential_required`. VMA has no server model-key fallback. Because the
-MVP persists one model-Credential binding per Session, the coordinator and all
-pinned subagents must use the same provider.
+Every key-based model receives one immutable create-time funding binding.
+Existing CMA callers omit `funding` and use the Organization default; native
+callers may request `byok`, `platform_credits`, or `organization_default`. With
+no Organization billing account, the default remains BYOK and a missing model
+Credential returns `422 model_credential_required`. Because the MVP persists
+one funding binding per Session, the coordinator and all pinned subagents must
+use the same provider.
 
 | Operation | Route | Status |
 | --- | --- | --- |
@@ -194,14 +196,14 @@ private credential slot or `mcp_server_url` within one Vault, are limited to 20
 per Vault, and keep structural keys immutable. Archiving or deleting a Vault
 cascades secret purge and revocation. Native callers create a model Credential
 with a public provider ID and write-only key; VMA performs the internal mapping.
-VMA uses the first matching Vault in `vault_ids` at Session creation and
-persists only the selected Credential ID. Later turns reload that exact
-Credential and fail closed after revocation instead of changing payer. The
-secret stays in the control plane and is not copied into E2B. If no matching
-model Credential exists, Session creation fails with `422` and code
-`model_credential_required`; VMA never reads a model API key from process
-environment or provider configuration. Keyless `fake` and `ollama` providers
-use credential source `none`.
+For BYOK, VMA uses the first matching Vault in `vault_ids` at Session creation
+and persists only the selected Credential ID. For platform funding, it persists
+the exact Organization billing-account and provider-key row IDs. Later turns
+reload only that selected row and fail closed after revocation or expiry rather
+than changing funding sources. Secrets stay in the control plane and are not
+copied into E2B. VMA never reads a model API key from process environment or
+provider configuration. Keyless `fake` and `ollama` providers use credential
+source `none`.
 
 | Operation | Route | Status |
 | --- | --- | --- |

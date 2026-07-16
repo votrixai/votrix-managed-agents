@@ -40,7 +40,7 @@ async def _create_session(db, *, organization_id: str = "org_test"):
 
 
 async def test_persist_output_creates_downloadable_session_file(client):
-    content = b"customer,value\nacme,42\n"
+    content = b"account,value\nacme,42\n"
     digest = hashlib.sha256(content).hexdigest()
 
     async with session_scope() as db:

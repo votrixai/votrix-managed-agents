@@ -164,7 +164,7 @@ def test_sync_provider_and_vault_wrappers():
             json={
                 "id": "vault_1",
                 "type": "vault",
-                "display_name": "Customer keys",
+                "display_name": "Organization keys",
                 "metadata": {},
             },
         )
@@ -177,7 +177,7 @@ def test_sync_provider_and_vault_wrappers():
             http_client=http_client,
         ) as client:
             provider = client.model_providers.list().data[0]
-            vault = client.vaults.create(display_name="Customer keys")
+            vault = client.vaults.create(display_name="Organization keys")
     assert provider.id == "openrouter"
     assert vault.id == "vault_1"
 

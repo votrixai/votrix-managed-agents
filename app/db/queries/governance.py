@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +28,17 @@ ACTIVE_WORK_METRIC = "active_work"
 MODEL_TOKENS_METRIC = "model_tokens"
 STORAGE_BYTES_METRIC = "storage_bytes"
 REQUEST_WINDOW_SECONDS = 60
+USAGE_PAGE_CURSOR_VERSION = 1
+
+
+class UsagePageCursorError(ValueError):
+    """Raised when an opaque usage cursor is invalid for its query."""
+
+
+@dataclass(frozen=True)
+class UsageEntriesPage:
+    entries: list[UsageLedgerEntry]
+    next_page: str | None
 
 
 async def get_organization_quota(
@@ -518,14 +533,184 @@ async def list_usage_entries(
     *,
     organization_id: str,
     limit: int = 100,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    metric: str | None = None,
+    occurred_at_gt: datetime | None = None,
+    occurred_at_gte: datetime | None = None,
+    occurred_at_lt: datetime | None = None,
+    occurred_at_lte: datetime | None = None,
 ) -> list[UsageLedgerEntry]:
-    result = await db.execute(
-        select(UsageLedgerEntry)
-        .where(UsageLedgerEntry.organization_id == organization_id)
-        .order_by(UsageLedgerEntry.occurred_at.desc(), UsageLedgerEntry.id.desc())
-        .limit(max(1, min(limit, 1000)))
+    page = await list_usage_entries_page(
+        db,
+        organization_id=organization_id,
+        limit=limit,
+        source_type=source_type,
+        source_id=source_id,
+        metric=metric,
+        occurred_at_gt=occurred_at_gt,
+        occurred_at_gte=occurred_at_gte,
+        occurred_at_lt=occurred_at_lt,
+        occurred_at_lte=occurred_at_lte,
     )
-    return list(result.scalars().all())
+    return page.entries
+
+
+async def list_usage_entries_page(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    limit: int = 100,
+    page: str | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    metric: str | None = None,
+    occurred_at_gt: datetime | None = None,
+    occurred_at_gte: datetime | None = None,
+    occurred_at_lt: datetime | None = None,
+    occurred_at_lte: datetime | None = None,
+) -> UsageEntriesPage:
+    """Read one stable keyset page directly from the append-only ledger."""
+
+    page_size = max(1, min(limit, 1000))
+    normalized_filters = {
+        "organization_id": str(organization_id),
+        "source_type": _optional_text(source_type),
+        "source_id": _optional_text(source_id),
+        "metric": _optional_text(metric),
+        "occurred_at_gt": _canonical_datetime(occurred_at_gt),
+        "occurred_at_gte": _canonical_datetime(occurred_at_gte),
+        "occurred_at_lt": _canonical_datetime(occurred_at_lt),
+        "occurred_at_lte": _canonical_datetime(occurred_at_lte),
+    }
+    filter_fingerprint = hashlib.sha256(
+        json.dumps(normalized_filters, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+    statement = select(UsageLedgerEntry).where(
+        UsageLedgerEntry.organization_id == organization_id
+    )
+    if normalized_filters["source_type"] is not None:
+        statement = statement.where(
+            UsageLedgerEntry.source_type == normalized_filters["source_type"]
+        )
+    if normalized_filters["source_id"] is not None:
+        statement = statement.where(
+            UsageLedgerEntry.source_id == normalized_filters["source_id"]
+        )
+    if normalized_filters["metric"] is not None:
+        statement = statement.where(
+            UsageLedgerEntry.metric == normalized_filters["metric"]
+        )
+
+    if occurred_at_gt is not None:
+        statement = statement.where(UsageLedgerEntry.occurred_at > occurred_at_gt)
+    if occurred_at_gte is not None:
+        statement = statement.where(UsageLedgerEntry.occurred_at >= occurred_at_gte)
+    if occurred_at_lt is not None:
+        statement = statement.where(UsageLedgerEntry.occurred_at < occurred_at_lt)
+    if occurred_at_lte is not None:
+        statement = statement.where(UsageLedgerEntry.occurred_at <= occurred_at_lte)
+
+    if page is not None:
+        cursor_time, cursor_id = _decode_usage_page_cursor(
+            page,
+            filter_fingerprint=filter_fingerprint,
+        )
+        statement = statement.where(
+            or_(
+                UsageLedgerEntry.occurred_at < cursor_time,
+                and_(
+                    UsageLedgerEntry.occurred_at == cursor_time,
+                    UsageLedgerEntry.id < cursor_id,
+                ),
+            )
+        )
+
+    result = await db.execute(
+        statement.order_by(
+            UsageLedgerEntry.occurred_at.desc(),
+            UsageLedgerEntry.id.desc(),
+        ).limit(page_size + 1)
+    )
+    rows = list(result.scalars().all())
+    has_more = len(rows) > page_size
+    entries = rows[:page_size]
+    next_page = (
+        _encode_usage_page_cursor(
+            entries[-1],
+            filter_fingerprint=filter_fingerprint,
+        )
+        if has_more and entries
+        else None
+    )
+    return UsageEntriesPage(entries=entries, next_page=next_page)
+
+
+def _encode_usage_page_cursor(
+    entry: UsageLedgerEntry,
+    *,
+    filter_fingerprint: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "v": USAGE_PAGE_CURSOR_VERSION,
+            "occurred_at": _canonical_datetime(entry.occurred_at),
+            "id": entry.id,
+            "filters": filter_fingerprint,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "usage_" + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_usage_page_cursor(
+    value: str,
+    *,
+    filter_fingerprint: str,
+) -> tuple[datetime, str]:
+    if not value.startswith("usage_"):
+        raise UsagePageCursorError("Invalid usage page cursor")
+    try:
+        encoded = value.removeprefix("usage_")
+        payload = json.loads(
+            base64.urlsafe_b64decode(encoded.encode("ascii") + b"===").decode(
+                "utf-8"
+            )
+        )
+        version = int(payload["v"])
+        occurred_at = datetime.fromisoformat(str(payload["occurred_at"]))
+        entry_id = str(payload["id"])
+        cursor_filters = str(payload["filters"])
+    except Exception as exc:
+        raise UsagePageCursorError("Invalid usage page cursor") from exc
+    if (
+        version != USAGE_PAGE_CURSOR_VERSION
+        or not entry_id
+        or cursor_filters != filter_fingerprint
+    ):
+        raise UsagePageCursorError("Invalid usage page cursor")
+    return _as_utc_datetime(occurred_at), entry_id
+
+
+def _canonical_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return _as_utc_datetime(value).isoformat()
+
+
+def _as_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _optional_text(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 async def claim_tenant_idempotency(

@@ -665,7 +665,7 @@
                   "id": "gpt-5.5"
                 },
                 "system": "Research the request and cite the sources you use.",
-                "description": "A research agent for customer questions.",
+                "description": "A research agent for account questions.",
                 "metadata": {
                   "team": "support"
                 }
@@ -690,7 +690,7 @@
                     "id": "gpt-5.5"
                   },
                   "system": "Research the request and cite the sources you use.",
-                  "description": "A research agent for customer questions.",
+                  "description": "A research agent for account questions.",
                   "tools": [],
                   "mcp_servers": [],
                   "skills": [],
@@ -771,19 +771,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://managed-agents.votrixai.com/v1/agents' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"name\":\"Research assistant\",\"model\":{\"id\":\"gpt-5.5\"},\"system\":\"Research the request and cite the sources you use.\",\"description\":\"A research agent for customer questions.\",\"metadata\":{\"team\":\"support\"}}'"
+            "source": "curl --request POST \\\n  --url 'https://managed-agents.votrixai.com/v1/agents' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"name\":\"Research assistant\",\"model\":{\"id\":\"gpt-5.5\"},\"system\":\"Research the request and cite the sources you use.\",\"description\":\"A research agent for account questions.\",\"metadata\":{\"team\":\"support\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'name': 'Research assistant',\n 'model': {'id': 'gpt-5.5'},\n 'system': 'Research the request and cite the sources you use.',\n 'description': 'A research agent for customer questions.',\n 'metadata': {'team': 'support'}}\n\nresponse = requests.request(\n    'POST',\n    'https://managed-agents.votrixai.com/v1/agents',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'name': 'Research assistant',\n 'model': {'id': 'gpt-5.5'},\n 'system': 'Research the request and cite the sources you use.',\n 'description': 'A research agent for account questions.',\n 'metadata': {'team': 'support'}}\n\nresponse = requests.request(\n    'POST',\n    'https://managed-agents.votrixai.com/v1/agents',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"name\": \"Research assistant\",\n  \"model\": {\n    \"id\": \"gpt-5.5\"\n  },\n  \"system\": \"Research the request and cite the sources you use.\",\n  \"description\": \"A research agent for customer questions.\",\n  \"metadata\": {\n    \"team\": \"support\"\n  }\n};\n\nconst response = await fetch(\"https://managed-agents.votrixai.com/v1/agents\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"name\": \"Research assistant\",\n  \"model\": {\n    \"id\": \"gpt-5.5\"\n  },\n  \"system\": \"Research the request and cite the sources you use.\",\n  \"description\": \"A research agent for account questions.\",\n  \"metadata\": {\n    \"team\": \"support\"\n  }\n};\n\nconst response = await fetch(\"https://managed-agents.votrixai.com/v1/agents\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -906,7 +906,7 @@
                         "id": "gpt-5.5"
                       },
                       "system": "Research the request and cite the sources you use.",
-                      "description": "A research agent for customer questions.",
+                      "description": "A research agent for account questions.",
                       "tools": [],
                       "mcp_servers": [],
                       "skills": [],
@@ -1074,7 +1074,7 @@
                         "id": "gpt-5.5"
                       },
                       "system": "Research the request and cite the sources you use.",
-                      "description": "A research agent for customer questions.",
+                      "description": "A research agent for account questions.",
                       "tools": [],
                       "mcp_servers": [],
                       "skills": [],
@@ -1230,7 +1230,7 @@
                     "id": "gpt-5.5"
                   },
                   "system": "Research the request and cite the sources you use.",
-                  "description": "A research agent for customer questions.",
+                  "description": "A research agent for account questions.",
                   "tools": [],
                   "mcp_servers": [],
                   "skills": [],
@@ -1375,7 +1375,7 @@
                     "id": "gpt-5.5"
                   },
                   "system": "Answer concisely and cite every external source.",
-                  "description": "A research agent for customer questions.",
+                  "description": "A research agent for account questions.",
                   "tools": [],
                   "mcp_servers": [],
                   "skills": [],
@@ -1540,7 +1540,7 @@
                     "id": "gpt-5.5"
                   },
                   "system": "Answer concisely and cite every external source.",
-                  "description": "A research agent for customer questions.",
+                  "description": "A research agent for account questions.",
                   "tools": [],
                   "mcp_servers": [],
                   "skills": [],
@@ -2808,9 +2808,9 @@
                   "version": 1
                 },
                 "environment_id": "env_1234567890abcdef1234567890abcdef",
-                "title": "Investigate a customer request",
+                "title": "Investigate an account request",
                 "metadata": {
-                  "customer_id": "cus_example"
+                  "account_id": "acct_example"
                 }
               }
             }
@@ -2835,14 +2835,14 @@
                   "agent_id": "agt_1234567890abcdef1234567890abcdef",
                   "agent_version": 1,
                   "environment_id": "env_1234567890abcdef1234567890abcdef",
-                  "title": "Investigate a customer request",
+                  "title": "Investigate an account request",
                   "status": "idle",
                   "status_details": {},
                   "stop_reason": null,
                   "run_state": null,
                   "sandbox_state": null,
                   "metadata": {
-                    "customer_id": "cus_example"
+                    "account_id": "acct_example"
                   },
                   "resources": [],
                   "outcome_evaluations": [],
@@ -2925,19 +2925,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://managed-agents.votrixai.com/v1/sessions' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"agent\":{\"type\":\"agent\",\"id\":\"agt_1234567890abcdef1234567890abcdef\",\"version\":1},\"environment_id\":\"env_1234567890abcdef1234567890abcdef\",\"title\":\"Investigate a customer request\",\"metadata\":{\"customer_id\":\"cus_example\"}}'"
+            "source": "curl --request POST \\\n  --url 'https://managed-agents.votrixai.com/v1/sessions' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"agent\":{\"type\":\"agent\",\"id\":\"agt_1234567890abcdef1234567890abcdef\",\"version\":1},\"environment_id\":\"env_1234567890abcdef1234567890abcdef\",\"title\":\"Investigate an account request\",\"metadata\":{\"account_id\":\"acct_example\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'agent': {'type': 'agent', 'id': 'agt_1234567890abcdef1234567890abcdef', 'version': 1},\n 'environment_id': 'env_1234567890abcdef1234567890abcdef',\n 'title': 'Investigate a customer request',\n 'metadata': {'customer_id': 'cus_example'}}\n\nresponse = requests.request(\n    'POST',\n    'https://managed-agents.votrixai.com/v1/sessions',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'agent': {'type': 'agent', 'id': 'agt_1234567890abcdef1234567890abcdef', 'version': 1},\n 'environment_id': 'env_1234567890abcdef1234567890abcdef',\n 'title': 'Investigate an account request',\n 'metadata': {'account_id': 'acct_example'}}\n\nresponse = requests.request(\n    'POST',\n    'https://managed-agents.votrixai.com/v1/sessions',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"agent\": {\n    \"type\": \"agent\",\n    \"id\": \"agt_1234567890abcdef1234567890abcdef\",\n    \"version\": 1\n  },\n  \"environment_id\": \"env_1234567890abcdef1234567890abcdef\",\n  \"title\": \"Investigate a customer request\",\n  \"metadata\": {\n    \"customer_id\": \"cus_example\"\n  }\n};\n\nconst response = await fetch(\"https://managed-agents.votrixai.com/v1/sessions\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"agent\": {\n    \"type\": \"agent\",\n    \"id\": \"agt_1234567890abcdef1234567890abcdef\",\n    \"version\": 1\n  },\n  \"environment_id\": \"env_1234567890abcdef1234567890abcdef\",\n  \"title\": \"Investigate an account request\",\n  \"metadata\": {\n    \"account_id\": \"acct_example\"\n  }\n};\n\nconst response = await fetch(\"https://managed-agents.votrixai.com/v1/sessions\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -3214,14 +3214,14 @@
                       "agent_id": "agt_1234567890abcdef1234567890abcdef",
                       "agent_version": 1,
                       "environment_id": "env_1234567890abcdef1234567890abcdef",
-                      "title": "Investigate a customer request",
+                      "title": "Investigate an account request",
                       "status": "idle",
                       "status_details": {},
                       "stop_reason": null,
                       "run_state": null,
                       "sandbox_state": null,
                       "metadata": {
-                        "customer_id": "cus_example"
+                        "account_id": "acct_example"
                       },
                       "resources": [],
                       "outcome_evaluations": [],
@@ -3364,14 +3364,14 @@
                   "agent_id": "agt_1234567890abcdef1234567890abcdef",
                   "agent_version": 1,
                   "environment_id": "env_1234567890abcdef1234567890abcdef",
-                  "title": "Investigate a customer request",
+                  "title": "Investigate an account request",
                   "status": "idle",
                   "status_details": {},
                   "stop_reason": null,
                   "run_state": null,
                   "sandbox_state": null,
                   "metadata": {
-                    "customer_id": "cus_example"
+                    "account_id": "acct_example"
                   },
                   "resources": [],
                   "outcome_evaluations": [],
@@ -7843,6 +7843,248 @@
         ]
       }
     },
+    "/v1/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "List Usage",
+        "description": "List append-only raw usage facts visible to the current Organization.\n\nResults contain recorded quantities and provider-reported token dimensions.\nThey do not infer downstream identities, prices, or monetary costs.",
+        "operationId": "list_usage_v1_usage_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50
+            },
+            "description": "Maximum number of records to return in this page.",
+            "example": 20
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Opaque pagination cursor returned as `next_page` by the previous request."
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only return usage facts attributed to this Session."
+            },
+            "description": "Only return usage facts attributed to this Session.",
+            "example": "sess_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only return usage facts for this exact metric."
+            },
+            "description": "Only return usage facts for this exact metric."
+          },
+          {
+            "name": "occurred_at[gt]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return usage recorded after this RFC 3339 timestamp.",
+            "example": "2026-07-01T00:00:00Z"
+          },
+          {
+            "name": "occurred_at[gte]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return usage recorded at or after this RFC 3339 timestamp.",
+            "example": "2026-07-01T00:00:00Z"
+          },
+          {
+            "name": "occurred_at[lt]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return usage recorded before this RFC 3339 timestamp.",
+            "example": "2026-08-01T00:00:00Z"
+          },
+          {
+            "name": "occurred_at[lte]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return usage recorded at or before this RFC 3339 timestamp.",
+            "example": "2026-08-01T00:00:00Z"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsagePageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/vaults": {
       "post": {
         "tags": [
@@ -12285,6 +12527,17 @@
             },
             "type": "array",
             "description": "Credential vault identifiers made available to the session."
+          },
+          "funding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionFundingRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional VMA funding selection. Omission uses the Organization default and preserves the CMA-compatible request shape."
           }
         },
         "additionalProperties": false,
@@ -12454,6 +12707,25 @@
           "updated_at"
         ],
         "title": "SessionFileResourceResponse"
+      },
+      "SessionFundingRequest": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "organization_default",
+              "byok",
+              "platform_credits"
+            ],
+            "description": "Stable type discriminator for this object."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "SessionFundingRequest"
       },
       "SessionGenericResourceResponse": {
         "properties": {
@@ -13306,6 +13578,161 @@
         ],
         "title": "SkillVersionResponse"
       },
+      "UsageEntryResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this resource."
+          },
+          "type": {
+            "type": "string",
+            "const": "usage",
+            "default": "usage",
+            "description": "Stable type discriminator for this object."
+          },
+          "organization_id": {
+            "type": "string",
+            "description": "Identifier of the Organization that owns this usage fact."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Exact raw metric recorded by the control plane."
+          },
+          "quantity": {
+            "type": "integer",
+            "description": "Non-negative quantity recorded for this metric."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit associated with the recorded quantity."
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model or runtime provider that reported this usage, when available."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Concrete provider model associated with this usage, when available."
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Control-plane resource type that produced this usage fact."
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the control-plane resource that produced this usage fact."
+          },
+          "dimensions": {
+            "additionalProperties": true,
+            "type": "object",
+            "description": "Provider-reported raw usage dimensions such as input and output tokens."
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object",
+            "description": "Control-plane accounting metadata for this raw usage fact."
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when this usage occurred."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "metric",
+          "quantity",
+          "unit",
+          "occurred_at"
+        ],
+        "title": "UsageEntryResponse"
+      },
+      "UsagePageResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/UsageEntryResponse"
+            },
+            "type": "array",
+            "description": "Resources or event records returned by this operation."
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether another page of results is available."
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the first item in this page."
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the last item in this page."
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor used to request the next page, or null at the end."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "UsagePageResponse"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -13633,6 +14060,11 @@
       "name": "skills",
       "description": "Reusable skill archives and versioned skill definitions.",
       "x-displayName": "Skills"
+    },
+    {
+      "name": "usage",
+      "description": "Organization-scoped raw usage facts with Session and time filters.",
+      "x-displayName": "Usage"
     },
     {
       "name": "vaults",

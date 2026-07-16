@@ -17,6 +17,15 @@ class OpenObject(VotrixModel):
 
 
 ApiKeyScope = Literal["api", "api_keys:manage", "worker"]
+SessionFundingType = Literal[
+    "organization_default",
+    "byok",
+    "platform_credits",
+]
+
+
+class SessionFundingRequest(VotrixModel):
+    type: SessionFundingType
 
 
 class ApiKey(VotrixModel):
@@ -131,6 +140,22 @@ class Session(VotrixModel):
     deployment_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class UsageEntry(VotrixModel):
+    id: str
+    type: str = "usage"
+    organization_id: str
+    metric: str
+    quantity: int
+    unit: str
+    provider: str | None = None
+    model: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    dimensions: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime
 
 
 class SessionEvent(VotrixModel):

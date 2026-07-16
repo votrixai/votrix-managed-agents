@@ -187,7 +187,7 @@ async def test_create_model_credential_maps_provider_and_encrypts_secret(
         json={
             "provider": "OpenRouter",
             "api_key": api_key,
-            "display_name": "Customer OpenRouter",
+            "display_name": "Organization OpenRouter",
             "metadata": {"owner": "sdk-test"},
         },
     )
@@ -199,7 +199,7 @@ async def test_create_model_credential_maps_provider_and_encrypts_secret(
         "type": "model_credential",
         "vault_id": vault["id"],
         "model_provider": "openrouter",
-        "display_name": "Customer OpenRouter",
+        "display_name": "Organization OpenRouter",
         "metadata": {"owner": "sdk-test"},
         "created_at": credential["created_at"],
         "updated_at": credential["updated_at"],

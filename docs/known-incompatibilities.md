@@ -32,7 +32,7 @@ Status terms match the [compatibility matrix](./compatibility-matrix.md): **Impl
 | User-profile enrollment and attribution | Gap | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |
 | Organization RBAC/SSO and Postgres RLS | Gap | Organization-scoped API keys are the beta tenant boundary, not an enterprise identity system or database defense-in-depth policy. |
 | Tenant quotas and raw ledgers | Implemented | Request, active-work, daily token, and stored-byte limits plus append-only audit/usage facts provide the public-beta baseline, not enterprise policy or priced billing. |
-| Billing and payments | Deferred | The beta is BYOK/free; price books, balances/credits, top-ups, refunds, Stripe, and invoices are outside this release. |
+| Billing and payments | Deferred | Operator-provisioned, upstream-limited Organization keys can fund trials, but price books, authoritative balances/reservations, top-ups, refunds, Stripe, and invoices are outside this release. |
 
 ## API and SDK surface
 
@@ -557,13 +557,15 @@ defense in depth.
 
 ### Billing and payments are deferred
 
-The public beta is BYOK/free and does not require a billing product. The
-append-only usage ledger records raw metric quantities with provider/model and
-source attribution for quota enforcement and cost analysis. It is not a priced
-or monetary source of truth.
+The public beta is BYOK-first and does not require a billing product. A trusted
+operator may provision an upstream-limited provider key for one Organization.
+The append-only usage ledger records raw metric quantities with provider/model,
+Session, and funding-source attribution for quota enforcement and analysis. It
+is not a priced or monetary source of truth.
 
-Price books, currency amounts, balances/credits, top-ups, refunds, Stripe,
-invoices, plans, seats, taxes, and spend alerts are explicitly deferred.
+Price books, authoritative currency amounts, credit grants, atomic balance
+reservation/settlement, top-ups, refunds, Stripe, invoices, plans, seats, taxes,
+and spend alerts are explicitly deferred.
 
 ### Audit is a beta ledger, not an enterprise archive
 

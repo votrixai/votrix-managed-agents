@@ -8,7 +8,8 @@ project follows semantic versioning once release tags begin.
 
 This work establishes the minimum multi-tenant **public-beta foundation**. It
 does not claim production high availability, enterprise identity/compliance,
-or paid billing readiness. The beta is BYOK/free.
+or paid billing readiness. The beta is BYOK-first with optional trusted
+operator-provisioned Organization platform funding.
 
 ### Added
 
@@ -44,6 +45,15 @@ or paid billing readiness. The beta is BYOK/free.
   Credentials, and Model Providers.
 - Native model-Credential list/retrieve/rotate/archive/delete lifecycle in both
   server and SDK surfaces.
+- Immutable Session funding bindings plus Organization billing-account and
+  encrypted provider-key records. Session creation may select BYOK, platform
+  funding, or an Organization default while omitted requests remain compatible.
+- A trusted Organization funding CLI that creates or rotates the same provider
+  key row without accepting a plaintext command-line value or emitting secret
+  material.
+- An Organization-scoped raw usage endpoint with Session, metric, time, and
+  opaque cursor filters. It exposes recorded facts without inferred end-user
+  identity or unreported monetary cost.
 - A synchronous `Votrix` provisioning client for API keys, Model Providers,
   Vaults, and native model Credentials alongside the full GA `AsyncVotrix`
   client.
@@ -94,10 +104,10 @@ or paid billing readiness. The beta is BYOK/free.
   rate/resource configuration change affects new intervals without rewriting
   earlier estimates. Estimation can be disabled with
   `VMA_E2B_COST_ESTIMATION_ENABLED=false`.
-- Model execution is now strict BYOK. Every key-based Session must select a
-  matching model Credential from its ordered Organization Vaults or creation
-  returns `422 model_credential_required`; VMA no longer falls back to a
-  service-owned model key.
+- Every key-based Session now fixes one funding source at creation. BYOK selects
+  the first matching model Credential from ordered Organization Vaults;
+  platform funding selects one exact Organization provider-key row. Preference
+  fallback is create-time only, and a later revocation never changes source.
 - `VMA_MODEL_PROVIDERS` now describes routing, capabilities, and an internal
   Vault credential slot only. Embedded `api_key` values are rejected and
   `api_key_env` is no longer resolved from process environment. Cloud Run
@@ -131,11 +141,11 @@ or paid billing readiness. The beta is BYOK/free.
 - Organization quota counters and reservations use atomic database operations;
   audit and usage rows reject mutation at both application and database layers.
 - Public SDK surfaces omit deferred Memory Stores and generic Vault Credential
-  escape hatches; customer model-provider keys remain write-only and are
+  escape hatches; Organization model-provider keys remain write-only and are
   mapped from public provider IDs to private Vault slots.
-- Customer model keys are decrypted only from the selected Session Vault
-  Credential and never sourced from service environment variables, embedded
-  provider config, checkpoints, or E2B.
+- Organization model keys are decrypted only from the selected Session Vault
+  Credential or exact platform-provider key row and never sourced from service
+  environment variables, embedded provider config, checkpoints, or E2B.
 
 ### Deferred
 
@@ -149,9 +159,10 @@ or paid billing readiness. The beta is BYOK/free.
 - Presigned upload completion in public GA, webhook registration/delivery,
   production deployment scheduling, MCP OAuth refresh, and deferred resource
   families listed by `/v1/capabilities`.
-- Paid billing: price books, monetary amounts, balances/credits, top-ups,
-  refunds, Stripe, invoices, plans, seats, taxes, and spend alerts. None is a
-  blocker for the BYOK/free public beta.
+- Paid billing: price books, authoritative monetary amounts, credit grants,
+  balance reservation/settlement, top-ups, refunds, Stripe, invoices, plans,
+  seats, taxes, and spend alerts. `platform_credits` currently selects an
+  upstream hard-limited key; it does not claim a prepaid balance or invoice.
 - Authoritative E2B billing reconciliation. The local estimate does not call an
   E2B usage/pricing API, consume an E2B webhook, discover current prices, write
   monetary amounts or bills to `usage_ledger`, or claim invoice accuracy.

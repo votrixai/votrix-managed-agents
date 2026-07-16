@@ -9,6 +9,11 @@ Date: 2026-07-15
 Audience: next implementation/release session
 Release channel: public beta
 
+> This is a dated snapshot. On 2026-07-16 VMA added immutable Session funding
+> bindings and optional operator-provisioned Organization platform keys. The
+> strict-BYOK statements below describe the earlier baseline; current behavior
+> is documented in the README, model-provider guide, and changelog.
+
 ## Outcome
 
 The repository now contains the minimum platform foundation for a controlled
@@ -51,7 +56,7 @@ Organization before validation or traffic.
 
 The E2B estimate is a separate internal operations aid. It is not provider
 usage truth, does not add monetary values or bills to `usage_ledger`, and is not
-exposed as a customer-facing billing API.
+exposed as an Organization-facing billing API.
 
 ## Product boundary frozen for this beta
 
@@ -147,7 +152,7 @@ Explicitly deferred:
 
 - The default assumptions are `0.000014 USD/vCPU-second` and
   `0.0000045 USD/GiB-second`. Both are configuration defaults, not discovered
-  E2B prices or customer rates. `VMA_E2B_TEMPLATE_RESOURCES` supplies the
+  E2B prices or Organization rates. `VMA_E2B_TEMPLATE_RESOURCES` supplies the
   allocated CPU and `memory_mb`; if the resource profile is missing/invalid or
   estimation is disabled, sandbox operation continues without an estimate.
 - A resource/rate profile is frozen when an interval opens. Provision/connect
@@ -161,7 +166,7 @@ Explicitly deferred:
   snapshots, taxes, credits, discounts, and other charges.
 - The estimator does not write `estimated_usd`, a price, balance, charge, or
   invoice into `usage_ledger`. That ledger remains raw metering/quota data;
-  neither system is an authoritative customer bill.
+  neither system is an authoritative Organization bill.
 
 ### Idempotency
 
@@ -396,7 +401,7 @@ credentials.
    and keep provider contract tests in the release gate.
 8. The E2B dollar estimate depends entirely on configured assumptions and
    locally observed lifecycle intervals. It can drift from an E2B invoice and
-   omit provider-specific charges; never expose it as customer billing or use
+   omit provider-specific charges; never expose it as Organization billing or use
    it for settlement without independent reconciliation.
 9. Invalid credentials cannot be mapped to a tenant audit row. Edge/security
    logs must cover brute-force and credential-stuffing operations.
@@ -436,7 +441,7 @@ credentials.
    consumers drain the burst without memory or database-pool exhaustion.
 10. Compare the configured E2B rates/formula with current provider invoices for
    internal forecasting, document the calibration date, and alert on drift.
-   Do not turn the estimate into a customer-visible charge.
+   Do not turn the estimate into an Organization-visible charge.
 11. Define retention cutoffs and an operator job for bounded expired request
    counter/completed-idempotency cleanup; do not mutate append-only ledgers.
 12. Keep `maxScale=1` and the GA filter enabled. Do not expose deferred routes or

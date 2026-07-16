@@ -40,6 +40,92 @@ class Organization(TimestampMixin, Base):
         return resolve_organization_id(value)
 
 
+class OrganizationBillingAccount(TimestampMixin, Base):
+    __tablename__ = "organization_billing_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            name="uq_organization_billing_accounts_organization",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_organization_billing_accounts_organization_id",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'closed')",
+            name="ck_organization_billing_accounts_status",
+        ),
+        CheckConstraint(
+            "policy IN ('byok_only', 'platform_only', 'prefer_byok', 'prefer_platform')",
+            name="ck_organization_billing_accounts_policy",
+        ),
+        CheckConstraint(
+            "currency = 'USD'",
+            name="ck_organization_billing_accounts_currency",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    policy: Mapped[str] = mapped_column(String(32), nullable=False, default="byok_only")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    trial_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OrganizationProviderKeyBinding(TimestampMixin, Base):
+    __tablename__ = "organization_provider_key_bindings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "organization_billing_account_id"],
+            [
+                "organization_billing_accounts.organization_id",
+                "organization_billing_accounts.id",
+            ],
+            name="fk_organization_provider_keys_organization_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "provider",
+            name="uq_organization_provider_keys_organization_provider",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_organization_provider_keys_organization_id",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name="ck_organization_provider_keys_status",
+        ),
+        CheckConstraint(
+            "spending_limit_usd_micros IS NULL OR spending_limit_usd_micros >= 0",
+            name="ck_organization_provider_keys_spending_limit_nonnegative",
+        ),
+        Index(
+            "ix_organization_provider_keys_organization_status",
+            "organization_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    organization_billing_account_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    upstream_key_id: Mapped[str | None] = mapped_column(String(255))
+    spending_limit_usd_micros: Mapped[int | None] = mapped_column(BigInteger)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+
 class ApiKey(TimestampMixin, Base):
     __tablename__ = "api_keys"
     __table_args__ = (
@@ -358,6 +444,12 @@ class ManagedSession(TimestampMixin, Base):
         passive_deletes=True,
         uselist=False,
     )
+    funding_binding: Mapped[SessionFundingBinding | None] = relationship(
+        back_populates="session",
+        lazy="raise",
+        passive_deletes=True,
+        uselist=False,
+    )
 
 
 class SessionSandbox(TimestampMixin, Base):
@@ -414,6 +506,89 @@ class SessionSandbox(TimestampMixin, Base):
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     session: Mapped[ManagedSession] = relationship(back_populates="sandbox")
+
+
+class SessionFundingBinding(TimestampMixin, Base):
+    __tablename__ = "session_funding_bindings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "session_id"],
+            ["sessions.organization_id", "sessions.id"],
+            name="fk_session_funding_bindings_organization_session",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "vault_id"],
+            ["managed_resources.organization_id", "managed_resources.id"],
+            name="fk_session_funding_bindings_organization_vault",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "model_credential_id"],
+            ["managed_resources.organization_id", "managed_resources.id"],
+            name="fk_session_funding_bindings_organization_credential",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "organization_billing_account_id"],
+            [
+                "organization_billing_accounts.organization_id",
+                "organization_billing_accounts.id",
+            ],
+            name="fk_session_funding_bindings_organization_billing_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "organization_provider_key_binding_id"],
+            [
+                "organization_provider_key_bindings.organization_id",
+                "organization_provider_key_bindings.id",
+            ],
+            name="fk_session_funding_bindings_organization_provider_key",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "session_id",
+            name="uq_session_funding_bindings_organization_session",
+        ),
+        CheckConstraint(
+            "source IN ('none', 'vault', 'platform')",
+            name="ck_session_funding_bindings_source",
+        ),
+        CheckConstraint(
+            "(source = 'none' AND vault_id IS NULL AND model_credential_id IS NULL "
+            "AND organization_billing_account_id IS NULL "
+            "AND organization_provider_key_binding_id IS NULL) OR "
+            "(source = 'vault' AND vault_id IS NOT NULL "
+            "AND model_credential_id IS NOT NULL "
+            "AND organization_billing_account_id IS NULL "
+            "AND organization_provider_key_binding_id IS NULL) OR "
+            "(source = 'platform' AND vault_id IS NULL "
+            "AND model_credential_id IS NULL "
+            "AND organization_billing_account_id IS NOT NULL "
+            "AND organization_provider_key_binding_id IS NOT NULL)",
+            name="ck_session_funding_bindings_source_shape",
+        ),
+        Index(
+            "ix_session_funding_bindings_organization_source",
+            "organization_id",
+            "source",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    vault_id: Mapped[str | None] = mapped_column(String(64))
+    model_credential_id: Mapped[str | None] = mapped_column(String(64))
+    organization_billing_account_id: Mapped[str | None] = mapped_column(String(64))
+    organization_provider_key_binding_id: Mapped[str | None] = mapped_column(String(64))
+
+    session: Mapped[ManagedSession] = relationship(back_populates="funding_binding")
 
 
 class SessionEvent(Base):
@@ -485,6 +660,11 @@ class ManagedResource(TimestampMixin, Base):
             "parent_id",
             "version",
             name="uq_managed_resources_organization_type_parent_version",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_managed_resources_organization_id",
         ),
         Index(
             "ix_managed_resources_organization_type_parent_deleted_name",

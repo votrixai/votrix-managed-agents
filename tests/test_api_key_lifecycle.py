@@ -124,10 +124,10 @@ async def test_api_key_lifecycle_returns_plaintext_once_and_is_organization_scop
         revoked = await client.post(
             f"/v1/api_keys/{replacement['id']}/revoke",
             headers=_headers(admin_token_a),
-            json={"reason": "customer request"},
+            json={"reason": "Organization request"},
         )
         assert revoked.status_code == 200, revoked.text
-        assert revoked.json()["revocation_reason"] == "customer request"
+        assert revoked.json()["revocation_reason"] == "Organization request"
         assert revoked.json()["revoked_by"] == admin_a.id
         revoked_denied = await client.get("/v1/agents", headers=_headers(replacement_token))
         assert revoked_denied.status_code == 401

@@ -279,7 +279,7 @@ async def test_agent_tool_limits_and_custom_tool_names_are_enforced(client):
         json={
             "name": "Invalid Tool Name",
             "model": {"id": "gpt-5.5"},
-            "tools": [custom_tool(1, name="lookup customer")],
+            "tools": [custom_tool(1, name="lookup account")],
         },
     )
     assert response.status_code == 422

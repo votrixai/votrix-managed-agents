@@ -26,6 +26,7 @@ from app.routers import (
     model_providers,
     sessions,
     skills,
+    usage,
 )
 
 
@@ -223,6 +224,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(files.router)
     app.include_router(skills.router)
     app.include_router(model_providers.router)
+    app.include_router(usage.router)
     app.include_router(generic_resources.router)
 
     @app.get("/health", tags=["health"], response_model=HealthResponse)

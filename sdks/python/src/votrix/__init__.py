@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TypeAlias
+
 from ._client import AsyncVotrix, BinaryResponse
 from ._constants import DEFAULT_BETA, SDK_VERSION
 from ._exceptions import (
@@ -30,9 +32,12 @@ from ._models import (
     ModelProvider,
     Session,
     SessionEvent,
+    SessionFundingRequest,
+    SessionFundingType,
     SessionResource,
     Skill,
     SkillVersion,
+    UsageEntry,
     Vault,
     VotrixModel,
 )
@@ -41,6 +46,8 @@ from ._resources import NOT_GIVEN
 from ._sse import AsyncEventStream, SSEEvent
 from ._sync_client import Votrix
 from ._sync_pagination import SyncPage
+
+UsagePage: TypeAlias = AsyncPage[UsageEntry]
 
 __version__ = SDK_VERSION
 
@@ -76,11 +83,15 @@ __all__ = [
     "SSEEvent",
     "Session",
     "SessionEvent",
+    "SessionFundingRequest",
+    "SessionFundingType",
     "SessionResource",
     "Skill",
     "SkillVersion",
     "SyncPage",
     "UnprocessableEntityError",
+    "UsageEntry",
+    "UsagePage",
     "Vault",
     "Votrix",
     "VotrixError",

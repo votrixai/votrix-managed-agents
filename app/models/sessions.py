@@ -24,6 +24,17 @@ class AgentWithOverrides(ApiModel):
     skills: list[dict[str, Any]] = Field(default_factory=list)
 
 
+SessionFundingType = Literal[
+    "organization_default",
+    "byok",
+    "platform_credits",
+]
+
+
+class SessionFundingRequest(ApiModel):
+    type: SessionFundingType
+
+
 class SessionCreateRequest(ApiModel):
     agent: str | AgentReference | AgentWithOverrides
     environment_id: str
@@ -31,6 +42,13 @@ class SessionCreateRequest(ApiModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     resources: list[dict[str, Any]] = Field(default_factory=list)
     vault_ids: list[str] = Field(default_factory=list)
+    funding: SessionFundingRequest | None = Field(
+        default=None,
+        description=(
+            "Optional VMA funding selection. Omission uses the Organization default "
+            "and preserves the CMA-compatible request shape."
+        ),
+    )
 
 
 class SessionUpdateRequest(ApiModel):

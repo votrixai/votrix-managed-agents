@@ -432,7 +432,7 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
             db,
             organization_id="org_a",
             operation="session.create",
-            idempotency_key="customer-request-1",
+            idempotency_key="organization-request-1",
             request_payload=payload,
         )
         assert acquired.acquired
@@ -456,35 +456,35 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
             db,
             organization_id="org_a",
             operation="session.create",
-            idempotency_key="customer-request-1",
+            idempotency_key="organization-request-1",
             request_payload={"input": {"a": 1, "b": 2}, "agent_id": "agent_1"},
         )
         conflict = await claim_tenant_idempotency(
             db,
             organization_id="org_a",
             operation="session.create",
-            idempotency_key="customer-request-1",
+            idempotency_key="organization-request-1",
             request_payload={"agent_id": "different"},
         )
         other_operation = await claim_tenant_idempotency(
             db,
             organization_id="org_a",
             operation="agent.create",
-            idempotency_key="customer-request-1",
+            idempotency_key="organization-request-1",
             request_payload=payload,
         )
         other_tenant = await claim_tenant_idempotency(
             db,
             organization_id="org_b",
             operation="session.create",
-            idempotency_key="customer-request-1",
+            idempotency_key="organization-request-1",
             request_payload=payload,
         )
         in_progress_owner = await claim_tenant_idempotency(
             db,
             organization_id="org_a",
             operation="session.create",
-            idempotency_key="customer-request-2",
+            idempotency_key="organization-request-2",
             request_payload=payload,
         )
         await db.commit()
@@ -494,7 +494,7 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
             db,
             organization_id="org_a",
             operation="session.create",
-            idempotency_key="customer-request-2",
+            idempotency_key="organization-request-2",
             request_payload=payload,
         )
         records = (await db.execute(select(TenantIdempotencyRecord))).scalars().all()
@@ -504,7 +504,7 @@ async def test_generic_tenant_idempotency_claim_replay_conflict_and_isolation() 
     assert (conflict.disposition, conflict.error_status) == ("conflict", 422)
     assert other_operation.acquired and other_tenant.acquired and in_progress_owner.acquired
     assert (in_progress.disposition, in_progress.error_status) == ("in_progress", 409)
-    assert all("customer-request" not in record.key_hash for record in records)
+    assert all("organization-request" not in record.key_hash for record in records)
     assert all(len(record.key_hash) == 64 for record in records)
 
 

@@ -192,7 +192,7 @@ async def test_smoke_runs_turns_concurrently_and_cleans_only_owned_resources():
     report = await run_smoke(
         client,
         SmokeConfig(
-            vault_ids=("vault_customer",),
+            vault_ids=("vault_organization",),
             session_count=3,
             provision_concurrency=2,
             poll_interval=0.001,
@@ -206,7 +206,7 @@ async def test_smoke_runs_turns_concurrently_and_cleans_only_owned_resources():
     assert client.sessions.deleted == ["session_1", "session_2", "session_3"]
     assert client.agents.archived == ["agent_smoke"]
     assert client.environments.deleted == ["environment_smoke"]
-    assert client.vaults.retrieved == ["vault_customer"]
+    assert client.vaults.retrieved == ["vault_organization"]
     assert all(result.queue_wait_ms == 100 for result in report.results)
     assert all(result.first_event_ms == 250 for result in report.results)
     assert all(result.total_ms == 400 for result in report.results)
@@ -217,7 +217,7 @@ async def test_supplied_agent_and_environment_are_never_cleaned_up():
     report = await run_smoke(
         client,
         SmokeConfig(
-            vault_ids=("vault_customer",),
+            vault_ids=("vault_organization",),
             session_count=1,
             agent_id="agent_existing",
             environment_id="environment_existing",
@@ -272,7 +272,7 @@ async def test_timeout_report_keeps_partial_event_timings():
     report = await run_smoke(
         client,
         SmokeConfig(
-            vault_ids=("vault_customer",),
+            vault_ids=("vault_organization",),
             session_count=1,
             turn_timeout=0.02,
             poll_interval=0.001,

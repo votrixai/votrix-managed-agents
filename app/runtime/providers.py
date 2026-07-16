@@ -1,9 +1,10 @@
 """Model provider resolution for the Deep Agents runtime.
 
-Provider routing is deliberately server-controlled. Agent resources select a provider
-and model, endpoint URLs come from service configuration, and credentials come only
-from a Session Vault. This keeps tenant-supplied JSON from silently redirecting requests
-to an arbitrary endpoint and prevents VMA from paying for tenant model traffic.
+Provider routing is deliberately server-controlled. Agent resources select a
+provider and model, endpoint URLs come from service configuration, and each
+Session fixes either an Organization Vault credential or an Organization
+platform key. Caller-supplied JSON cannot redirect requests to an arbitrary
+endpoint or switch the funding source during a later turn.
 """
 
 from __future__ import annotations
@@ -158,9 +159,9 @@ def runtime_provider_api_key_env(
     *,
     runtime: dict[str, Any] | None = None,
 ) -> str | None:
-    """Return the server-approved Vault credential-slot name for model BYOK.
+    """Return the server-approved provider credential-slot name.
 
-    Vault credentials never get to choose an endpoint or adapter.  They may only
+    Funding credentials never choose an endpoint or adapter. They may only
     supply the API key slot declared by the provider registry that would already
     be used for this model.
     """
@@ -192,6 +193,28 @@ def runtime_provider_id(
 
     provider, _ = _provider_and_model(model, dict(runtime or {}), get_settings())
     return provider
+
+
+def runtime_model_id(
+    model: dict[str, Any],
+    *,
+    runtime: dict[str, Any] | None = None,
+) -> str:
+    """Return the concrete server-approved model ID without resolving a key."""
+
+    settings = get_settings()
+    provider, explicit_model_id = _provider_and_model(
+        model,
+        dict(runtime or {}),
+        settings,
+    )
+    provider_config = _provider_registry(settings).get(provider) or {}
+    model_id = explicit_model_id or _clean_optional_str(
+        provider_config.get("default_model")
+    )
+    if not model_id:
+        raise ProviderConfigurationError(f"Provider {provider} requires a model id")
+    return model_id
 
 
 def resolve_runtime_provider(
