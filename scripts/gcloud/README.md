@@ -2,7 +2,7 @@
 
 This is the canonical deployment path for Votrix Managed Agents. It mirrors the
 `votrix-backend` production/staging workflow while using a dedicated VMA runtime
-identity and a migration gate before every service rollout.
+identity and a migration gate before every API-and-worker rollout.
 
 ## Fixed layout
 
@@ -11,17 +11,24 @@ identity and a migration gate before every service rollout.
 | Project | `votrixai-480422` |
 | Region | `us-central1` |
 | Artifact Registry | `votrix` |
-| Production service | `votrix-managed-agents` |
-| Staging service | `votrix-managed-agents-staging` |
+| Production API service | `votrix-managed-agents` |
+| Production worker service | `votrix-managed-agents-worker` |
+| Staging API service | `votrix-managed-agents-staging` |
+| Staging worker service | `votrix-managed-agents-staging-worker` |
 | Runtime service account | `vma-runtime@votrixai-480422.iam.gserviceaccount.com` |
 
-Production and staging each run exactly one warm instance. Both revisions use
-one web worker plus five embedded durable-work consumers, keep CPU allocated,
-expose only the public-GA API surface, allow browser calls from the matching
-Votrix web application and the documentation origin, and run the same startup
-and database liveness probes. Each instance is pinned to one vCPU, 4 GiB memory,
-and 40 concurrent HTTP requests; this is a vertical public-beta baseline, not
-horizontal scale.
+Each environment is split into an API service and a worker service. API
+instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
+instances expose only private health endpoints and run five durable-work
+consumers each. Both roles keep CPU allocated, use one web process, and run the
+same startup and database liveness probes. Each instance is pinned to one vCPU
+and 4 GiB memory; API instances accept 40 concurrent HTTP requests while worker
+instances use a concurrency setting of 10 for their health-only surface.
+
+Production keeps one to three API instances and two to three worker instances.
+Staging keeps one to two API instances and exactly one worker instance. Only the
+API services disable the Cloud Run Invoker IAM check; the worker services stay
+private. API request autoscaling and Agent-turn capacity are independent.
 
 ## Prerequisites
 
@@ -35,8 +42,10 @@ horizontal scale.
   session-mode endpoint on port `5432` and use its SQLAlchemy `asyncpg` URL for
   `DATABASE_URL`. VMA derives LangGraph's `postgresql://` checkpoint DSN from
   that value, so the standard deployment does not duplicate the connection
-  string or password. The local `.env` uses the development project; the two
-  Secret Manager files below use staging and production.
+  string or password. Session mode is mandatory for the hosted
+  `VMA_PREVIEW_BROKER=pg_notify` listener; a transaction-mode pooler cannot hold
+  the lifetime `LISTEN` connection. The local `.env` uses the development
+  project; the two Secret Manager files below use staging and production.
 - Build the operator-owned `vma-hardened` template in the E2B account before
   creating an E2B-backed session.
 
@@ -122,17 +131,35 @@ Model API keys do not belong in Cloud Run environment variables, Secret
 Manager deployment inputs, or `VMA_MODEL_PROVIDERS`.
 
 The Cloud Run manifests pin these non-secret runtime settings rather than
-loading them from Secret Manager:
+loading them from Secret Manager. Both roles share the governance, Session,
+model, E2B, and storage settings. API-specific settings are:
 
 ```env
+VMA_SERVICE_ROLE=api
+VMA_EMBEDDED_WORKER_ENABLED=false
+VMA_DB_POOL_SIZE=10
+VMA_DB_MAX_OVERFLOW=5
+```
+
+Worker-specific settings are:
+
+```env
+VMA_SERVICE_ROLE=worker
 VMA_EMBEDDED_WORKER_ENABLED=true
 VMA_WORKER_CONCURRENCY=5
 VMA_WORKER_POLL_INTERVAL_SECONDS=0.5
 VMA_WORKER_LEASE_SECONDS=120
+VMA_WORK_MAX_ATTEMPTS=3
+VMA_DB_POOL_SIZE=5
+VMA_DB_MAX_OVERFLOW=2
+```
+
+Shared hosted settings include:
+
+```env
 VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
+VMA_PREVIEW_BROKER=pg_notify
 VMA_MAX_SESSION_INPUT_BYTES=67108864
-VMA_DB_POOL_SIZE=10
-VMA_DB_MAX_OVERFLOW=5
 VMA_DB_POOL_TIMEOUT_SECONDS=10
 VMA_DB_POOL_RECYCLE_SECONDS=300
 VMA_REQUESTS_PER_MINUTE=600
@@ -144,12 +171,15 @@ VMA_CORS_ORIGINS=https://<matching-votrix-web-app>,https://docs.votrixai.com
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and
 one-time E2B injection. E2B turns resume from the sealed filesystem and do not
-rehydrate all inputs from R2. The PostgreSQL pool reuses connections for API,
-SSE, and embedded-worker traffic instead of opening a new database connection
-for every poll. Keep the combined pool ceiling within the selected Supabase
-plan's connection limit.
-The hosted Organization defaults admit bursts of up to 20 queued/running turns;
-five execute concurrently and the durable queue absorbs the remainder.
+rehydrate all inputs from R2. Each process reuses its PostgreSQL connections;
+keep the sum of all API and worker pool ceilings within the selected Supabase
+plan's connection limit, plus one dedicated `LISTEN` connection for every API
+process. Worker publishers use their existing SQLAlchemy pool and do not add a
+dedicated listener connection. PostgreSQL preview delivery is best-effort; SSE
+clients reconcile dropped or missed frames against durable Session events. The
+hosted Organization defaults admit bursts of up to 20 queued/running turns.
+Production starts with ten execution slots across its two warm worker instances,
+while the durable queue absorbs the remainder.
 
 ## Manual deploys
 
@@ -192,10 +222,57 @@ Both scripts enforce the same sequence:
 1. Build and push a commit-tagged image.
 2. Deploy or update `<service>-migrate` with that exact image.
 3. execute `sh scripts/migrate.sh` as a Cloud Run Job and wait for success.
-4. Replace the Cloud Run service only after migrations succeed.
+4. Replace the API Cloud Run service only after migrations succeed.
+5. Replace the worker Cloud Run service with the same immutable image.
 
 The web entrypoint has no migration branch, so restarts never race to run
 Alembic themselves.
+
+## Scaling Agent-turn capacity
+
+The full capacity, connection-budget, rollout, rollback, and incident procedure
+is in the private [scaling runbook](../../private-docs/scaling-runbook.md). The
+summary below is sufficient only for routine worker-count adjustments.
+
+API capacity and Agent-turn capacity scale independently. Cloud Run scales the
+API service from HTTP/SSE request load. Only worker instances consume the
+PostgreSQL work queue, so the turn-capacity formula is:
+
+```text
+turn execution capacity = worker instances × VMA_WORKER_CONCURRENCY
+```
+
+The checked-in worker manifests use `VMA_WORKER_CONCURRENCY=5`. Production's
+two warm worker instances therefore execute up to ten turns concurrently; three
+instances execute up to fifteen. Staging's one worker executes up to five.
+
+The current worker fleet is intentionally scaled manually. Pin both bounds to
+the desired count so Cloud Run keeps that many background consumers alive:
+
+```bash
+gcloud run services update votrix-managed-agents-worker \
+  --project=votrixai-480422 \
+  --region=us-central1 \
+  --min-instances=3 \
+  --max-instances=3
+
+gcloud run services update votrix-managed-agents-staging-worker \
+  --project=votrixai-480422 \
+  --region=us-central1 \
+  --min-instances=2 \
+  --max-instances=2
+```
+
+This creates new worker revisions without rebuilding the image or changing API
+capacity. A later manifest deployment restores the checked-in min/max values,
+so promote a proven capacity change into both worker manifests. Before raising
+worker count or per-instance concurrency, verify the aggregate PostgreSQL,
+model-provider, E2B, CPU, and memory budgets. Use
+`scripts/performance_smoke.py` against staging after each step.
+
+Cloud Tasks, Pub/Sub, and queue-depth-driven automatic worker dispatch are not
+part of this release. That P3 work remains deferred; changing API autoscaling
+does not change Agent-turn capacity.
 
 ## Staging acceptance gates
 
@@ -337,17 +414,18 @@ as manual deployment.
 
 ## Public API access
 
-After both services exist:
+After both API services exist:
 
 ```bash
 ./scripts/gcloud/5-allow-public.sh
 ```
 
-The manifests already disable the Cloud Run Invoker IAM check. This command is
-an idempotent repair/verification step using the same recommended Cloud Run
-setting; it does not create an `allUsers` IAM binding. VMA still requires a
-database-backed Organization API key, so public ingress does not add an
-anonymous application path.
+The API manifests already disable the Cloud Run Invoker IAM check. This command
+is an idempotent repair/verification step using the same recommended Cloud Run
+setting; it does not create an `allUsers` IAM binding. The helper rejects any
+service name containing `worker`, and worker manifests do not disable the IAM
+check. VMA still requires a database-backed Organization API key, so public API
+ingress does not add an anonymous application path.
 
 ## Status
 
@@ -355,16 +433,18 @@ anonymous application path.
 ./scripts/gcloud/status.sh
 ```
 
-The command prints each service URL, ready revision, immutable image tag, and
-the image configured on each migration job.
+The command prints each API and worker service URL, ready revision, immutable
+image tag, and the image configured on each migration job.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `cloudbuild.yaml` | Build, push, migrate, then deploy |
-| `service.production.yaml` | Production Cloud Run service |
-| `service.staging.yaml` | Staging Cloud Run service |
+| `cloudbuild.yaml` | Build, push, migrate, then deploy API and worker |
+| `service.production.yaml` | Production API Cloud Run service |
+| `service.worker.production.yaml` | Production worker Cloud Run service |
+| `service.staging.yaml` | Staging API Cloud Run service |
+| `service.worker.staging.yaml` | Staging worker Cloud Run service |
 | `scripts/gcloud/config.sh` | Shared project and service names |
 | `scripts/gcloud/0-setup-registry.sh` | APIs, registry, runtime identity, IAM |
 | `scripts/gcloud/1-create-secrets.sh` | Allowlisted Secret Manager import |

@@ -38,6 +38,9 @@ Implemented in the Votrix core:
 - Append-only session events, monotonic sequence numbers, SSE replay, and
   durable work records with unique leases, generations, heartbeats, expired
   lease recovery, and stale-worker fencing.
+- A deployment-selectable preview transport: local development defaults to the
+  in-process bus, while the checked-in Cloud Run services use PostgreSQL
+  `pg_notify` to preserve live token/tool deltas across API and worker instances.
 - Tenant request-rate, active-work, daily model-token, and stored-byte quotas;
   append-only audit and raw-usage ledgers; and tenant idempotency used by
   Session creation. Event submission retains its dedicated transactional
@@ -52,12 +55,14 @@ Implemented in the Votrix core:
 
 Important partial areas:
 
-- Streaming previews are process-local; separate web and worker processes need Redis Streams, NATS, or another tenant-scoped broker. Durable work fencing does not remove this topology constraint.
+- Streaming previews are intentionally best-effort. PostgreSQL `NOTIFY` preserves
+  hosted cross-instance typewriter delivery but does not make ephemeral frames
+  replayable; clients always reconcile against durable Session events.
 - The safe default has checkpointed file state but no shell execution. Isolated execution requires the optional E2B provider or an operator-supplied `VMA_SANDBOX_FACTORY`.
 - MCP connections, restart-safe custom-tool/approval resume, skills, seeded memory files, and synchronous subagents are mapped to Deep Agents but do not yet reproduce every Claude semantic.
-- Organization RBAC/SSO, Postgres RLS, a multi-replica preview broker and
-  complete per-Session/checkpoint ownership, enterprise audit export/retention,
-  deployment scheduling, webhook delivery, and OAuth refresh remain deferred.
+- Organization RBAC/SSO, Postgres RLS, exactly-once external side effects,
+  enterprise audit export/retention, deployment scheduling, webhook delivery,
+  and OAuth refresh remain deferred.
 - Raw provider/model token usage is recorded per Organization and Session for
   quota enforcement and analysis. Operator-provisioned platform keys can power
   trials, but price books, authoritative monetary balances/reservations,
@@ -69,17 +74,17 @@ Important partial areas:
 AsyncVotrix native SDK / AsyncAnthropic compatibility / HTTP client
                               |
                               v
-FastAPI compatibility and control plane
-  |         |             |
-  |         |             +-- private S3-compatible files and skill archives
-  |         +---------------- Postgres/SQLite resources, events, work, quotas, ledgers
-  +-------------------------- durable session/revision lookup
-            |
-            v
-Deep Agents 0.6.12 + LangGraph checkpoints
-  |                 |                 |
-  v                 v                 v
-model provider   remote MCP       sandbox backend
+FastAPI API/control plane ----> Postgres resources, events, work, quotas, ledgers
+         ^                                      |
+         |                                      v
+         +---- pg_notify previews ---- Deep Agents worker + LangGraph checkpoints
+                                              |       |       |
+                                              v       v       v
+                                           model   remote   sandbox
+                                          provider   MCP    backend
+
+Private S3-compatible storage supplies Files and Skill archives to the control
+plane and one-time Session sandbox bootstrap.
 ```
 
 The control plane owns public IDs, Organization isolation, immutable revisions, session state, durable events, and compatibility translation. Deep Agents owns the in-process agent loop, model/tool middleware, compaction, checkpoint integration, and synchronous delegation. The sandbox—not the model or middleware—is the security boundary for tenant code.
@@ -302,16 +307,29 @@ priced billing ledger.
 
 The checked-in hosted configuration targets GCP Cloud Run exclusively. It provides production and staging service manifests, a Cloud Build pipeline, Artifact Registry setup, Secret Manager integration, and release scripts under [`scripts/gcloud`](scripts/gcloud/README.md). Other hosted platforms are not maintained.
 
-The current Cloud Run MVP deliberately runs one web process in at most one service instance. Durable work leases fence stale workers, but live preview delivery and parts of per-Session/checkpoint ownership are still process-local, so increasing `WEB_CONCURRENCY` or Cloud Run `maxScale` would introduce correctness gaps until shared ownership and a preview broker exist. This is a public-beta deployment shape, not an HA claim.
+The checked-in Cloud Run topology separates HTTP/SSE API instances from a
+private worker fleet. Production allows one to three API instances and keeps
+two to three worker instances, with five durable turn consumers per worker.
+Staging allows one to two API instances and keeps one worker. API instances
+scale from request load; the worker fleet is deliberately scaled manually, so
+Cloud Run is not expected to infer Agent queue depth.
 
-Within that single process, the hosted performance baseline runs five embedded
-turn consumers with one vCPU/4 GiB, 40 HTTP concurrency, a bounded PostgreSQL
-pool, one-second event polling, and a 64 MiB aggregate Session-input cap. Run
-the ten-Session performance smoke documented in the Cloud Run guide before
-promoting staging. Hosted Organization defaults admit 20 queued/running turns, so
-a ten-turn burst queues behind the five consumers instead of being rejected.
+Each process uses one Uvicorn worker, bounded PostgreSQL pools, one-second
+durable-event polling, and a 64 MiB aggregate Session-input cap. Hosted services
+set `VMA_PREVIEW_BROKER=pg_notify`: workers publish coalesced preview frames and
+each API process holds one dedicated PostgreSQL `LISTEN` connection. Delivery
+remains best-effort, and complete durable events are the source of truth after
+reconnect or frame loss. Local development keeps the `process_local` default.
+Run the ten-Session performance smoke documented in the Cloud Run guide before
+promoting staging. Hosted Organization defaults admit 20 queued/running turns;
+production starts with ten warm execution slots and queues the remainder.
 
-Each release runs Alembic once through a dedicated Cloud Run migration Job before the new service revision receives traffic. The web service connects to durable Postgres and object storage; it must not rely on Cloud Run's ephemeral filesystem for control-plane state. When E2B is enabled, the sandboxes remain external E2B resources—Cloud Run hosts only the VMA control plane.
+Each release runs Alembic once through a dedicated Cloud Run migration Job
+before replacing either service with the same immutable image. API and worker
+services connect to durable Postgres and object storage; neither may rely on
+Cloud Run's ephemeral filesystem for control-plane state. When E2B is enabled,
+the sandboxes remain external E2B resources—Cloud Run hosts only the VMA control
+plane and Deep Agents workers.
 
 The optional worker remains part of the product protocol for `self_hosted` environments. That environment type is independent of VMA's own hosted deployment platform and is not removed by the GCP-only decision. Scheduled Deployment resources and the idempotent scheduler tick also remain available, but the repository does not yet operate a production scheduler that invokes the tick.
 

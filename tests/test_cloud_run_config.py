@@ -43,6 +43,8 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         "cloudbuild.yaml",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/config.sh",
         "scripts/gcloud/0-setup-registry.sh",
         "scripts/gcloud/1-create-secrets.sh",
@@ -72,14 +74,24 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         )
 
 
-def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> None:
+def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
+    api_max_scale = {"production": "3", "staging": "2"}
+    worker_scale = {
+        "production": ("2", "3"),
+        "staging": ("1", "1"),
+    }
+
     for environment in ("production", "staging"):
         manifest = _read(f"service.{environment}.yaml")
         flat = _flatten(manifest)
 
         assert "kind: Service" in manifest
-        assert re.search(r'autoscaling\.knative\.dev/maxScale:\s*["\']?1["\']?', manifest)
+        assert re.search(
+            rf'autoscaling\.knative\.dev/maxScale:\s*["\']?{api_max_scale[environment]}["\']?',
+            manifest,
+        )
         assert re.search(r'run\.googleapis\.com/cpu-throttling:\s*["\']?false["\']?', manifest)
+        assert 'run.googleapis.com/invoker-iam-disabled: "true"' in manifest
         assert "serviceAccountName: vma-runtime@" in manifest
         assert re.search(r"containerConcurrency:\s*40", manifest)
         assert "containerPort: 8080" in manifest
@@ -89,6 +101,19 @@ def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> No
         assert "livenessProbe:" in manifest and "path: /health/db" in manifest
         assert "name: WEB_CONCURRENCY" in manifest
         assert re.search(r'name:\s*WEB_CONCURRENCY\s+value:\s*["\']?1["\']?', flat)
+        assert re.search(r'name:\s*VMA_SERVICE_ROLE\s+value:\s*["\']?api["\']?', flat)
+        assert re.search(r'name:\s*VMA_PREVIEW_BROKER\s+value:\s*["\']?pg_notify["\']?', flat)
+        assert re.search(
+            r'name:\s*VMA_EMBEDDED_WORKER_ENABLED\s+value:\s*["\']?false["\']?',
+            flat,
+        )
+        for worker_only_name in (
+            "VMA_WORKER_CONCURRENCY",
+            "VMA_WORKER_POLL_INTERVAL_SECONDS",
+            "VMA_WORKER_LEASE_SECONDS",
+            "VMA_WORK_MAX_ATTEMPTS",
+        ):
+            assert f"name: {worker_only_name}" not in manifest
         assert "name: RUN_MIGRATIONS" not in manifest
         assert "VMA_RUNTIME_BACKEND" not in manifest
         assert "sqlite" not in manifest.lower()
@@ -98,28 +123,74 @@ def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> No
             manifest,
         )
 
+        worker = _read(f"service.worker.{environment}.yaml")
+        worker_flat = _flatten(worker)
+        min_scale, max_scale = worker_scale[environment]
+        expected_name = (
+            "votrix-managed-agents-worker"
+            if environment == "production"
+            else "votrix-managed-agents-staging-worker"
+        )
+        assert re.search(rf"metadata:\s+name:\s*{expected_name}", worker_flat)
+        assert "kind: Service" in worker
+        assert re.search(
+            rf'autoscaling\.knative\.dev/minScale:\s*["\']?{min_scale}["\']?',
+            worker,
+        )
+        assert re.search(
+            rf'autoscaling\.knative\.dev/maxScale:\s*["\']?{max_scale}["\']?',
+            worker,
+        )
+        assert re.search(r'run\.googleapis\.com/cpu-throttling:\s*["\']?false["\']?', worker)
+        assert "run.googleapis.com/invoker-iam-disabled" not in worker
+        assert "serviceAccountName: vma-runtime@" in worker
+        assert re.search(r"containerConcurrency:\s*10", worker)
+        assert "startupProbe:" in worker and "path: /health" in worker
+        assert "livenessProbe:" in worker and "path: /health/db" in worker
+        assert re.search(r'name:\s*WEB_CONCURRENCY\s+value:\s*["\']?1["\']?', worker_flat)
+        assert re.search(r'name:\s*VMA_SERVICE_ROLE\s+value:\s*["\']?worker["\']?', worker_flat)
+        assert re.search(
+            r'name:\s*VMA_PREVIEW_BROKER\s+value:\s*["\']?pg_notify["\']?',
+            worker_flat,
+        )
+        assert re.search(
+            r'name:\s*VMA_EMBEDDED_WORKER_ENABLED\s+value:\s*["\']?true["\']?',
+            worker_flat,
+        )
+        expected_worker_values = {
+            "VMA_WORKER_CONCURRENCY": "5",
+            "VMA_WORKER_POLL_INTERVAL_SECONDS": "0.5",
+            "VMA_WORKER_LEASE_SECONDS": "120",
+            "VMA_WORK_MAX_ATTEMPTS": "3",
+            "VMA_CHECKPOINT_POOL_MAX_SIZE": "5",
+            "VMA_DB_POOL_SIZE": "5",
+            "VMA_DB_MAX_OVERFLOW": "2",
+        }
+        for name, value in expected_worker_values.items():
+            assert re.search(
+                rf'name:\s*{name}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                worker_flat,
+            )
+
 
 def test_cloud_run_secret_names_are_isolated_from_votrix_backend() -> None:
     for environment in ("production", "staging"):
-        manifest = _read(f"service.{environment}.yaml")
-        names = _secret_ref_names(manifest)
-        assert names, f"service.{environment}.yaml must use Secret Manager"
-        assert all(name.startswith("vma-") for name in names), names
         suffix = "-staging" if environment == "staging" else ""
         expected_names = {f"vma-{base}{suffix}" for base in SECRET_BASES}
-        assert set(names) == expected_names
+        api_names = _secret_ref_names(_read(f"service.{environment}.yaml"))
+        worker_names = _secret_ref_names(_read(f"service.worker.{environment}.yaml"))
+        assert api_names, f"service.{environment}.yaml must use Secret Manager"
+        assert all(name.startswith("vma-") for name in api_names), api_names
+        assert set(api_names) == expected_names
+        assert set(worker_names) == expected_names
+        assert set(worker_names) == set(api_names)
 
 
 def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
-    expected = {
-        "VMA_EMBEDDED_WORKER_ENABLED": "true",
-        "VMA_WORKER_CONCURRENCY": "5",
-        "VMA_WORKER_POLL_INTERVAL_SECONDS": "0.5",
-        "VMA_WORKER_LEASE_SECONDS": "120",
+    shared = {
+        "VMA_PREVIEW_BROKER": "pg_notify",
         "VMA_EVENT_POLL_INTERVAL_SECONDS": "1.0",
         "VMA_MAX_SESSION_INPUT_BYTES": "67108864",
-        "VMA_DB_POOL_SIZE": "10",
-        "VMA_DB_MAX_OVERFLOW": "5",
         "VMA_DB_POOL_TIMEOUT_SECONDS": "10",
         "VMA_DB_POOL_RECYCLE_SECONDS": "300",
         "VMA_REQUESTS_PER_MINUTE": "600",
@@ -128,12 +199,13 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
         "VMA_PUBLIC_GA_ONLY": "true",
     }
     for environment in ("production", "staging"):
-        flat = _flatten(_read(f"service.{environment}.yaml"))
-        for name, value in expected.items():
-            assert re.search(
-                rf'name:\s*{re.escape(name)}\s+value:\s*["\']?{re.escape(value)}["\']?',
-                flat,
-            ), f"{name} is not pinned for {environment}"
+        for role_path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            flat = _flatten(_read(role_path))
+            for name, value in shared.items():
+                assert re.search(
+                    rf'name:\s*{re.escape(name)}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                    flat,
+                ), f"{name} is not pinned for {role_path}"
 
         browser_origin = (
             "https://staging-app.votrix.ai"
@@ -141,10 +213,11 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
             else "https://app.votrix.ai"
         )
         expected_cors = f"{browser_origin},https://docs.votrixai.com"
-        assert re.search(
-            rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
-            flat,
-        )
+        for role_path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            assert re.search(
+                rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
+                _flatten(_read(role_path)),
+            )
 
 
 def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() -> None:
@@ -153,6 +226,8 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
         ".env.staging.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
         "scripts/gcloud/README.md",
     )
@@ -176,11 +251,12 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
 def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:
     for environment in ("production", "staging"):
         suffix = "-staging" if environment == "staging" else ""
-        manifest = _read(f"service.{environment}.yaml")
-        assert "name: VMA_SUPABASE_URL" in manifest
-        assert f"name: vma-supabase-url{suffix}" in manifest
-        assert "name: VMA_SUPABASE_PUBLISHABLE_KEY" in manifest
-        assert f"name: vma-supabase-publishable-key{suffix}" in manifest
+        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            manifest = _read(path)
+            assert "name: VMA_SUPABASE_URL" in manifest
+            assert f"name: vma-supabase-url{suffix}" in manifest
+            assert "name: VMA_SUPABASE_PUBLISHABLE_KEY" in manifest
+            assert f"name: vma-supabase-publishable-key{suffix}" in manifest
 
     importer = _read("scripts/gcloud/1-create-secrets.sh")
     assert "VMA_SUPABASE_URL|vma-supabase-url" in importer
@@ -190,31 +266,32 @@ def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:
 
 def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
     for environment in ("production", "staging"):
-        manifest = _read(f"service.{environment}.yaml")
-        assert re.search(
-            r'- name: VMA_DEFAULT_MODEL_PROVIDER\s+value: ["\']openrouter["\']',
-            manifest,
-        )
-        match = re.search(
-            r"- name: VMA_MODEL_PROVIDERS\s+value: '([^']+)'",
-            manifest,
-        )
-        assert match is not None
-        registry = json.loads(match.group(1))
-        assert set(registry) == {"openrouter"}
-        assert registry["openrouter"]["api_key_env"] == "OPENROUTER_API_KEY"
-        assert registry["openrouter"]["adapter"] == "openrouter"
-        assert registry["openrouter"]["default_model"] == "deepseek/deepseek-v4-pro"
-        assert registry["openrouter"]["model_kwargs"] == {
-            "openrouter_provider": {
-                "order": ["fireworks", "together"],
-                "only": ["fireworks", "together"],
-                "allow_fallbacks": True,
-                "require_parameters": True,
-                "data_collection": "deny",
-            },
-        }
-        assert all("api_key" not in config for config in registry.values())
+        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            manifest = _read(path)
+            assert re.search(
+                r'- name: VMA_DEFAULT_MODEL_PROVIDER\s+value: ["\']openrouter["\']',
+                manifest,
+            )
+            match = re.search(
+                r"- name: VMA_MODEL_PROVIDERS\s+value: '([^']+)'",
+                manifest,
+            )
+            assert match is not None
+            registry = json.loads(match.group(1))
+            assert set(registry) == {"openrouter"}
+            assert registry["openrouter"]["api_key_env"] == "OPENROUTER_API_KEY"
+            assert registry["openrouter"]["adapter"] == "openrouter"
+            assert registry["openrouter"]["default_model"] == "deepseek/deepseek-v4-pro"
+            assert registry["openrouter"]["model_kwargs"] == {
+                "openrouter_provider": {
+                    "order": ["fireworks", "together"],
+                    "only": ["fireworks", "together"],
+                    "allow_fallbacks": True,
+                    "require_parameters": True,
+                    "data_collection": "deny",
+                },
+            }
+            assert all("api_key" not in config for config in registry.values())
 
 
 def test_hosted_runtime_has_no_platform_model_api_key() -> None:
@@ -223,6 +300,8 @@ def test_hosted_runtime_has_no_platform_model_api_key() -> None:
         ".env.staging.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
         "scripts/gcloud/README.md",
     )
@@ -241,13 +320,14 @@ def test_hosted_runtime_has_no_platform_model_api_key() -> None:
 
 def test_cloud_e2b_template_resources_match_the_built_profile() -> None:
     for environment in ("production", "staging"):
-        manifest = _read(f"service.{environment}.yaml")
-        match = re.search(
-            r"- name: VMA_E2B_TEMPLATE_RESOURCES\s+value: '([^']+)'",
-            manifest,
-        )
-        assert match is not None
-        assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
+        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            manifest = _read(path)
+            match = re.search(
+                r"- name: VMA_E2B_TEMPLATE_RESOURCES\s+value: '([^']+)'",
+                manifest,
+            )
+            assert match is not None
+            assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
 
 
 def test_e2b_cost_estimate_defaults_are_pinned_consistently() -> None:
@@ -269,23 +349,29 @@ def test_e2b_cost_estimate_defaults_are_pinned_consistently() -> None:
     for name, value in expected.items():
         assert re.search(rf"^{name}={re.escape(value)}$", dotenv, re.MULTILINE)
         for environment in ("production", "staging"):
-            manifest = _read(f"service.{environment}.yaml")
-            assert re.search(
-                rf'- name: {name}\s+value: ["\']{re.escape(value)}["\']',
-                manifest,
-            )
+            for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+                manifest = _read(path)
+                assert re.search(
+                    rf'- name: {name}\s+value: ["\']{re.escape(value)}["\']',
+                    manifest,
+                )
 
 
 def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
     cloudbuild = _flatten(_read("cloudbuild.yaml"))
     migration_deploy = cloudbuild.find("gcloud run jobs deploy")
     migration_execute = cloudbuild.find("gcloud run jobs execute")
-    service_deploy = cloudbuild.find("gcloud run services replace")
+    service_deploys = [
+        match.start() for match in re.finditer("gcloud run services replace", cloudbuild)
+    ]
 
     assert migration_deploy >= 0
     assert migration_execute > migration_deploy
-    assert "--wait" in cloudbuild[migration_execute:service_deploy]
-    assert service_deploy > migration_execute
+    assert len(service_deploys) == 2
+    assert "--wait" in cloudbuild[migration_execute:service_deploys[0]]
+    assert all(service_deploy > migration_execute for service_deploy in service_deploys)
+    assert cloudbuild.find('${_SERVICE_CONFIG}') < cloudbuild.find('$$WORKER_SERVICE_CONFIG')
+    assert 'WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"' in cloudbuild
 
 
 def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() -> None:
@@ -306,11 +392,15 @@ def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() 
     for script in (production, staging):
         migration_deploy = script.find("gcloud run jobs deploy")
         migration_execute = script.find("gcloud run jobs execute")
-        service_deploy = script.find("gcloud run services replace")
+        service_deploys = [
+            match.start() for match in re.finditer("gcloud run services replace", script)
+        ]
         assert migration_deploy >= 0
         assert migration_execute > migration_deploy
-        assert "--wait" in script[migration_execute:service_deploy]
-        assert service_deploy > migration_execute
+        assert len(service_deploys) == 2
+        assert "--wait" in script[migration_execute:service_deploys[0]]
+        assert all(service_deploy > migration_execute for service_deploy in service_deploys)
+        assert script.find("$API_MANIFEST") < script.find("$WORKER_MANIFEST")
 
 
 def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_changes() -> None:
@@ -353,7 +443,11 @@ def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_chan
 def test_public_access_helper_uses_the_manifest_invoker_check_mode() -> None:
     script = _read("scripts/gcloud/5-allow-public.sh")
 
-    assert script.count("--no-invoker-iam-check") == 2
+    assert script.count("--no-invoker-iam-check") == 1
+    assert 'allow_public_api "$PRODUCTION_SERVICE"' in script
+    assert 'allow_public_api "$STAGING_SERVICE"' in script
+    assert "*worker*)" in script
+    assert "Refusing to make a VMA worker service public" in script
     assert "allUsers" not in script
     assert "add-iam-policy-binding" not in script
 
@@ -370,13 +464,25 @@ def test_preflight_is_read_only_and_checks_both_environment_secret_sets() -> Non
     assert "--dry-run" in script
     assert 'check_environment_secrets ""' in script
     assert 'check_environment_secrets "-staging"' in script
+    for manifest in (
+        "service.production.yaml",
+        "service.worker.production.yaml",
+        "service.staging.yaml",
+        "service.worker.staging.yaml",
+    ):
+        assert f"check_manifest {manifest}" in script
+    assert "check_worker_manifest_is_private" in script
     assert "ls-remote --exit-code --heads origin staging" in script
 
 
 def test_status_reports_missing_resources_instead_of_being_silent() -> None:
     script = _read("scripts/gcloud/status.sh")
 
-    assert script.count("Status: not deployed") == 2
+    assert "Status: not deployed" in script
+    assert '"$PRODUCTION_SERVICE"' in script
+    assert '"$PRODUCTION_WORKER_SERVICE"' in script
+    assert '"$STAGING_SERVICE"' in script
+    assert '"$STAGING_WORKER_SERVICE"' in script
     assert "vma-deploy-production vma-deploy-staging" in script
     assert "Status: not configured" in script
 
@@ -386,6 +492,8 @@ def test_checkpoint_database_url_is_an_optional_application_override() -> None:
         "cloudbuild.yaml",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
         "scripts/gcloud/2-deploy-production.sh",
         "scripts/gcloud/3-deploy-staging.sh",
@@ -409,6 +517,8 @@ def test_object_storage_has_no_public_bucket_url_configuration() -> None:
         ".env.staging.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
     )
     for relative_path in deployment_files:
@@ -450,6 +560,8 @@ def test_storage_quota_uses_only_the_organization_setting() -> None:
         ".env.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/README.md",
     ):
         content = _read(relative_path)

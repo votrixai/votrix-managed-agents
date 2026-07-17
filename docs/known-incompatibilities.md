@@ -3,7 +3,7 @@ title: Known Incompatibilities
 description: Important behavioral and infrastructure differences from Claude Managed Agents.
 ---
 
-Snapshot: 2026-07-15
+Snapshot: 2026-07-17
 Runtime kernel: Deep Agents 0.6.12
 
 This is the explicit gap ledger between VMA and [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview). It covers differences that can be hidden by a compatible route or response shape but materially affect execution, security, durability, or operations.
@@ -16,8 +16,8 @@ Status terms match the [compatibility matrix](./compatibility-matrix.md): **Impl
 
 | Difference | Status | Operational consequence |
 | --- | --- | --- |
-| Cross-process live preview broker | Gap | Separate workers cannot deliver token/tool deltas to web-process SSE subscribers. |
-| Distributed per-session/checkpoint ownership | Gap | Durable work leases fence stale worker completion, but the process-local Session/checkpoint assumptions are not validated for multiple replicas. |
+| Cross-process live preview broker | Implemented | Hosted API/worker services use PostgreSQL `pg_notify`; local/self-hosted deployments default to the in-process transport. Preview frames remain best-effort and non-replayable. |
+| Distributed turn ownership | Partial | Database work and Session execution leases support the maintained multi-instance worker fleet and fence stale terminal writes, but provider and sandbox side effects are not exactly-once. |
 | E2B remote sandbox | Partial | Optional isolated execution exists, but E2B is hosted unless deployed through BYOC and is not Claude's managed sandbox service. |
 | Dynamic Session files and output export | Partial | E2B supports bounded append-only inputs, direct output snapshots, and mounted-file block translation, but not arbitrary mount mutation or model-independent Claude-identical multimodal behavior. |
 | Provider behavioral parity | Inherently partial | Tool calls, streaming, reasoning, multimodal input, usage, and failures vary by model/provider. |
@@ -99,26 +99,35 @@ VMA recognizes the Managed Agents, skills, user-profile, and native VMA beta hea
 
 ## Live streaming and process topology
 
-### Preview delivery is process-local
+### Preview delivery is deployment-selectable and best-effort
 
-Durable session events are stored in the database and replayed by sequence number. Token/tool previews use `VmaProcessLocalPreviewBus`, which only reaches subscribers inside the same Python process.
+Durable Session events are stored in the database and replayed by sequence
+number. Preview frames are a separate low-latency channel for live token/tool
+deltas:
 
-If the graph runs in a worker while SSE is served by another process:
+- `VMA_PREVIEW_BROKER=process_local` is the default for local development and
+  preserves the original same-process behavior.
+- The checked-in production and staging services set
+  `VMA_PREVIEW_BROKER=pg_notify`. Workers publish Organization/Session-scoped
+  frames through PostgreSQL `NOTIFY`; API instances `LISTEN` and feed them into
+  their local SSE bus.
+- An API process suppresses its own loopback notification, so a same-instance
+  publish is delivered once rather than duplicated.
 
-- `event_start` and `event_delta` preview frames are not delivered live.
-- The client eventually receives durable events after they are persisted and polled.
-- Dropped preview frames cannot be replayed because previews are intentionally ephemeral.
+PostgreSQL `NOTIFY` is fire-and-forget, and VMA deliberately coalesces high-rate
+deltas. A disconnect, oversized frame, subscriber overflow, or process failure
+can therefore drop an ephemeral preview. Preview frames are not replayed.
+Clients must reconcile with the complete durable event carrying the same event
+identity; durable events remain the source of truth.
 
-Closing the gap requires a tenant-scoped cross-process broker such as Redis Streams or NATS, with:
+Hosted PostgreSQL must use a Supavisor **session-mode** endpoint (port `5432`),
+not transaction mode, because each API process holds one dedicated `LISTEN`
+connection for its lifetime. Budget that one extra connection per API (or
+combined-role) process in addition to the SQLAlchemy pool. Preview publishers
+use the existing application pool. Redis, NATS, Cloud Tasks, and Pub/Sub are not
+required by the maintained topology.
 
-- Topics scoped by Organization and Session.
-- Per-run ordering and sequence metadata.
-- Backpressure and bounded subscriber queues.
-- Worker/web authentication.
-- Reconciliation against the durable database event sequence.
-- Cleanup and retention appropriate for transient frames.
-
-### Run serialization is process-local
+### Turn execution is database-fenced, not exactly-once
 
 The Session Events endpoint now supports an optional `Idempotency-Key`. A successful keyed request stores its canonical request hash and exact response in the same transaction as its input events and queued work. Reusing the key with the same body replays that response; reusing it with a different body returns `409`. `votrix-backend` supplies this header and reuses it across SDK and 529 transport retries.
 
@@ -136,19 +145,20 @@ stale worker is fenced from finalizing a newer attempt. Those guarantees protect
 one durable work item; they are not yet a general distributed mutex covering
 all per-Session checkpoint writes and every side effect.
 
-Two replicas or overlapping revisions can still race outside the fenced
-terminal-write boundary, particularly around checkpoints and process-local
-previews. A horizontally scaled service needs a database advisory lock,
-Redis/etcd lease, or equivalent per-Session ownership spanning the checkpoint
-attempt and its external side effects.
+The maintained Cloud Run deployment uses database-backed work and Session
+execution leases across multiple API and worker instances. Checkpoint state is
+shared in PostgreSQL, stale generations are fenced before durable event and
+terminal writes, cleanup is serialized with a PostgreSQL advisory lock, and
+work retries have a terminal attempt cap. These guarantees make the checked-in
+fixed worker fleet safe to operate across instances.
 
-The reference Cloud Run manifests therefore pin the MVP to one Uvicorn worker and
-`maxScale=1`. Production also keeps one minimum instance with instance-based CPU so
-response-following work and the E2B janitor are less likely to be suspended. This is
-only a deployment guardrail: a revision rollout can briefly overlap old and new
-instances, and an instance crash still loses process-local previews and ownership.
-Do not raise the replica or web-process count until complete distributed
-Session/checkpoint ownership and a shared preview broker exist.
+They do not turn remote effects into exactly-once operations. A worker can lose
+its lease after a provider request or sandbox command has started, and recovery
+may repeat an effect that lacks its own idempotency key. Keep external tools
+idempotent where possible and treat durable work/event state—not preview
+delivery—as authoritative. Per-turn push dispatch and queue-depth-driven worker
+autoscaling remain deferred P3 work; the current workers poll PostgreSQL and are
+scaled manually.
 
 ### Cancellation is not end-to-end
 
@@ -225,7 +235,8 @@ attempt.
 The queue does not create a container or VM, verify a worker image, attest
 policy, or isolate tenants. The worker must still use an approved sandbox
 provider. Strong worker identity/RBAC, sandbox attestation, dead-letter policy,
-and a complete distributed per-Session/checkpoint mutex remain gaps.
+and operation-specific idempotency/cancellation for remote side effects remain
+gaps.
 
 ## Model and provider behavior
 

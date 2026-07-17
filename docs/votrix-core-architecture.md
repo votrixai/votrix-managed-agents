@@ -72,7 +72,9 @@ A hosted or enterprise layer owns:
   rule that tenant model traffic never falls back to a VMA-owned model key.
 - KMS-backed secret management, credential rotation, OAuth enrollment/refresh, and revocation.
 - Remote sandbox fleet selection, isolation, images, lifecycle, snapshots, and regional placement.
-- A cross-process preview broker and distributed run locks.
+- Preview-transport operation and database connection budgeting. The core ships
+  both a local in-process transport and a PostgreSQL `pg_notify` transport for
+  hosted API/worker deployments.
 - Production queues, dead-letter handling, scheduler operation, webhook delivery, and retry SLOs.
 - Compliance controls, data residency, deletion verification, incident response, and Organization support tooling.
 
@@ -181,35 +183,41 @@ The Votrix core currently persists optionally encrypted credential material and 
 
 ## Process topology
 
-Local mode can execute inline in one web process. Hosted work is durably
-leased, heartbeated, recoverable, and terminal-write fenced, but the maintained
-Cloud Run MVP still uses one web process and one instance because preview
-delivery and parts of Session/checkpoint ownership remain process-local. A
-future horizontally scalable production topology should separate
-responsibilities:
+Local mode can execute inline in one web process and defaults to the
+`process_local` preview transport. The maintained Cloud Run deployment separates
+HTTP/SSE API instances from private worker instances. Hosted work is durably
+leased, heartbeated, recoverable, and terminal-write fenced; LangGraph
+checkpoints and control-plane state are shared in PostgreSQL.
 
 ```text
-web/API -> Postgres work/event record -> worker -> model/MCP/remote sandbox
-   ^                                      |
-   +---------- tenant-scoped broker <-----+
+API Cloud Run -> Postgres work/event record -> worker Cloud Run
+      ^                                          |
+      |                                          +-> model/MCP/E2B
+      +---- Postgres NOTIFY preview channel <----+
 ```
 
-Required horizontally scaled production services include:
+The maintained horizontally scaled topology includes:
 
-- A distributed per-Session/checkpoint lock spanning side effects beyond the
-  existing durable work-item leases and terminal-write fencing.
-- A preview broker for live deltas between worker and web processes.
-- Postgres for control-plane data and LangGraph checkpoints.
+- Database-backed work and Session execution leases with generation fencing.
+- PostgreSQL for control-plane data, LangGraph checkpoints, and the best-effort
+  hosted preview transport.
 - Private S3-compatible object storage for bytes and artifacts.
-- A scheduler service for due deployments.
-- A webhook delivery service with retries and idempotency.
+- A manually scaled worker fleet that polls durable work independently from API
+  request autoscaling.
 
-The current process-local preview bus and remaining Session/checkpoint lock are
-development/preview mechanisms. They do not become distributed merely because
-Postgres work leases are configured. Until the broker and complete distributed
-ownership exist, the Cloud Run manifest must remain at `WEB_CONCURRENCY=1` and
-`maxScale=1`; this preserves the public-beta process assumptions but does not
-provide high availability.
+Hosted manifests use `VMA_PREVIEW_BROKER=pg_notify`; workers publish and API
+processes hold one dedicated PostgreSQL `LISTEN` connection each. Local and
+simple self-hosted deployments retain `process_local` as the zero-infrastructure
+default. Both transports are best-effort: clients reconcile against durable
+events after reconnect or frame loss. Supabase deployments must use a Supavisor
+session-mode endpoint for `LISTEN/NOTIFY` and reserve one connection per API (or
+combined-role) process beyond the ordinary application pool.
+
+This topology is horizontally operable but not an exactly-once side-effect
+engine. Provider calls, MCP tools, and sandbox commands still need their own
+idempotency and cancellation semantics. A production scheduler for due
+Deployments, webhook delivery, and queue-driven push dispatch/automatic worker
+scaling remain separate future services; P3 is deliberately deferred.
 
 ## Data ownership
 
@@ -286,12 +294,12 @@ See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations
 ## Current boundary gaps
 
 The interfaces for hosted implementations are not equally mature. Organization
-auth, narrow quotas, raw append-only ledgers, sandbox injection, and
-server-controlled model configuration exist. A cross-process preview broker,
-complete distributed Session/checkpoint ownership, KMS secret management,
-Postgres RLS, Organization RBAC/SSO, enterprise audit operations, webhook
-delivery, and optional commercial billing still need formalization. Hosted
-implementations should avoid embedding those assumptions into unrelated core
-resource tables.
+auth, narrow quotas, raw append-only ledgers, sandbox injection,
+server-controlled model configuration, database-fenced multi-instance work,
+and PostgreSQL cross-process previews exist. Exactly-once external side effects,
+KMS secret management, Postgres RLS, Organization RBAC/SSO, enterprise audit
+operations, webhook delivery, automatic queue-driven worker scaling, and
+optional commercial billing still need formalization. Hosted implementations
+should avoid embedding those assumptions into unrelated core resource tables.
 
 The complete gap ledger is [known incompatibilities](./known-incompatibilities.md).

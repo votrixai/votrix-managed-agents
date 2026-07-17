@@ -40,6 +40,10 @@ operator-provisioned Organization platform funding.
   increasing generations, automatic execution heartbeats, expired-lease
   recovery, stale-worker terminal-write fencing, and idempotent active-work
   quota release.
+- A deployment-selectable live-preview transport. Local development keeps the
+  in-process default; hosted API/worker services use bounded PostgreSQL
+  `pg_notify` delivery with loopback suppression and durable-event
+  reconciliation.
 - A public-beta capability manifest and GA-only OpenAPI filter for API keys,
   Agents, Environments, Sessions, Files, Skills, Vaults/native model
   Credentials, and Model Providers.
@@ -85,10 +89,10 @@ operator-provisioned Organization platform funding.
   storage. Only files referenced by the current model message are hydrated;
   append-only `resources.add` downloads only the new file, while legacy
   bindings perform one compatibility hydration before persisting a descriptor.
-- The single-instance Cloud Run beta profile now runs five embedded turn
-  consumers with one vCPU/4 GiB, 40 HTTP concurrency, one-second event polling,
-  a 64 MiB aggregate Session-input cap, and Organization defaults sized to admit
-  a ten-Session burst without quota rejection.
+- The Cloud Run beta profile now separates public API instances from a private,
+  manually scaled worker fleet. Production starts with two workers and five
+  turn consumers per worker; API request autoscaling is independent from Agent
+  turn capacity.
 - PostgreSQL control-plane traffic now uses a bounded, configurable SQLAlchemy
   application pool by default; SQLite keeps `NullPool`, and
   `VMA_DB_POOL_SIZE=0` is the explicit PostgreSQL opt-out.
@@ -99,8 +103,10 @@ operator-provisioned Organization platform funding.
 - External HTTP workers now use tenant-bound database API keys with `worker`
   scope through the standard `x-api-key` or Bearer schemes; the separate static
   worker-authentication secret was removed.
-- Hosted execution uses embedded durable consumers while the reference Cloud
-  Run topology remains one warm instance, one web process, and `maxScale=1`.
+- Hosted execution uses private worker-role services with database-backed
+  leases, shared PostgreSQL checkpoints, bounded retry attempts, and a
+  connection-scoped advisory lock for janitor cleanup. API-role services expose
+  HTTP/SSE without running Agent turns.
 - Object storage is private. VMA serves authenticated downloads and requires no
   `S3_PUBLIC_URL`, R2 public development URL, or public custom domain.
 - Public GA hides presign/complete file uploads, Environment worker routes,
@@ -173,9 +179,9 @@ operator-provisioned Organization platform funding.
 
 ### Deferred
 
-- Cross-process live-preview delivery and complete distributed
-  per-Session/checkpoint ownership. The checked-in `maxScale=1` constraint must
-  remain until both exist.
+- Exactly-once provider/MCP/sandbox side effects and queue-driven push dispatch
+  or automatic worker scaling. The current multi-instance worker fleet polls
+  PostgreSQL and is scaled manually.
 - Postgres RLS; Organization memberships, human/service-account RBAC, SSO,
   and SCIM.
 - Enterprise audit export, automated retention, legal hold, external tamper
@@ -200,6 +206,9 @@ operator-provisioned Organization platform funding.
   leases and runtime-history pagination, outbound network restrictions,
   Session-create idempotency, public-GA OpenAPI schemas, and native SDK sync and
   async surfaces.
+- Added service-role, multi-instance deployment, capped retry, shared checkpoint,
+  janitor lock, resilient worker polling, and cross-instance PostgreSQL preview
+  broker coverage.
 - Added deterministic E2B estimate formula/configuration tests and lifecycle
   tests for open/close interval accumulation, idempotent closure, pause/resume,
   delete, disabling, and non-E2B providers; no external E2B call is required.

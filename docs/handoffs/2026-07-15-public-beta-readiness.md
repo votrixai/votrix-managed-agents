@@ -13,6 +13,10 @@ Release channel: public beta
 > bindings and optional operator-provisioned Organization platform keys. The
 > strict-BYOK statements below describe the earlier baseline; current behavior
 > is documented in the README, model-provider guide, and changelog.
+> On 2026-07-17 the maintained Cloud Run topology also split API and worker
+> services and added PostgreSQL `pg_notify` preview delivery. Statements below
+> that described a single-instance/process-local-preview boundary are updated to
+> the replacement topology rather than retained as current operational advice.
 
 ## Outcome
 
@@ -67,8 +71,8 @@ Providers, health, and `/v1/capabilities`.
 
 Explicitly deferred:
 
-- Multi-instance preview delivery and complete distributed
-  per-Session/checkpoint ownership. Keep one web process and `maxScale=1`.
+- Exactly-once provider/MCP/sandbox side effects and queue-driven push dispatch.
+  The maintained worker fleet is multi-instance but manually scaled.
 - Memory Stores, Deployments/scheduling, Outcomes, User Profiles, Session
   Threads, system Skills, tunnels, GitHub repository resources, and MCP OAuth.
 - Webhook endpoint registration/delivery; there is no beta webhook product
@@ -131,10 +135,12 @@ Explicitly deferred:
 - Ack, execution heartbeat, and terminal writes must match current
   worker/lease/generation. Expired leases can be recovered under a new
   generation; the old attempt cannot finalize it.
-- This fences the work item and final public state. It is not yet a distributed
-  mutex spanning every checkpoint write and external provider side effect.
-- Durable database events replay across processes; transient token/tool preview
-  frames remain process-local.
+- This fences the work item and final public state across the maintained worker
+  fleet. It does not make external provider or sandbox side effects exactly-once.
+- Durable database events replay across processes. Hosted transient token/tool
+  previews cross API/worker processes through PostgreSQL `pg_notify`; local
+  development defaults to `process_local`. Both are best-effort, so clients
+  reconcile against durable events.
 
 ### E2B local cost estimate
 
@@ -190,7 +196,8 @@ Explicitly deferred:
 | Request IDs and error contract | `app/factory.py`, `app/errors.py`, `app/models/status.py` |
 | Governance service and headers | `app/governance.py`, `app/governance_runtime.py`, `app/db/queries/governance.py` |
 | Governance persistence | `app/db/models.py`, `alembic/versions/20260715_0015_organization_governance.py` |
-| Work leases and embedded consumer | `app/runtime/work_queue.py`, `app/worker.py`, `app/routers/environments.py`, `app/factory.py` |
+| Work leases and worker service | `app/runtime/work_queue.py`, `app/worker.py`, `app/routers/environments.py`, `app/factory.py` |
+| Cross-process preview transport | `app/runtime/preview_broker.py`, `app/runtime/vma_preview_bus.py`, `app/runtime/runner.py` |
 | Runtime usage accounting | `app/runtime/runner.py`, `app/runtime/work_queue.py` |
 | Private E2B runtime estimate | `app/runtime/e2b_cost_estimation.py`, `app/runtime/sandbox_lifecycle.py` |
 | Storage quota hooks | `app/routers/files.py`, `app/routers/skills.py` |
@@ -317,7 +324,9 @@ Optional trigger and public Cloud Run URL setup are documented in
 ```
 
 Public Cloud Run ingress does not bypass VMA API-key authentication. Keep the
-service manifest at `minScale=1`, `maxScale=1`, and `WEB_CONCURRENCY=1`.
+checked-in API and worker scaling bounds, keep `WEB_CONCURRENCY=1` per process,
+and expose only the API service publicly. Hosted previews require the Supavisor
+session-mode endpoint and one dedicated `LISTEN` connection per API process.
 
 ### Credentialed staging smoke
 
@@ -380,14 +389,18 @@ credentials.
 
 ## Residual risks
 
-1. `maxScale=1` is a correctness guardrail, not availability. Revision overlap
-   and process failure can still lose transient previews.
+1. Hosted API and worker services can run multiple instances, but previews are
+   still best-effort: `pg_notify` disconnects, process failure, bounded-buffer
+   drops, or oversized frames can lose transient deltas. Durable events repair
+   the client view.
 2. Work-attempt fencing prevents stale terminal writes but does not guarantee
    exactly-once provider calls or fence every checkpoint/external side effect.
 3. The request limiter performs durable database writes and fails closed with
    authentication; database latency/availability is therefore on the API path.
    The hosted profile now reuses a bounded PostgreSQL application pool, but its
-   pool ceiling must remain below the Supabase environment's connection limit.
+   pool ceiling plus one dedicated `LISTEN` connection per API process must
+   remain below the Supabase environment's connection limit. Hosted Supavisor
+   must use session mode for `LISTEN/NOTIFY`.
 4. Postgres RLS is absent. Application-scoped queries and tests remain the
    primary tenant boundary; a full two-Organization matrix must stay in the gate.
 5. Audit/usage rows are append-only in normal application/database operation,
@@ -437,15 +450,16 @@ credentials.
    token overrun or missing provider usage, storage growth, and audit/usage
    volume before production.
 9. Run the ten-Session performance smoke on the exact staging image, record
-   p50/p95/max queue and total latency plus failures, and confirm five embedded
-   consumers drain the burst without memory or database-pool exhaustion.
+   p50/p95/max queue and total latency plus failures, and confirm the private
+   worker fleet drains the burst without memory or database-pool exhaustion.
 10. Compare the configured E2B rates/formula with current provider invoices for
    internal forecasting, document the calibration date, and alert on drift.
    Do not turn the estimate into an Organization-visible charge.
 11. Define retention cutoffs and an operator job for bounded expired request
    counter/completed-idempotency cleanup; do not mutate append-only ledgers.
-12. Keep `maxScale=1` and the GA filter enabled. Do not expose deferred routes or
-   a public bucket as a workaround.
+12. Keep API and worker scaling independently bounded and the GA filter enabled.
+   Do not expose worker services, deferred routes, or a public bucket as a
+   workaround.
 13. Treat Organization/RLS/enterprise audit work as the next platform phase.
     Add commercial billing only if/when the free BYOK beta product decision
     changes; it is not a current release blocker.

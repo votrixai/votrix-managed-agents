@@ -23,6 +23,7 @@ steps:
 
         IMAGE="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
         MIGRATION_JOB="${_SERVICE_NAME}-migrate"
+        WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"
         RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
         DATABASE_SECRET="vma-database-url${_SECRET_SUFFIX}"
 
@@ -63,8 +64,16 @@ steps:
           --wait \
           --quiet
 
-        echo "Deploying ${_SERVICE_NAME}..."
+        echo "Deploying ${_SERVICE_NAME} API service..."
         sed "s|IMAGE_URL|$$IMAGE|" "${_SERVICE_CONFIG}" | \
+          gcloud run services replace \
+            --project="${PROJECT_ID}" \
+            --region="${_REGION}" \
+            /dev/stdin \
+            --quiet
+
+        echo "Deploying ${_SERVICE_NAME}-worker service..."
+        sed "s|IMAGE_URL|$$IMAGE|" "$$WORKER_SERVICE_CONFIG" | \
           gcloud run services replace \
             --project="${PROJECT_ID}" \
             --region="${_REGION}" \

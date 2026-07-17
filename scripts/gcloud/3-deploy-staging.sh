@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build, migrate, and deploy the staging Cloud Run service.
+# Build, migrate, and deploy the staging API and worker Cloud Run services.
 
 set -eu
 
@@ -46,7 +46,8 @@ for arg in "$@"; do
 done
 
 REGION="${REGION_OVERRIDE:-$REGION}"
-MANIFEST="${REPO_ROOT}/service.staging.yaml"
+API_MANIFEST="${REPO_ROOT}/service.staging.yaml"
+WORKER_MANIFEST="${REPO_ROOT}/service.worker.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-staging"
 
@@ -102,12 +103,20 @@ gcloud run jobs execute "$MIGRATION_JOB" \
   --wait \
   --quiet
 
-echo "Deploying ${STAGING_SERVICE}..."
-sed "s|IMAGE_URL|${IMAGE}|" "$MANIFEST" | \
+echo "Deploying ${STAGING_SERVICE} API service..."
+sed "s|IMAGE_URL|${IMAGE}|" "$API_MANIFEST" | \
   gcloud run services replace \
     --project="$PROJECT_ID" \
     --region="$REGION" \
     /dev/stdin \
     --quiet
 
-echo "Staging deployed: ${IMAGE}"
+echo "Deploying ${STAGING_WORKER_SERVICE} worker service..."
+sed "s|IMAGE_URL|${IMAGE}|" "$WORKER_MANIFEST" | \
+  gcloud run services replace \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    /dev/stdin \
+    --quiet
+
+echo "Staging API and worker deployed: ${IMAGE}"

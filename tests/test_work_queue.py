@@ -1,9 +1,14 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.queries import api_keys as api_keys_q
+from app.db.queries import events as events_q
+from app.db.queries import governance as governance_q
 from app.db.queries import resources as res_q
+from app.db.queries import sessions as sessions_q
+from app.governance import ACTIVE_GAUGE_WINDOW
 from app.runtime.work_queue import execute_work_item, lease_next_work_for_worker
 from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
 
@@ -39,6 +44,32 @@ async def _create_session(client, agent, environment):
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+async def _force_four_work_leases(*, environment_id: str) -> tuple[str, dict]:
+    work_id = ""
+    latest_lease: dict = {}
+    for attempt in range(1, 5):
+        async with session_scope() as db:
+            work = await lease_next_work_for_worker(
+                db,
+                environment_id=environment_id,
+                worker_id=f"retry-worker-{attempt}",
+                lease_seconds=30,
+            )
+            assert work is not None
+            assert int((work.data or {}).get("attempt") or 0) == attempt
+            work_id = work.id
+            latest_lease = dict((work.data or {}).get("lease") or {})
+            if attempt < 4:
+                data = dict(work.data or {})
+                data["lease"] = {
+                    **latest_lease,
+                    "expires_at": datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat(),
+                }
+                await res_q.update_resource(db, work, data=data, status="running")
+            await db.commit()
+    return work_id, latest_lease
 
 
 async def test_inline_environment_queues_and_completes_work(client):
@@ -270,6 +301,135 @@ async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
     assert recovered["status"] == "leased"
     assert recovered["attempt"] == 2
     assert recovered["lease"]["worker_id"] == "worker-2"
+
+
+async def test_fourth_execution_attempt_exhausts_work_and_terminates_session(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setenv("VMA_WORK_MAX_ATTEMPTS", "3")
+    get_settings.cache_clear()
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "exhaust retries"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    work_id, lease = await _force_four_work_leases(environment_id=environment["id"])
+
+    async def fail_if_executed(*_args, **_kwargs):
+        raise AssertionError("exhausted work must not execute the Session turn")
+
+    monkeypatch.setattr("app.runtime.runner.run_session_turn", fail_if_executed)
+    result = await execute_work_item(
+        work_id,
+        worker_id="retry-worker-4",
+        lease_id=str(lease["lease_id"]),
+        lease_generation=int(lease["generation"]),
+    )
+
+    assert result == "exhausted"
+    async with session_scope() as db:
+        work = await res_q.get_work_item_for_worker(db, work_id)
+        stored_session = await sessions_q.get_session(
+            db,
+            session["id"],
+            organization_id="org_test",
+        )
+        events = await events_q.list_events(
+            db,
+            session_id=session["id"],
+            organization_id="org_test",
+        )
+        active_work = await governance_q.get_counter_value(
+            db,
+            organization_id="org_test",
+            metric=governance_q.ACTIVE_WORK_METRIC,
+            window_start=ACTIVE_GAUGE_WINDOW,
+        )
+        reservation = await governance_q.get_quota_reservation(
+            db,
+            organization_id="org_test",
+            quota_name=governance_q.ACTIVE_WORK_METRIC,
+            reference_id=work_id,
+        )
+
+    assert work is not None
+    assert work.status == "error"
+    assert work.data["attempt"] == 4
+    assert work.data["error"] == {
+        "type": "max_attempts_exceeded",
+        "message": "Work item exceeded 3 execution attempts",
+        "attempt": 4,
+        "max_attempts": 3,
+    }
+    assert stored_session is not None
+    assert stored_session.status == "terminated"
+    assert stored_session.stop_reason == {
+        "type": "error",
+        "error_type": "max_attempts_exceeded",
+        "attempt": 4,
+        "max_attempts": 3,
+        "work_id": work_id,
+    }
+    terminal_events = [
+        event
+        for event in events
+        if event.type in {"session.error", "session.status_terminated"}
+    ]
+    assert [event.type for event in terminal_events] == [
+        "session.error",
+        "session.status_terminated",
+    ]
+    assert terminal_events[0].payload["error_type"] == "max_attempts_exceeded"
+    assert terminal_events[0].payload["attempt"] == 4
+    assert terminal_events[0].payload["max_attempts"] == 3
+    assert terminal_events[1].payload["stop_reason"] == stored_session.stop_reason
+    assert active_work == 0
+    assert reservation is not None
+    assert reservation.state == "released"
+
+
+async def test_zero_max_attempts_allows_fourth_execution(client, monkeypatch):
+    monkeypatch.setenv("VMA_WORK_MAX_ATTEMPTS", "0")
+    get_settings.cache_clear()
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "disable retry cap"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    work_id, lease = await _force_four_work_leases(environment_id=environment["id"])
+    executed: list[str] = []
+
+    async def fake_run_session_turn(session_id, **_kwargs):
+        executed.append(session_id)
+        return True
+
+    monkeypatch.setattr("app.runtime.runner.run_session_turn", fake_run_session_turn)
+    result = await execute_work_item(
+        work_id,
+        worker_id="retry-worker-4",
+        lease_id=str(lease["lease_id"]),
+        lease_generation=int(lease["generation"]),
+    )
+
+    assert result == "completed"
+    assert executed == [session["id"]]
+    async with session_scope() as db:
+        work = await res_q.get_work_item_for_worker(db, work_id)
+    assert work is not None
+    assert work.status == "completed"
+    assert work.data["attempt"] == 4
+    assert "error" not in work.data
 
 
 async def test_stale_lease_id_is_fenced_when_worker_id_is_reused(client):

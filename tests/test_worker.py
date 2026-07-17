@@ -1,4 +1,8 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
 
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
@@ -110,6 +114,84 @@ async def test_worker_skips_rescheduled_work_before_retry_at(client):
         await db.commit()
 
     assert await _next_runnable_work(environment_id=environment["id"]) is None
+
+
+async def test_worker_polling_survives_transient_lease_error(monkeypatch):
+    stop_event = asyncio.Event()
+    lease_attempts = 0
+    executed: list[tuple[str, dict]] = []
+
+    async def fake_lease_next_work_for_worker(
+        _db,
+        *,
+        environment_id,
+        worker_id,
+        lease_seconds,
+    ):
+        nonlocal lease_attempts
+        lease_attempts += 1
+        if lease_attempts == 1:
+            raise RuntimeError("transient lease failure")
+        return SimpleNamespace(
+            id="work-recovered",
+            status="leased",
+            data={
+                "session_id": "session-recovered",
+                "lease": {
+                    "worker_id": worker_id,
+                    "lease_id": "lease-recovered",
+                    "generation": 2,
+                    "lease_seconds": lease_seconds,
+                },
+            },
+        )
+
+    async def fake_execute_work_item(work_id, **kwargs):
+        executed.append((work_id, kwargs))
+        stop_event.set()
+        return "completed"
+
+    monkeypatch.setattr(
+        "app.worker.lease_next_work_for_worker",
+        fake_lease_next_work_for_worker,
+    )
+    monkeypatch.setattr("app.worker.execute_work_item", fake_execute_work_item)
+
+    await run_worker(
+        environment_id=None,
+        poll_interval_seconds=0,
+        once=False,
+        worker_id="worker-recovered",
+        lease_seconds=30,
+        stop_event=stop_event,
+    )
+
+    assert lease_attempts == 2
+    assert executed == [
+        (
+            "work-recovered",
+            {
+                "worker_id": "worker-recovered",
+                "lease_id": "lease-recovered",
+                "lease_generation": 2,
+                "lease_seconds": 30,
+            },
+        )
+    ]
+
+
+async def test_worker_once_propagates_polling_error(monkeypatch):
+    async def fail_lease(*_args, **_kwargs):
+        raise RuntimeError("lease failure")
+
+    monkeypatch.setattr("app.worker.lease_next_work_for_worker", fail_lease)
+
+    with pytest.raises(RuntimeError, match="lease failure"):
+        await run_worker(
+            environment_id=None,
+            poll_interval_seconds=0,
+            once=True,
+        )
 
 
 async def test_vault_credential_response_redacts_secret_fields(client):

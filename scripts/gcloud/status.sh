@@ -8,7 +8,12 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 
 REGION="${1:-$REGION}"
 
-for service in "$PRODUCTION_SERVICE" "$STAGING_SERVICE"; do
+for service in \
+  "$PRODUCTION_SERVICE" \
+  "$PRODUCTION_WORKER_SERVICE" \
+  "$STAGING_SERVICE" \
+  "$STAGING_WORKER_SERVICE"
+do
   image=$(gcloud run services describe "$service" \
     --project="$PROJECT_ID" \
     --region="$REGION" \

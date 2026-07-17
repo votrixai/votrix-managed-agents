@@ -17,6 +17,8 @@ from app.errors import error_payload, install_error_handlers
 from app.logging import setup as setup_logging
 from app.models.status import CapabilityManifestResponse, DatabaseHealthResponse, HealthResponse
 from app.public_surface import capability_manifest, is_public_ga_path, public_ga_openapi
+from app.runtime.checkpoints import close_checkpoint_saver
+from app.runtime.preview_broker import close_preview_broker, start_preview_broker
 from app.routers import (
     agents,
     api_keys,
@@ -42,18 +44,24 @@ async def lifespan(app: FastAPI):
         sentry_dsn=settings.sentry_dsn,
         log_level=settings.log_level,
     )
+    await start_preview_broker()
     janitor_stop = asyncio.Event()
     janitor_task: asyncio.Task | None = None
     worker_stop = asyncio.Event()
     worker_tasks: list[asyncio.Task] = []
-    if str(settings.vma_sandbox_provider).strip().lower() == "e2b" and settings.e2b_api_key:
+    runs_background_execution = settings.vma_service_role in {"combined", "worker"}
+    if (
+        runs_background_execution
+        and str(settings.vma_sandbox_provider).strip().lower() == "e2b"
+        and settings.e2b_api_key
+    ):
         from app.runtime.sandbox_lifecycle import run_sandbox_janitor
 
         janitor_task = asyncio.create_task(
             run_sandbox_janitor(janitor_stop),
             name="vma-e2b-janitor",
         )
-    if settings.vma_embedded_worker_enabled:
+    if runs_background_execution and settings.vma_embedded_worker_enabled:
         from app.worker import run_worker
 
         for index in range(settings.vma_worker_concurrency):
@@ -91,6 +99,24 @@ async def lifespan(app: FastAPI):
                     task.cancel()
                 with suppress(asyncio.CancelledError):
                     await asyncio.gather(*worker_tasks)
+        await close_preview_broker()
+        await close_checkpoint_saver()
+
+
+def _install_health_routes(app: FastAPI) -> None:
+    @app.get("/health", tags=["health"], response_model=HealthResponse)
+    async def health():
+        return {"status": "ok"}
+
+    @app.get("/health/db", tags=["health"], response_model=DatabaseHealthResponse)
+    async def health_db():
+        from sqlalchemy import text
+
+        from app.db.engine import session_scope
+
+        async with session_scope() as db:
+            await db.execute(text("SELECT 1"))
+        return {"status": "ok", "db": "ok"}
 
 
 def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
@@ -98,6 +124,8 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     # so dynamically configured provider credentials are available via their
     # api_key_env names; process-level Cloud Run variables still take priority.
     load_dotenv()
+    settings = get_settings()
+    is_worker_service = settings.vma_service_role == "worker"
     app = FastAPI(
         title="Votrix Managed Agents",
         description=(
@@ -106,60 +134,59 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
-        openapi_url="/openapi.json",
+        openapi_url=None if is_worker_service else "/openapi.json",
     )
     app.state.auth_provider = auth_provider or default_auth_provider()
     install_error_handlers(app)
 
-    settings = get_settings()
+    if not is_worker_service:
+        @app.middleware("http")
+        async def enforce_public_ga_surface(request: Request, call_next):
+            private_hosted_path = request.url.path.startswith("/internal/") or request.url.path == "/v1/me/organizations"
+            if settings.vma_public_ga_only and not private_hosted_path and not is_public_ga_path(request.url.path):
+                return JSONResponse(
+                    status_code=404,
+                    content=error_payload(
+                        "not_found_error",
+                        "This capability is not available in the Votrix public beta.",
+                        code="capability_not_available",
+                        request_id=getattr(request.state, "request_id", None),
+                    ),
+                )
+            return await call_next(request)
 
-    @app.middleware("http")
-    async def enforce_public_ga_surface(request: Request, call_next):
-        private_hosted_path = request.url.path.startswith("/internal/") or request.url.path == "/v1/me/organizations"
-        if settings.vma_public_ga_only and not private_hosted_path and not is_public_ga_path(request.url.path):
-            return JSONResponse(
-                status_code=404,
-                content=error_payload(
-                    "not_found_error",
-                    "This capability is not available in the Votrix public beta.",
-                    code="capability_not_available",
-                    request_id=getattr(request.state, "request_id", None),
-                ),
+        if settings.vma_cors_origins:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=settings.vma_cors_origins,
+                allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+                allow_headers=[
+                    "Authorization",
+                    "Content-Type",
+                    "Idempotency-Key",
+                    "Last-Event-ID",
+                    "X-Organization-Id",
+                    "request-id",
+                    "x-request-id",
+                    "anthropic-beta",
+                    "anthropic-version",
+                    "votrix-managed-agents-beta",
+                    "x-api-key",
+                ],
+                expose_headers=[
+                    "Content-Disposition",
+                    "Retry-After",
+                    "request-id",
+                    "x-request-id",
+                    "X-RateLimit-Limit",
+                    "X-RateLimit-Remaining",
+                    "X-RateLimit-Reset",
+                    "X-Quota-Metric",
+                    "X-Quota-Limit",
+                    "X-Quota-Remaining",
+                    "X-Quota-Reset",
+                ],
             )
-        return await call_next(request)
-
-    if settings.vma_cors_origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=settings.vma_cors_origins,
-            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=[
-                "Authorization",
-                "Content-Type",
-                "Idempotency-Key",
-                "Last-Event-ID",
-                "X-Organization-Id",
-                "request-id",
-                "x-request-id",
-                "anthropic-beta",
-                "anthropic-version",
-                "votrix-managed-agents-beta",
-                "x-api-key",
-            ],
-            expose_headers=[
-                "Content-Disposition",
-                "Retry-After",
-                "request-id",
-                "x-request-id",
-                "X-RateLimit-Limit",
-                "X-RateLimit-Remaining",
-                "X-RateLimit-Reset",
-                "X-Quota-Metric",
-                "X-Quota-Limit",
-                "X-Quota-Remaining",
-                "X-Quota-Reset",
-            ],
-        )
 
     @app.middleware("http")
     async def attach_request_id(request: Request, call_next):
@@ -220,6 +247,10 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
         )
         return response
 
+    if is_worker_service:
+        _install_health_routes(app)
+        return app
+
     app.include_router(api_keys.router)
     app.include_router(agents.router)
     app.include_router(environments.router)
@@ -232,19 +263,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(organizations.me_router)
     app.include_router(organizations.admin_router)
 
-    @app.get("/health", tags=["health"], response_model=HealthResponse)
-    async def health():
-        return {"status": "ok"}
-
-    @app.get("/health/db", tags=["health"], response_model=DatabaseHealthResponse)
-    async def health_db():
-        from sqlalchemy import text
-
-        from app.db.engine import session_scope
-
-        async with session_scope() as db:
-            await db.execute(text("SELECT 1"))
-        return {"status": "ok", "db": "ok"}
+    _install_health_routes(app)
 
     @app.get(
         "/v1/capabilities",

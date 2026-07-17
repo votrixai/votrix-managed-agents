@@ -16,10 +16,11 @@ from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.engine import session_scope
+from app.db.engine import get_engine, session_scope
 from app.db.queries import environments as environments_q
 from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
@@ -55,6 +56,7 @@ SUPPORTED_PROVIDERS = frozenset({E2B_PROVIDER, STATE_PROVIDER})
 APPEND_SEAL_SCHEMA = "vma-immutable-inputs-v2"
 INPUT_DESCRIPTOR_CONFIG_KEY = "input_descriptor"
 INPUT_TOTAL_SIZE_CONFIG_KEY = "input_total_size_bytes"
+_JANITOR_LOCK_KEY = 0x564D414A
 
 
 class SandboxLifecycleError(RuntimeError):
@@ -842,6 +844,28 @@ async def _delete_session_sandbox_in_db(
 
 
 async def cleanup_expired_session_sandboxes(*, limit: int = 25) -> int:
+    engine = get_engine()
+    if engine.dialect.name != "postgresql":
+        return await _cleanup_expired_session_sandboxes(limit=limit)
+    async with engine.connect() as conn:
+        acquired = (
+            await conn.execute(
+                text("SELECT pg_try_advisory_lock(:key)"),
+                {"key": _JANITOR_LOCK_KEY},
+            )
+        ).scalar()
+        if not acquired:
+            return 0
+        try:
+            return await _cleanup_expired_session_sandboxes(limit=limit)
+        finally:
+            await conn.execute(
+                text("SELECT pg_advisory_unlock(:key)"),
+                {"key": _JANITOR_LOCK_KEY},
+            )
+
+
+async def _cleanup_expired_session_sandboxes(*, limit: int = 25) -> int:
     async with session_scope() as db:
         candidates = await sandboxes_q.list_expired_session_sandboxes_for_cleanup(
             db,

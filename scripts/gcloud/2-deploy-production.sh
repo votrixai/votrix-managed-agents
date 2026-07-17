@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build, migrate, and deploy the production Cloud Run service.
+# Build, migrate, and deploy the production API and worker Cloud Run services.
 
 set -eu
 
@@ -46,7 +46,8 @@ for arg in "$@"; do
 done
 
 REGION="${REGION_OVERRIDE:-$REGION}"
-MANIFEST="${REPO_ROOT}/service.production.yaml"
+API_MANIFEST="${REPO_ROOT}/service.production.yaml"
+WORKER_MANIFEST="${REPO_ROOT}/service.worker.production.yaml"
 MIGRATION_JOB="${PRODUCTION_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url"
 
@@ -96,12 +97,20 @@ gcloud run jobs execute "$MIGRATION_JOB" \
   --wait \
   --quiet
 
-echo "Deploying ${PRODUCTION_SERVICE}..."
-sed "s|IMAGE_URL|${IMAGE}|" "$MANIFEST" | \
+echo "Deploying ${PRODUCTION_SERVICE} API service..."
+sed "s|IMAGE_URL|${IMAGE}|" "$API_MANIFEST" | \
   gcloud run services replace \
     --project="$PROJECT_ID" \
     --region="$REGION" \
     /dev/stdin \
     --quiet
 
-echo "Production deployed: ${IMAGE}"
+echo "Deploying ${PRODUCTION_WORKER_SERVICE} worker service..."
+sed "s|IMAGE_URL|${IMAGE}|" "$WORKER_MANIFEST" | \
+  gcloud run services replace \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    /dev/stdin \
+    --quiet
+
+echo "Production API and worker deployed: ${IMAGE}"

@@ -1901,6 +1901,9 @@ wheels = [
 binary = [
     { name = "psycopg-binary", marker = "implementation_name != 'pypy' or (extra == 'extra-21-votrix-managed-agents-contract' and extra == 'extra-21-votrix-managed-agents-contract-backend')" },
 ]
+pool = [
+    { name = "psycopg-pool" },
+]
 
 [[package]]
 name = "psycopg-binary"
@@ -2859,7 +2862,7 @@ dependencies = [
     { name = "langchain-openrouter" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "langgraph-checkpoint-sqlite" },
-    { name = "psycopg", extra = ["binary"] },
+    { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
@@ -2909,7 +2912,7 @@ requires-dist = [
     { name = "langchain-openrouter", specifier = ">=0.2.6,<1.0.0" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.1.0,<4.0.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1.0,<4.0.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4,<4.0.0" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.4,<4.0.0" },
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

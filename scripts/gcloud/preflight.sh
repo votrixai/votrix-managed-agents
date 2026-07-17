@@ -82,6 +82,15 @@ check_manifest() {
   fi
 }
 
+check_worker_manifest_is_private() {
+  MANIFEST=$1
+  if grep -q "run.googleapis.com/invoker-iam-disabled" "${REPO_ROOT}/${MANIFEST}"; then
+    fail "worker manifest disables the Invoker IAM check: ${MANIFEST}"
+  else
+    ok "worker manifest keeps the Invoker IAM check enabled: ${MANIFEST}"
+  fi
+}
+
 if ! command -v gcloud >/dev/null 2>&1; then
   fail "gcloud CLI is not installed"
   echo "Preflight failed: ${FAILURES} failure(s), ${WARNINGS} warning(s)." >&2
@@ -237,16 +246,24 @@ case "$TARGET" in
   production)
     check_environment_secrets ""
     check_manifest service.production.yaml
+    check_manifest service.worker.production.yaml
+    check_worker_manifest_is_private service.worker.production.yaml
     ;;
   staging)
     check_environment_secrets "-staging"
     check_manifest service.staging.yaml
+    check_manifest service.worker.staging.yaml
+    check_worker_manifest_is_private service.worker.staging.yaml
     ;;
   all)
     check_environment_secrets ""
     check_environment_secrets "-staging"
     check_manifest service.production.yaml
+    check_manifest service.worker.production.yaml
     check_manifest service.staging.yaml
+    check_manifest service.worker.staging.yaml
+    check_worker_manifest_is_private service.worker.production.yaml
+    check_worker_manifest_is_private service.worker.staging.yaml
     ;;
 esac
 

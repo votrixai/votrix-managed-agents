@@ -34,26 +34,37 @@ async def run_worker(
                 pass
 
     while not stop_event.is_set():
-        work = await _next_runnable_work(
-            environment_id=environment_id,
-            worker_id=worker_id,
-            lease_seconds=lease_seconds,
-        )
-        if work is None:
+        try:
+            work = await _next_runnable_work(
+                environment_id=environment_id,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+            )
+            if work is None:
+                if once:
+                    return
+                await asyncio.sleep(poll_interval_seconds)
+                continue
+            logger.info("worker_executing_work", work_id=work["id"], session_id=work.get("session_id"))
+            await execute_work_item(
+                work["id"],
+                worker_id=worker_id,
+                lease_id=str(work["lease"]["lease_id"]),
+                lease_generation=int(work["lease"]["generation"]),
+                lease_seconds=lease_seconds,
+            )
             if once:
                 return
+        except Exception:
+            if once:
+                raise
+            logger.exception(
+                "worker_loop_iteration_failed",
+                worker_id=worker_id,
+                environment_id=environment_id,
+            )
             await asyncio.sleep(poll_interval_seconds)
             continue
-        logger.info("worker_executing_work", work_id=work["id"], session_id=work.get("session_id"))
-        await execute_work_item(
-            work["id"],
-            worker_id=worker_id,
-            lease_id=str(work["lease"]["lease_id"]),
-            lease_generation=int(work["lease"]["generation"]),
-            lease_seconds=lease_seconds,
-        )
-        if once:
-            return
 
 
 async def _next_runnable_work(

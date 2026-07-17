@@ -178,9 +178,9 @@ async def _run_session_turn(
             )
 
         async def emit_preview(frame: dict[str, Any]) -> None:
-            from app.runtime.vma_preview_bus import publish_vma_preview
+            from app.runtime.preview_broker import publish_preview
 
-            await publish_vma_preview(session_id, frame, organization_id=organization_id)
+            await publish_preview(session_id, frame, organization_id=organization_id)
 
         result = await _execute(
             effective_version,

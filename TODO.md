@@ -42,9 +42,11 @@ target, not a promise to clone every current or future Claude beta feature.
 
 This is a BYOK-first public-beta baseline with optional operator-provisioned
 Organization platform keys, not production HA or enterprise readiness.
-Multi-replica previews/Session ownership, Postgres RLS, Organization RBAC/SSO,
+Exactly-once external side effects, Postgres RLS, Organization RBAC/SSO,
 enterprise audit export/retention, and webhook delivery remain open. Platform
-funding does not yet constitute a commercial billing system.
+funding does not yet constitute a commercial billing system. The maintained
+Cloud Run topology now separates API and worker services and uses PostgreSQL
+`pg_notify` for best-effort cross-instance previews.
 
 ### Native Python SDK and provider BYOK
 
@@ -114,23 +116,24 @@ the current production caller and target SDK both pass the consumer suite.
 - [x] Fence terminal Session events/status and work completion with
   `(work_id, lease_id, run_generation)`, so a stale worker cannot finalize a
   recovered attempt.
-- [ ] Replace process-local per-Session ownership with database or equivalent
-  fencing before raising Cloud Run above one worker/instance.
+- [x] Validate database-backed work and Session execution leases across API and
+  worker replicas before raising Cloud Run above one instance.
 - [x] Recover expired leased/running attempts with a new generation and make
   terminal completion/error/stop release the active-work reservation
   idempotently.
-- [ ] Deliver ordered token/tool previews across processes, or persist bounded
-  batched deltas that SSE clients can tail by sequence. Addressed by P2.5 in
-  `PLAN-horizontal-scaling.md`: a Postgres `pg_notify` preview broker
-  (`VMA_PREVIEW_BROKER=pg_notify`) that publishes coalesced preview frames from
-  workers and replays them on API instances, keeping `event_deltas` typewriter
-  streaming across the API/worker split with no public-API change.
+- [x] Deliver ordered token/tool previews across hosted processes through a
+  bounded PostgreSQL `pg_notify` transport (`VMA_PREVIEW_BROKER=pg_notify`).
+  P2.5 coalesces worker frames and replays them on API instances, preserving
+  `event_deltas` typewriter streaming across the API/worker split with no
+  public-API change. Durable event reconciliation remains required because
+  preview frames are best-effort and non-replayable.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
 
-Pilot boundary: `minScale=1`, `maxScale=1`, and one Uvicorn worker may be used
-for a controlled Votrix-only pilot, but that is not the scalable production
-gate and must remain visible in operations documentation.
+Hosted boundary: API instances may autoscale independently, while the private
+worker fleet is fixed and manually scaled from the checked-in manifests. A
+queue-driven push dispatcher such as Cloud Tasks/Pub/Sub remains deferred; it
+is not required for the current horizontally scaled worker topology.
 
 ### P0-2 — Dynamic files and generated artifacts
 

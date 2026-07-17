@@ -12,44 +12,60 @@ Dockerfile
 cloudbuild.yaml
 service.production.yaml
 service.staging.yaml
+service.worker.production.yaml
+service.worker.staging.yaml
 scripts/gcloud/
 ```
 
 The operational walkthrough, one-time GCP setup, secret loading, manual deploys, CI/CD triggers, and status commands live in the [GCP operations guide](https://github.com/votrixai/votrix-managed-agents/tree/main/scripts/gcloud).
 
-## Cloud Run MVP topology
+## Cloud Run API/worker topology
 
-The current production manifest is intentionally constrained to one Cloud Run
-instance and one Uvicorn worker. That process hosts five embedded durable-work
-consumers:
+The maintained deployment separates public HTTP/SSE traffic from private Agent
+turn execution:
 
 ```text
-Cloud Run web/API + embedded durable worker (minScale=1, maxScale=1, WEB_CONCURRENCY=1)
-    |-- VMA-owned Postgres database/schema
-    |-- S3-compatible object storage
-    |-- model and MCP providers
-    `-- external E2B sandboxes
+Cloud Run API (production min=1, max=3; WEB_CONCURRENCY=1)
+    |-- HTTP/SSE and durable event replay
+    |                  ^
+    |                  `-- PostgreSQL NOTIFY previews
+    v                                      |
+VMA-owned PostgreSQL work/events ----> Cloud Run workers (min=2, max=3)
+                                           |-- five turn consumers per instance
+                                           |-- model and MCP providers
+                                           `-- external E2B sandboxes
 ```
 
-Both production and staging keep one warm revision because the embedded worker
-polls durable work continuously. Work attempts use unique lease IDs and
-generations, heartbeat, recover after expiry, and fence stale terminal writes.
-Do not increase `WEB_CONCURRENCY` or `maxScale` until the remaining
-per-Session/checkpoint ownership and cross-process preview delivery have been
-validated under the same tenant-isolation contract. The single-instance shape
-is an explicit public-beta rollout constraint, not an availability guarantee.
+Production allows one to three API instances and keeps two to three worker
+instances; staging allows one to two API instances and keeps one worker. API
+instances scale from HTTP/SSE load. The worker fleet polls PostgreSQL and is
+scaled manually, independently from API request load. Work attempts use unique
+lease IDs and generations, heartbeat, recover after expiry, and fence stale
+terminal writes. Per-turn push dispatch and queue-depth-driven worker
+autoscaling are intentionally deferred P3 work.
 
-The checked-in vertical baseline uses one vCPU, 4 GiB memory,
-`containerConcurrency=40`, five turn consumers, a bounded 10+5 PostgreSQL
-application pool, one-second event polling, and a 64 MiB aggregate
-Session-input cap. The cap limits create-time materialization and one-time E2B
-injection; subsequent E2B turns use the persisted seal and hydrate only files
-explicitly referenced by the current model message.
+Each instance uses one vCPU, 4 GiB memory, and one Uvicorn process. API instances
+use `containerConcurrency=40` and a bounded 10+5 PostgreSQL application pool;
+workers expose only private health routes, use `containerConcurrency=10`, a 5+2
+pool, and five turn consumers. One-second event polling and a 64 MiB aggregate
+Session-input cap remain shared. The cap limits create-time materialization and
+one-time E2B injection; subsequent E2B turns use the persisted seal and hydrate
+only files explicitly referenced by the current model message.
+
+Hosted services set `VMA_PREVIEW_BROKER=pg_notify`. Worker instances publish
+coalesced typewriter/token and tool previews through PostgreSQL; each API process
+holds one dedicated `LISTEN` connection and forwards received frames to local
+SSE subscribers. The transport is best-effort and non-replayable, so clients
+reconcile with durable events. Use the Supavisor session-mode endpoint on port
+`5432`—transaction mode cannot support the lifetime `LISTEN` connection—and
+budget one additional database connection per API process. Local development
+retains `process_local` as the default.
 
 The hosted Organization defaults admit 20 active queued/running turns and 600 API
-requests per minute, so a ten-Session burst queues behind the five consumers
-instead of failing at admission. These values support an initial trusted-user
-rollout; they are not an HA or unlimited-throughput claim.
+requests per minute. Production starts with ten warm execution slots across its
+two worker instances, so a larger burst queues instead of failing at admission.
+These values support an initial trusted-user rollout; they are not an
+unlimited-throughput or exactly-once side-effect claim.
 
 Cloud Run hosts the control plane and Deep Agents runtime. It does not host tenant shell sandboxes. With `VMA_SANDBOX_PROVIDER=e2b`, every cloud Session remains bound to its external E2B sandbox and reconnects that sandbox through the E2B API.
 
@@ -77,9 +93,11 @@ The supported release sequence is:
 
 1. Cloud Build builds and pushes a commit-addressed image to Artifact Registry.
 2. A dedicated Cloud Run migration Job runs `scripts/migrate.sh` against the target VMA database and must complete successfully.
-3. Cloud Run applies the production or staging service manifest with the same image.
-4. Traffic moves only after the service health checks pass.
-5. Before promoting staging, run `scripts/pilot_acceptance.py` against its public
+3. Cloud Run replaces the API service with that image.
+4. Cloud Run replaces the worker service with the same image only after the
+   migration Job succeeds.
+5. Traffic moves only after the service health checks pass.
+6. Before promoting staging, run `scripts/pilot_acceptance.py` against its public
    URL with staging credentials. This provisions and deletes one real E2B
    Session while verifying Postgres, R2, model execution, append-only files,
    pause/resume, generated outputs, scoped listing, and download.
