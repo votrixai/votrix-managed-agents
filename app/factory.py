@@ -138,6 +138,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
                 "Content-Type",
                 "Idempotency-Key",
                 "Last-Event-ID",
+                "X-Organization-Id",
                 "request-id",
                 "x-request-id",
                 "anthropic-beta",

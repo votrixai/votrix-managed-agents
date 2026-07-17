@@ -17,10 +17,11 @@ identity and a migration gate before every service rollout.
 
 Production and staging each run exactly one warm instance. Both revisions use
 one web worker plus five embedded durable-work consumers, keep CPU allocated,
-expose only the public-GA API surface, allow browser calls only from
-`https://docs.votrixai.com`, and run the same startup and database liveness
-probes. Each instance is pinned to one vCPU, 4 GiB memory, and 40 concurrent
-HTTP requests; this is a vertical public-beta baseline, not horizontal scale.
+expose only the public-GA API surface, allow browser calls from the matching
+Votrix web application and the documentation origin, and run the same startup
+and database liveness probes. Each instance is pinned to one vCPU, 4 GiB memory,
+and 40 concurrent HTTP requests; this is a vertical public-beta baseline, not
+horizontal scale.
 
 ## Prerequisites
 
@@ -63,6 +64,8 @@ Each unquoted `KEY=value` file contains exactly these required values:
 
 ```env
 DATABASE_URL=
+VMA_SUPABASE_URL=
+VMA_SUPABASE_PUBLISHABLE_KEY=
 VMA_ENCRYPTION_KEY=
 E2B_API_KEY=
 S3_ENDPOINT_URL=
@@ -84,6 +87,8 @@ only these names:
 | Environment variable | Production secret | Staging secret |
 |---|---|---|
 | `DATABASE_URL` | `vma-database-url` | `vma-database-url-staging` |
+| `VMA_SUPABASE_URL` | `vma-supabase-url` | `vma-supabase-url-staging` |
+| `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
 | `E2B_API_KEY` | `vma-e2b-api-key` | `vma-e2b-api-key-staging` |
 | `S3_ENDPOINT_URL` | `vma-s3-endpoint-url` | `vma-s3-endpoint-url-staging` |
@@ -94,6 +99,10 @@ only these names:
 `VMA_CHECKPOINT_DATABASE_URL` remains an optional application setting for the
 unusual case where checkpoint tables intentionally live in another database.
 It is not part of the standard Cloud Run Secret Manager contract.
+
+The Supabase URL and publishable key enable hosted owner and superadmin JWT
+authentication. They must match the Votrix web application in each environment;
+never substitute the Supabase service-role key.
 
 Do not quote values in these files, and do not commit them.
 
@@ -130,7 +139,7 @@ VMA_REQUESTS_PER_MINUTE=600
 VMA_MAX_ACTIVE_WORK=20
 VMA_ORGANIZATION_STORAGE_BYTES=5368709120
 VMA_PUBLIC_GA_ONLY=true
-VMA_CORS_ORIGINS=https://docs.votrixai.com
+VMA_CORS_ORIGINS=https://<matching-votrix-web-app>,https://docs.votrixai.com
 ```
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and

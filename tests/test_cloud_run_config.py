@@ -18,6 +18,8 @@ SECRET_BASES = {
     "s3-bucket-name",
     "s3-endpoint-url",
     "s3-secret-access-key",
+    "supabase-publishable-key",
+    "supabase-url",
 }
 
 
@@ -123,7 +125,6 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
         "VMA_MAX_ACTIVE_WORK": "20",
         "VMA_ORGANIZATION_STORAGE_BYTES": "5368709120",
         "VMA_PUBLIC_GA_ONLY": "true",
-        "VMA_CORS_ORIGINS": "https://docs.votrixai.com",
     }
     for environment in ("production", "staging"):
         flat = _flatten(_read(f"service.{environment}.yaml"))
@@ -132,6 +133,17 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
                 rf'name:\s*{re.escape(name)}\s+value:\s*["\']?{re.escape(value)}["\']?',
                 flat,
             ), f"{name} is not pinned for {environment}"
+
+        browser_origin = (
+            "https://staging-app.votrix.ai"
+            if environment == "staging"
+            else "https://app.votrix.ai"
+        )
+        expected_cors = f"{browser_origin},https://docs.votrixai.com"
+        assert re.search(
+            rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
+            flat,
+        )
 
 
 def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() -> None:
@@ -158,6 +170,21 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
     assert "--redact-secret" in operator_script
     assert "vma-operator-api-key" in operator_script
     assert "--set-secrets" not in operator_script
+
+
+def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:
+    for environment in ("production", "staging"):
+        suffix = "-staging" if environment == "staging" else ""
+        manifest = _read(f"service.{environment}.yaml")
+        assert "name: VMA_SUPABASE_URL" in manifest
+        assert f"name: vma-supabase-url{suffix}" in manifest
+        assert "name: VMA_SUPABASE_PUBLISHABLE_KEY" in manifest
+        assert f"name: vma-supabase-publishable-key{suffix}" in manifest
+
+    importer = _read("scripts/gcloud/1-create-secrets.sh")
+    assert "VMA_SUPABASE_URL|vma-supabase-url" in importer
+    assert "VMA_SUPABASE_PUBLISHABLE_KEY|vma-supabase-publishable-key" in importer
+    assert '"X-Organization-Id"' in _read("app/factory.py")
 
 
 def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
