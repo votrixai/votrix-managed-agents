@@ -3,19 +3,20 @@
 Internal only. Do not copy this runbook into the public documentation tree.
 
 This runbook describes how to size and scale VMA turn-execution capacity on
-Cloud Run. It assumes the P1 hardening and P2 API/worker split from
-`PLAN-horizontal-scaling.md` have shipped; a "before P2" section at the end
-covers the interim single-service topology. Autoscaling (P3, Cloud Tasks) is
-deliberately not built — triggers and scope live in `TODO.md` under
-"Deferred — P3 Cloud Tasks per-turn dispatch and autoscaling".
+Cloud Run. It assumes the P1 hardening, P2 API/worker split, and mandatory P2.5
+cross-instance preview transport from `PLAN-horizontal-scaling.md` have shipped.
+Autoscaling (P3, Cloud Tasks) is deliberately not built — triggers and scope
+live in `TODO.md` under "Deferred — P3 Cloud Tasks per-turn dispatch and
+autoscaling".
 
-## Topology after P2
+## Topology after P2 + P2.5
 
 | Service | Role | Scaling | Manifest |
 |---|---|---|---|
 | `votrix-managed-agents` | Public API + SSE | `minScale=1 / maxScale=3`, request-driven | `service.production.yaml` |
-| `votrix-managed-agents-worker` | Turn execution (embedded Postgres-queue pollers + E2B janitor) | **Fixed fleet**: `minScale = maxScale = N` | `service.worker.production.yaml` |
-| `votrix-managed-agents-staging` / `-staging-worker` | Staging pair | 1 instance each | `service.staging.yaml`, `service.worker.staging.yaml` |
+| `votrix-managed-agents-worker` | Turn execution (embedded Postgres-queue pollers + E2B janitor) | Warm/manual bounded fleet: `minScale=2 / maxScale=3` | `service.worker.production.yaml` |
+| `votrix-managed-agents-staging` | Staging API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.staging.yaml` |
+| `votrix-managed-agents-staging-worker` | Staging turn execution | `minScale=1 / maxScale=1` | `service.worker.staging.yaml` |
 
 Project `votrixai-480422`, region `us-central1` (see `scripts/gcloud/config.sh`).
 
@@ -26,13 +27,14 @@ concurrent turn capacity = worker instances × VMA_WORKER_CONCURRENCY
 ```
 
 - `VMA_WORKER_CONCURRENCY` is pinned to `5` in the worker manifests.
-- Production default fleet: 2–3 instances → **10–15 concurrent turns**.
+- Production starts with 2 warm instances → **10 guaranteed concurrent turns**.
+  An intentional 3-instance fleet provides **15 concurrent turns**.
 - Turns are IO-bound coordinators (model streaming, E2B, Postgres); heavy
   compute happens inside E2B sandboxes, not on the worker. A 1 vCPU / 4 GiB
   instance sustains 5 concurrent turns comfortably.
-- Overflow behavior is graceful: excess turns wait in the Postgres queue
-  (`environment_work`, status `queued`) until a slot frees. Nothing fails;
-  turn start is delayed.
+- Admitted overflow waits in the Postgres queue (`environment_work`, status
+  `queued`) until a slot frees. The hosted Organization active-work limit is 20,
+  so requests beyond that queued/running cap can be rejected rather than queued.
 
 ## How to scale the worker fleet
 
@@ -42,9 +44,11 @@ is reverted by the next deploy.**
 
 ### Standard path (persistent)
 
-1. Edit `service.worker.production.yaml`: set
-   `autoscaling.knative.dev/minScale` and `maxScale` to the new instance count
-   (keep them equal — this is a fixed fleet).
+1. Edit `service.worker.production.yaml`. Raise `minScale` to change guaranteed
+   warm capacity and keep `maxScale >= minScale`. Set both to the same value when
+   an exactly fixed fleet is operationally required. The checked-in default is
+   deliberately bounded at `minScale=2 / maxScale=3`; Postgres queue depth does
+   not drive the service to its maximum.
 2. Update the pinned values in `tests/test_cloud_run_config.py` (the topology
    is asserted there; the suite fails on drift by design).
 3. Ship through the normal pipeline (merge → Cloud Build → migrate job →
@@ -107,26 +111,27 @@ committed spiky workload. P3 is a ~3–5 day purely additive change after P2.
 - **Turn speed.** More instances add parallel capacity, not faster turns.
 - **Token preview.** Preserved across the split by the P2.5 `pg_notify` preview
   broker (`VMA_PREVIEW_BROKER=pg_notify`): workers publish preview frames via
-  Postgres `NOTIFY`, API instances `LISTEN` and replay them to their local SSE
-  subscribers, so `event_deltas` typewriter streaming works regardless of which
-  instances the SSE client and the executing worker land on. This is a preview
-  transport, not a scaling knob — adding worker instances neither helps nor
-  harms it. If `VMA_PREVIEW_BROKER=process_local` (the pre-P2.5 default),
-  hosted preview falls back to per-instance-only and clients see complete
-  durable events via ~1s DB polling instead.
+  Postgres `NOTIFY`, and API instances `LISTEN` and forward them to their local
+  SSE subscribers. This preserves `event_deltas` typewriter delivery when the
+  SSE client and executing worker land on different instances. Delivery remains
+  best-effort and non-replayable; durable Session events reconcile any missed
+  frame. The real Supabase broker smoke used separate worker-role and API-role
+  OS processes and delivered three frames, including two coalesced deltas with
+  complete text. It verifies the cross-process PostgreSQL path but is not a
+  substitute for a smoke through the complete public SSE endpoint.
+  This transport is not a scaling knob — adding worker instances neither helps
+  nor harms it. `VMA_PREVIEW_BROKER=process_local` remains the local-development
+  default; it must not replace `pg_notify` in the split hosted topology.
 - **Correctness.** Work-queue leases (`lease_id + generation` + heartbeat) and
   the per-Session execution lease fence concurrent instances; a superseded
   worker cannot persist events or finalize work. Retries are capped by
   `VMA_WORK_MAX_ATTEMPTS=3` — the 4th lease of a failing work item errors the
   work and terminates the Session with a `session.error` event.
 
-## Before P2 ships (interim, single combined service)
+## Combined role is local/self-hosted only
 
-The combined service can be scaled to a small fixed fleet the same way
-(`service.production.yaml` `minScale`/`maxScale`, plus
-`tests/test_cloud_run_config.py` pins). Prerequisite: the P1 hardening items
-(attempt cap, checkpoint pool reuse, janitor advisory lock) must be deployed
-first. Two caveats specific to this interim mode: token previews become a
-per-connection lottery (they only reach SSE clients that happen to share an
-instance with the executing worker coroutine), and API traffic shares CPU with
-turn execution, so keep the fleet ≤3 and finish P2 instead of growing it.
+The `combined` role remains the compatibility default for local development and
+simple self-hosting. It is not the maintained Cloud Run production topology.
+Do not turn `service.production.yaml` back into a combined service or use API
+instance scaling to add turn capacity; scale the dedicated worker manifest as
+described above.

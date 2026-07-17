@@ -123,18 +123,20 @@ uv run python scripts/performance_smoke.py
 
 Migrations are a once-per-release operation. They are not an implicit side effect of every web container start.
 
-## Optional workers and schedules
+## Optional external workers and schedules
 
 `scripts/start-worker.sh` and the `self_hosted` Environment work protocol remain supported product capabilities. Here, `self_hosted` describes where an Agent Session's work executes; it does not describe where the VMA control plane is deployed. The GCP-only hosted decision therefore does not remove self-hosted Environment APIs or worker behavior.
 
-The hosted manifests enable the embedded durable worker for queued Session
-execution. Scheduled Deployment resources remain outside the public GA surface;
-no production scheduler invokes their due-schedule tick.
+The hosted API manifests explicitly disable embedded workers. The dedicated
+worker-service manifests enable five embedded durable consumers for queued
+Session execution and expose only private health routes. Scheduled Deployment
+resources remain outside the public GA surface; no production scheduler invokes
+their due-schedule tick.
 
 ## Process commands
 
 | Process | Command | Cloud Run use |
 | --- | --- | --- |
-| Web | `scripts/start-web.sh` | Main Cloud Run service; keep one process. |
+| API/worker Uvicorn process | `entrypoint.sh` (`scripts/start-web.sh` is a wrapper) | Both hosted services; `VMA_SERVICE_ROLE` selects the API or worker surface. Keep one process per instance. |
 | Migration | `scripts/migrate.sh` | Dedicated release migration Job. |
-| Worker | `scripts/start-worker.sh` | Optional consumer for `self_hosted` Environment work, not an E2B sandbox. |
+| External worker CLI | `scripts/start-worker.sh` | Optional consumer for `self_hosted` Environment work; this is not the hosted worker-role service or an E2B sandbox. |

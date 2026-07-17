@@ -1,3 +1,4 @@
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,7 @@ GENERATED_THIRD_PARTY_FILES = {
     # not first-party VMA product terminology.
     "infra/cloudflare/vma-api-router/src/worker-configuration.d.ts",
 }
+CJK_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 
 def test_tracked_first_party_text_uses_organization_terminology():
@@ -51,3 +53,30 @@ def test_tracked_first_party_text_uses_organization_terminology():
         "Use explicit Organization, account, API consumer, or end-user terminology: "
         + ", ".join(offenders)
     )
+
+
+def test_tracked_text_contains_no_cjk_characters():
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        capture_output=True,
+    )
+    tracked_paths = result.stdout.decode().rstrip("\0").split("\0")
+    offenders: list[str] = []
+
+    for relative_path in tracked_paths:
+        path = REPOSITORY_ROOT / relative_path
+        if not path.is_file():
+            continue
+        content = path.read_bytes()
+        if b"\0" in content:
+            continue
+        for line_number, line in enumerate(
+            content.decode("utf-8", errors="ignore").splitlines(),
+            start=1,
+        ):
+            if CJK_CHARACTER_RE.search(line):
+                offenders.append(f"{relative_path}:{line_number}")
+
+    assert not offenders, "VMA tracked text must be English-only: " + ", ".join(offenders)

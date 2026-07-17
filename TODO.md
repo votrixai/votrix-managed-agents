@@ -123,7 +123,7 @@ the current production caller and target SDK both pass the consumer suite.
   idempotently.
 - [x] Deliver ordered token/tool previews across hosted processes through a
   bounded PostgreSQL `pg_notify` transport (`VMA_PREVIEW_BROKER=pg_notify`).
-  P2.5 coalesces worker frames and replays them on API instances, preserving
+  P2.5 coalesces worker frames and forwards them on API instances, preserving
   `event_deltas` typewriter streaming across the API/worker split with no
   public-API change. Durable event reconciliation remains required because
   preview frames are best-effort and non-replayable.
@@ -131,9 +131,10 @@ the current production caller and target SDK both pass the consumer suite.
   and cancellation behavior expected by `votrix-backend`.
 
 Hosted boundary: API instances may autoscale independently, while the private
-worker fleet is fixed and manually scaled from the checked-in manifests. A
-queue-driven push dispatcher such as Cloud Tasks/Pub/Sub remains deferred; it
-is not required for the current horizontally scaled worker topology.
+worker fleet is warm and manually bounded by the checked-in production
+`minScale=2 / maxScale=3` manifest. Queue depth does not drive worker scaling. A
+queue-driven push dispatcher such as Cloud Tasks/Pub/Sub remains deferred; it is
+not required for the current horizontally scaled worker topology.
 
 ### P0-2 — Dynamic files and generated artifacts
 
@@ -371,8 +372,9 @@ keys. Do not trust an unsigned tenant identifier forwarded by another service.
 ### Deferred — P3 Cloud Tasks per-turn dispatch and autoscaling
 
 Decision (2026-07-17): do not build now. P1 multi-instance hardening plus the
-P2 API/worker service split with a fixed, manually scaled worker fleet is the
-accepted operating model. Implementation spec for P1+P2 lives in
+P2 API/worker service split and mandatory P2.5 cross-instance preview transport,
+with a warm, manually bounded worker fleet, are the accepted operating model.
+The implementation record for P1+P2+P2.5 lives in
 `PLAN-horizontal-scaling.md`; the operator runbook is
 `private-docs/scaling-runbook.md`.
 
@@ -399,10 +401,11 @@ Build triggers — start this work when any one holds:
 - [ ] Work items regularly wait tens of seconds in `queued` while every worker
   slot is busy.
 - [ ] Operators are adjusting worker instance counts monthly or more often.
-- [ ] The fixed fleet has grown to ≥5 mostly idle instances kept for burst
-  headroom.
-- [ ] A known spiky workload is committed (for example a customer batch-launching
-  many Sessions at once) or an unpredictable public launch is scheduled.
+- [ ] The manually provisioned fleet has grown to ≥5 mostly idle instances kept
+  for burst headroom.
+- [ ] A known spiky workload is committed (for example an Organization
+  batch-launching many Sessions at once) or an unpredictable public launch is
+  scheduled.
 
 Scope when built (~3–5 days, purely additive after P2): a dispatcher module
 creating named tasks (`wk-{work_id}-a{attempt}`) after commit; an
