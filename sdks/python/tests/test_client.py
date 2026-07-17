@@ -32,13 +32,76 @@ def make_client(handler, *, max_retries: int = 0, auth_scheme: str = "x-api-key"
 
 
 def test_client_requires_explicit_configuration(monkeypatch):
-    monkeypatch.delenv("VOTRIX_API_KEY", raising=False)
-    monkeypatch.delenv("VOTRIX_BASE_URL", raising=False)
+    for name in (
+        "VMA_API_KEY",
+        "VOTRIX_VMA_API_KEY",
+        "VMA_BASE_URL",
+        "VOTRIX_VMA_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError, match="api_key"):
         AsyncVotrix(base_url="https://vma.test")
-    monkeypatch.setenv("VOTRIX_API_KEY", "vma_test")
+    monkeypatch.setenv("VOTRIX_API_KEY", "main-product-key")
+    monkeypatch.setenv("VOTRIX_BASE_URL", "https://api.votrixai.com")
+    with pytest.raises(ValueError, match="api_key"):
+        AsyncVotrix(base_url="https://vma.test")
+    monkeypatch.setenv("VMA_API_KEY", "vma_test_environment")
     with pytest.raises(ValueError, match="base_url"):
         AsyncVotrix()
+
+
+def test_client_explicit_blank_configuration_does_not_fall_back(monkeypatch):
+    monkeypatch.setenv("VMA_API_KEY", "vma_test_environment")
+    monkeypatch.setenv("VMA_BASE_URL", "https://environment.vma.test")
+
+    with pytest.raises(ValueError, match="api_key"):
+        AsyncVotrix(api_key="", base_url="https://explicit.vma.test")
+    with pytest.raises(ValueError, match="base_url"):
+        AsyncVotrix(api_key="vma_test_explicit", base_url="  ")
+
+
+@pytest.mark.parametrize("key_name", ["VMA_API_KEY", "VOTRIX_VMA_API_KEY"])
+@pytest.mark.asyncio
+async def test_client_supports_vma_environment_aliases(monkeypatch, key_name):
+    monkeypatch.setenv(key_name, "vma_test_environment")
+    monkeypatch.setenv("VOTRIX_VMA_BASE_URL", "https://environment.vma.test")
+
+    sdk = AsyncVotrix()
+
+    assert sdk._api_key == "vma_test_environment"
+    assert str(sdk.base_url) == "https://environment.vma.test/"
+    await sdk.close()
+
+
+def test_client_rejects_conflicting_vma_environment_aliases(monkeypatch):
+    monkeypatch.setenv("VMA_API_KEY", "vma_test_short")
+    monkeypatch.setenv("VOTRIX_VMA_API_KEY", "vma_test_namespaced")
+
+    with pytest.raises(ValueError, match="different API key values"):
+        AsyncVotrix(base_url="https://vma.test")
+
+    monkeypatch.delenv("VOTRIX_VMA_API_KEY")
+    monkeypatch.setenv("VMA_BASE_URL", "https://primary.vma.test")
+    monkeypatch.setenv("VOTRIX_VMA_BASE_URL", "https://alias.vma.test")
+    with pytest.raises(ValueError, match="different base URL values"):
+        AsyncVotrix()
+
+
+@pytest.mark.asyncio
+async def test_client_explicit_configuration_wins_over_conflicting_aliases(monkeypatch):
+    monkeypatch.setenv("VMA_API_KEY", "vma_test_primary")
+    monkeypatch.setenv("VOTRIX_VMA_API_KEY", "vma_test_alias")
+    monkeypatch.setenv("VMA_BASE_URL", "https://primary.vma.test")
+    monkeypatch.setenv("VOTRIX_VMA_BASE_URL", "https://alias.vma.test")
+
+    sdk = AsyncVotrix(
+        api_key="vma_test_explicit",
+        base_url="https://explicit.vma.test",
+    )
+
+    assert sdk._api_key == "vma_test_explicit"
+    assert str(sdk.base_url) == "https://explicit.vma.test/"
+    await sdk.close()
 
 
 @pytest.mark.asyncio

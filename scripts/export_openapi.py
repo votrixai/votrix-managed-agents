@@ -975,7 +975,7 @@ def build_code_samples(
             f"curl --request {method_upper} \\",
             f"  --url {shell_quote(url)} \\",
             '  --header "Content-Type: application/json" \\',
-            '  --header "x-api-key: $VOTRIX_API_KEY" \\',
+            '  --header "x-api-key: $VMA_API_KEY" \\',
             (
                 "  --header \"votrix-managed-agents-beta: "
                 f"{VOTRIX_MANAGED_AGENTS_BETA}\" \\"
@@ -992,7 +992,7 @@ def build_code_samples(
         f"    {url!r},\n"
         "    headers={\n"
         "        'Content-Type': 'application/json',\n"
-        "        'x-api-key': os.environ['VOTRIX_API_KEY'],\n"
+        "        'x-api-key': os.environ['VMA_API_KEY'],\n"
         f"        'votrix-managed-agents-beta': {VOTRIX_MANAGED_AGENTS_BETA!r},\n"
         "    },\n"
         "    json=payload,\n"
@@ -1006,7 +1006,7 @@ def build_code_samples(
         f"  method: {json.dumps(method_upper)},\n"
         "  headers: {\n"
         '    "Content-Type": "application/json",\n'
-        '    "x-api-key": process.env.VOTRIX_API_KEY,\n'
+        '    "x-api-key": process.env.VMA_API_KEY,\n'
         f'    "votrix-managed-agents-beta": {json.dumps(VOTRIX_MANAGED_AGENTS_BETA)}\n'
         "  },\n"
         "  body: JSON.stringify(payload)\n"
@@ -1092,7 +1092,7 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
     schema["servers"] = [
         {
             "url": server_url.rstrip("/"),
-            "description": "Votrix Managed Agents API",
+            "description": "Votrix Managed Agents (VMA) API",
         }
     ]
     schema["tags"] = [

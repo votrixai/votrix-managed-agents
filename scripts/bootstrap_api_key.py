@@ -59,10 +59,12 @@ async def bootstrap_api_key(
         max_length=255,
     )
     key_name = _required_text(key_name, "key_name", max_length=255)
+    legacy_api_key = False
     if api_key is not None:
         api_key = _required_text(api_key, "api_key", max_length=512)
-        if not api_key.startswith("vma_"):
-            raise ValueError("api_key must use the vma_ prefix")
+        legacy_api_key = api_keys_q.is_legacy_api_key(api_key)
+        if not legacy_api_key:
+            api_keys_q.validate_api_key_prefix(api_key)
 
     async with session_scope() as db:
         result = await db.execute(
@@ -111,6 +113,11 @@ async def bootstrap_api_key(
                     secret=api_key,
                     organization_created=False,
                 )
+        if legacy_api_key:
+            raise ValueError(
+                "legacy vma_ api_key may only reuse an existing active management key; "
+                "create new keys with the environment-specific prefix"
+            )
         if active_admins and not allow_additional_admin_key:
             prefixes = ", ".join(item.prefix for item in active_admins)
             raise BootstrapConflict(
@@ -164,8 +171,9 @@ def _parser() -> argparse.ArgumentParser:
         "--api-key-stdin",
         action="store_true",
         help=(
-            "Read a pre-generated vma_ API key from stdin. This makes bootstrap "
-            "idempotent when an operator secret is provisioned before the database row."
+            "Read a pre-generated environment-specific VMA API key from stdin. "
+            "This makes bootstrap idempotent when an operator secret is provisioned "
+            "before the database row."
         ),
     )
     parser.add_argument(

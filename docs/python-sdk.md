@@ -44,14 +44,15 @@ python -m pip install votrix
 
 ## Client setup
 
-Supply the Organization API key and the URL of your VMA deployment explicitly, or
-use `VOTRIX_API_KEY` and `VOTRIX_BASE_URL`:
+Supply the Organization API key and the URL of your VMA deployment explicitly,
+or use `VMA_API_KEY` and `VMA_BASE_URL`. The namespaced aliases
+`VOTRIX_VMA_API_KEY` and `VOTRIX_VMA_BASE_URL` are also supported:
 
 ```python
 from votrix import AsyncVotrix
 
 client = AsyncVotrix(
-    api_key="vma_...",
+    api_key="vma_live_...",
     base_url="https://your-vma.example.com",
 )
 ```
@@ -60,6 +61,10 @@ The client sends `x-api-key` and the native
 `votrix-managed-agents-beta` header by default. Bearer authentication is an
 explicit constructor option. Use `async with` or call `await client.close()` to
 close its connection pool.
+
+Production keys start with `vma_live_`; non-production keys start with
+`vma_test_`. The SDK forwards credentials without inferring the target from the
+prefix.
 
 ## Transport behavior
 
@@ -109,7 +114,7 @@ Organization Vault, and submit the provider ID with the write-only key:
 
 ```python
 async with AsyncVotrix(
-    api_key="vma_...",
+    api_key="vma_live_...",
     base_url="https://your-vma.example.com",
 ) as client:
     providers = [item async for item in client.model_providers.list()]
@@ -220,7 +225,7 @@ For synchronous provisioning code, use the same nested surface without
 ```python
 from votrix import Votrix
 
-with Votrix(api_key="vma_...", base_url="https://your-vma.example.com") as client:
+with Votrix(api_key="vma_live_...", base_url="https://your-vma.example.com") as client:
     vault = client.vaults.create(display_name="End-user credentials")
     credential = client.vaults.model_credentials.create(
         vault.id,

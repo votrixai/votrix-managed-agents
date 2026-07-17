@@ -61,23 +61,26 @@ database-backed Organization keys with scopes, expiration, independent
 rotation/revocation, and one-time plaintext secrets. The bootstrap command
 creates the first Organization and administrator key; there is no anonymous or
 process-global authentication path. Supply its returned secret to local and
-development clients as `VOTRIX_API_KEY`; the service still resolves it from the
-database. Hosted environments also require durable Postgres and private object
-storage.
+development clients as `VMA_API_KEY` (or `VOTRIX_VMA_API_KEY`); the service
+still resolves it from the database. Hosted environments also require durable
+Postgres and private object storage.
+
+New production credentials start with `vma_live_`; staging, development, local,
+and test credentials start with `vma_test_`.
 
 For the local SDK or pilot script, save the one-time plaintext in the client
-environment as `VOTRIX_API_KEY`. In the API Playground, enter the same value in
+environment as `VMA_API_KEY`. In the API Playground, enter the same value in
 the `x-api-key` authentication field. Raw HTTP clients may use either standard
 authentication header:
 
 ```bash
-export VOTRIX_API_KEY='<secret from bootstrap output>'
+export VMA_API_KEY='<secret from bootstrap output>'
 curl http://127.0.0.1:8080/v1/capabilities \
-  --header "x-api-key: $VOTRIX_API_KEY" \
+  --header "x-api-key: $VMA_API_KEY" \
   --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
 ```
 
-An `Authorization: Bearer $VOTRIX_API_KEY` header is equivalent.
+An `Authorization: Bearer $VMA_API_KEY` header is equivalent.
 
 The public-beta platform enforces per-Organization request, active-work, daily
 model-token, and stored-byte limits. It records append-only raw audit and usage

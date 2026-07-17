@@ -1,4 +1,4 @@
-name: Publish Votrix TypeScript SDK
+name: Publish Votrix Managed Agents (VMA) TypeScript SDK
 
 on:
   push:
@@ -87,10 +87,10 @@ jobs:
           npm install --ignore-scripts "$tarball"
 
           node --input-type=module <<'NODE'
-          import Votrix, { Votrix as NamedVotrix } from "@votrix/sdk";
+          import Votrix, { Votrix as NamedVotrix } from "@votrix/managed-agents";
 
           if (Votrix !== NamedVotrix) throw new Error("ESM default export mismatch");
-          const client = new Votrix({ apiKey: "vma_smoke", baseURL: "https://example.com" });
+          const client = new Votrix({ apiKey: "vma_test_smoke", baseURL: "https://example.com" });
           if (!client.files || !client.skills || !client.modelProviders) {
             throw new Error("Missing ESM resources");
           }
@@ -98,15 +98,15 @@ jobs:
           NODE
 
           node <<'NODE'
-          const sdk = require("@votrix/sdk");
-          const packageMetadata = require("@votrix/sdk/package.json");
+          const sdk = require("@votrix/managed-agents");
+          const packageMetadata = require("@votrix/managed-agents/package.json");
 
           if (sdk.default !== sdk.Votrix) throw new Error("CommonJS default export mismatch");
-          if (packageMetadata.name !== "@votrix/sdk" || sdk.VERSION !== packageMetadata.version) {
+          if (packageMetadata.name !== "@votrix/managed-agents" || sdk.VERSION !== packageMetadata.version) {
             throw new Error("Packed package metadata or exported version mismatch");
           }
           const client = new sdk.Votrix({
-            apiKey: "vma_smoke",
+            apiKey: "vma_test_smoke",
             baseURL: "https://example.com",
           });
           if (!client.sessions.events || !client.vaults.modelCredentials) {
@@ -128,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: npm
-      url: https://www.npmjs.com/package/@votrix/sdk
+      url: https://www.npmjs.com/package/@votrix/managed-agents
     permissions:
       contents: read
       id-token: write

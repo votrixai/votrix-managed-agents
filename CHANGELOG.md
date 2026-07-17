@@ -61,7 +61,7 @@ operator-provisioned Organization platform funding.
   SSE with `Last-Event-ID`, bounded replay-safe retries, typed request IDs and
   stable error codes, API-key administration, and automatic Session/event
   idempotency keys.
-- A server-side `@votrix/sdk` TypeScript client with Anthropic-style
+- A server-side `@votrix/managed-agents` TypeScript client with Anthropic-style
   `APIPromise` and `PagePromise` ergonomics, all public native resources,
   multipart uploads, streaming binary downloads, reconnecting/deduplicating
   SSE, secret-safe responses, ESM/CommonJS builds, resource/transport tests,
@@ -74,6 +74,11 @@ operator-provisioned Organization platform funding.
 
 ### Changed
 
+- The external product contract is now explicitly Votrix Managed Agents (VMA):
+  the TypeScript package is `@votrix/managed-agents`, client credentials use
+  `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use
+  `vma_live_` in production or `vma_test_` everywhere else. Generic main-product
+  Votrix SDK and credential names are no longer consumed by VMA clients.
 - **Pre-launch breaking reset:** the top-level tenant is now Organization,
   identified by `organization_id` and `org_*` IDs. Legacy tenant names,
   fields, CLI flags, defaults, and compatibility aliases were removed. Existing

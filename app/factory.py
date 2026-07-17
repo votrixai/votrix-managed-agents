@@ -99,7 +99,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     # api_key_env names; process-level Cloud Run variables still take priority.
     load_dotenv()
     app = FastAPI(
-        title="Votrix Managed Agents",
+        title="Votrix Managed Agents (VMA)",
         description=(
             "Self-hosted, multi-tenant control plane for long-running agents."
         ),

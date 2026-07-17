@@ -2,7 +2,7 @@
   "name": "@votrix/managed-agents-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Fumadocs documentation site for Votrix Managed Agents",
+  "description": "Fumadocs documentation site for Votrix Managed Agents (VMA)",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "next dev --webpack",
