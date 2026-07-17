@@ -14,6 +14,9 @@ DEPENDENCY_LOCK_FILES = {
     "uv.lock",
     "yarn.lock",
 }
+GENERATED_FILES = {
+    "infra/cloudflare/vma-api-router/src/worker-configuration.d.ts",
+}
 
 
 def test_tracked_first_party_text_uses_organization_terminology():
@@ -29,7 +32,11 @@ def test_tracked_first_party_text_uses_organization_terminology():
 
     for relative_path in tracked_paths:
         path = REPOSITORY_ROOT / relative_path
-        if path.name in DEPENDENCY_LOCK_FILES or not path.is_file():
+        if (
+            path.name in DEPENDENCY_LOCK_FILES
+            or relative_path in GENERATED_FILES
+            or not path.is_file()
+        ):
             continue
         content = path.read_bytes()
         if b"\0" in content:
