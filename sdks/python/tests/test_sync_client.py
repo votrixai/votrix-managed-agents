@@ -8,6 +8,32 @@ import pytest
 from votrix import UnprocessableEntityError, Votrix
 
 
+def test_sync_client_configuration_is_fail_closed_and_matches_async(monkeypatch):
+    monkeypatch.setenv("VMA_API_KEY", "vma_test_environment")
+    monkeypatch.setenv("VOTRIX_VMA_API_KEY", "vma_test_environment")
+    monkeypatch.setenv("VMA_BASE_URL", "https://environment.vma.test")
+    monkeypatch.setenv("VOTRIX_VMA_BASE_URL", "https://environment.vma.test")
+
+    with Votrix() as client:
+        assert client._api_key == "vma_test_environment"
+        assert str(client.base_url) == "https://environment.vma.test/"
+
+    with pytest.raises(ValueError, match="api_key"):
+        Votrix(api_key="", base_url="https://explicit.vma.test")
+    with pytest.raises(ValueError, match="base_url"):
+        Votrix(api_key="vma_test_explicit", base_url=" ")
+
+    monkeypatch.setenv("VOTRIX_VMA_API_KEY", "vma_test_conflict")
+    with pytest.raises(ValueError, match="different API key values"):
+        Votrix(base_url="https://explicit.vma.test")
+
+    with Votrix(
+        api_key="vma_test_explicit",
+        base_url="https://explicit.vma.test",
+    ) as client:
+        assert client._api_key == "vma_test_explicit"
+
+
 def model_credential_payload(*, archived: bool = False) -> dict:
     return {
         "id": "credential_1",
@@ -62,7 +88,7 @@ def test_sync_model_credential_lifecycle_and_secret_redaction():
 
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     with Votrix(
-        api_key="vma_sync_test",
+        api_key="vma_test_sync",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,
@@ -140,7 +166,7 @@ def test_sync_model_credential_lifecycle_and_secret_redaction():
 
 def test_sync_provider_and_vault_wrappers():
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["x-api-key"] == "vma_sync_test"
+        assert request.headers["x-api-key"] == "vma_test_sync"
         if request.url.path == "/v1/model_providers":
             return httpx.Response(
                 200,
@@ -171,7 +197,7 @@ def test_sync_provider_and_vault_wrappers():
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         with Votrix(
-            api_key="vma_sync_test",
+            api_key="vma_test_sync",
             base_url="https://vma.test",
             max_retries=0,
             http_client=http_client,
@@ -189,7 +215,7 @@ def test_sync_api_key_lifecycle_exposes_secrets_only_on_create_and_rotate():
             "type": "api_key",
             "organization_id": "org_test",
             "name": "CI",
-            "prefix": "vma_ci",
+            "prefix": "vma_test_ci",
             "scopes": ["api", "api_keys:manage"],
             "expires_at": None,
             "created_by": "key_admin",
@@ -209,9 +235,9 @@ def test_sync_api_key_lifecycle_exposes_secrets_only_on_create_and_rotate():
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/v1/api_keys":
-            return httpx.Response(201, json=payload("key_1", secret="vma_sync_create"))
+            return httpx.Response(201, json=payload("key_1", secret="vma_test_sync_create"))
         if request.url.path.endswith("/rotate"):
-            return httpx.Response(201, json=payload("key_2", secret="vma_sync_rotate"))
+            return httpx.Response(201, json=payload("key_2", secret="vma_test_sync_rotate"))
         if request.url.path.endswith("/revoke"):
             return httpx.Response(200, json=payload("key_2", secret="ignored", revoked=True))
         if request.method == "GET" and request.url.path == "/v1/api_keys":
@@ -223,7 +249,7 @@ def test_sync_api_key_lifecycle_exposes_secrets_only_on_create_and_rotate():
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         with Votrix(
-            api_key="vma_sync_test",
+            api_key="vma_test_sync",
             base_url="https://vma.test",
             max_retries=0,
             http_client=http_client,
@@ -234,7 +260,7 @@ def test_sync_api_key_lifecycle_exposes_secrets_only_on_create_and_rotate():
             rotated = client.api_keys.rotate(created.id, reason="rollover")
             revoked = client.api_keys.revoke(rotated.id, reason="retired")
 
-    assert created.secret.get_secret_value() == "vma_sync_create"
-    assert rotated.secret.get_secret_value() == "vma_sync_rotate"
+    assert created.secret.get_secret_value() == "vma_test_sync_create"
+    assert rotated.secret.get_secret_value() == "vma_test_sync_rotate"
     for safe in [*page.data, retrieved, revoked]:
         assert "secret" not in safe.model_dump()

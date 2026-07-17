@@ -1,10 +1,11 @@
 ---
 title: TypeScript SDK
-description: Use the server-side @votrix/sdk client for native Managed Agents resources, Session funding, raw usage, pagination, SSE, and downloads.
+description: Use the server-side @votrix/managed-agents client for native Managed Agents resources, Session funding, raw usage, pagination, SSE, and downloads.
 ---
 
-`@votrix/sdk` is the native, server-side TypeScript client for Votrix Managed
-Agents. It requires Node.js 22 or newer and provides ESM and CommonJS exports.
+`@votrix/managed-agents` is the native, server-side TypeScript client for
+Votrix Managed Agents (VMA). It requires Node.js 22 or newer and provides ESM
+and CommonJS exports.
 
 ## Install and connect
 
@@ -17,27 +18,31 @@ npm install /absolute/path/to/votrix-managed-agents/sdks/typescript
 ```
 
 The first npm release is still pending. After publication, install it with
-`npm install @votrix/sdk`.
+`npm install @votrix/managed-agents`.
 
 ```ts
-import Votrix from "@votrix/sdk";
+import Votrix from "@votrix/managed-agents";
 
 const client = new Votrix({
-  apiKey: process.env.VOTRIX_API_KEY,
-  baseURL: process.env.VOTRIX_BASE_URL,
+  apiKey: process.env.VMA_API_KEY,
+  baseURL: process.env.VMA_BASE_URL,
 });
 ```
 
-The constructor reads `VOTRIX_API_KEY` and `VOTRIX_BASE_URL` automatically
-when they are not passed. The key and URL must belong to the same deployment.
-The default authentication scheme is `x-api-key`; bearer authentication is an
+The constructor reads `VMA_API_KEY` and `VMA_BASE_URL` automatically when they
+are not passed. `VOTRIX_VMA_API_KEY` and `VOTRIX_VMA_BASE_URL` are supported
+namespaced aliases; matching duplicate values are accepted and conflicting
+values fail closed. The key and URL must belong to the same deployment. The
+default authentication scheme is `x-api-key`; bearer authentication is an
 explicit constructor option.
 
 This is not a browser SDK. Organization API keys belong only in trusted
 backends, and the client refuses browser initialization. Keep distinct,
 least-privileged credentials for local, development, staging, and production.
-`VOTRIX_API_KEY` is the SDK's only API-key environment variable; service
-configuration is separate.
+`VMA_API_KEY` and `VOTRIX_VMA_API_KEY` are the only API-key environment
+variables read by this SDK; generic main-product Votrix credentials are
+ignored. Service configuration is separate. Production credentials begin with
+`vma_live_`; non-production credentials begin with `vma_test_`.
 
 ## Resources
 

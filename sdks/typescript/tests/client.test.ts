@@ -11,30 +11,39 @@ import Votrix, {
   type Fetch,
 } from "../src/index.js";
 
-const originalAPIKey = process.env.VOTRIX_API_KEY;
-const originalBaseURL = process.env.VOTRIX_BASE_URL;
+const configurationEnvironmentNames = [
+  "VMA_API_KEY",
+  "VOTRIX_VMA_API_KEY",
+  "VMA_BASE_URL",
+  "VOTRIX_VMA_BASE_URL",
+  "VOTRIX_API_KEY",
+  "VOTRIX_BASE_URL",
+] as const;
+const originalConfigurationEnvironment = new Map(
+  configurationEnvironmentNames.map((name) => [name, process.env[name]]),
+);
 
 afterEach(() => {
-  restoreEnvironment("VOTRIX_API_KEY", originalAPIKey);
-  restoreEnvironment("VOTRIX_BASE_URL", originalBaseURL);
+  for (const name of configurationEnvironmentNames) {
+    restoreEnvironment(name, originalConfigurationEnvironment.get(name));
+  }
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("client configuration and transport", () => {
   it("requires configuration and can read the client environment variables", async () => {
-    delete process.env.VOTRIX_API_KEY;
-    delete process.env.VOTRIX_BASE_URL;
+    clearConfigurationEnvironment();
 
     expect(() => new Votrix({ fetch: successFetch() })).toThrow(
       /apiKey is required/,
     );
     expect(
-      () => new Votrix({ apiKey: "vma_explicit", fetch: successFetch() }),
+      () => new Votrix({ apiKey: "vma_test_explicit", fetch: successFetch() }),
     ).toThrow(/baseURL is required/);
 
-    process.env.VOTRIX_API_KEY = "vma_from_environment";
-    process.env.VOTRIX_BASE_URL = "https://environment.votrix.test";
+    process.env.VMA_API_KEY = "vma_test_from_environment";
+    process.env.VMA_BASE_URL = "https://environment.votrix.test";
     const requests: URL[] = [];
     const fetcher: Fetch = async (input) => {
       requests.push(requestURL(input));
@@ -44,10 +53,73 @@ describe("client configuration and transport", () => {
 
     await client.modelProviders.retrieve("openrouter");
 
-    expect(client.apiKey).toBe("vma_from_environment");
+    expect(client.apiKey).toBe("vma_test_from_environment");
     expect(client.baseURL).toBe("https://environment.votrix.test/");
     expect(requests[0]?.href).toBe(
       "https://environment.votrix.test/v1/model_providers/openrouter",
+    );
+  });
+
+  it("supports the VOTRIX_VMA environment aliases and matching duplicate values", () => {
+    clearConfigurationEnvironment();
+    process.env.VOTRIX_VMA_API_KEY = "vma_test_from_alias";
+    process.env.VOTRIX_VMA_BASE_URL = "https://alias.votrix.test";
+
+    const aliasClient = new Votrix({ fetch: successFetch() });
+    expect(aliasClient.apiKey).toBe("vma_test_from_alias");
+    expect(aliasClient.baseURL).toBe("https://alias.votrix.test/");
+
+    process.env.VMA_API_KEY = "vma_test_from_alias";
+    process.env.VMA_BASE_URL = "https://alias.votrix.test";
+    const matchingClient = new Votrix({ fetch: successFetch() });
+    expect(matchingClient.apiKey).toBe("vma_test_from_alias");
+    expect(matchingClient.baseURL).toBe("https://alias.votrix.test/");
+  });
+
+  it("rejects conflicting VMA environment aliases without exposing their values", () => {
+    clearConfigurationEnvironment();
+    process.env.VMA_API_KEY = "vma_live_primary_secret";
+    process.env.VOTRIX_VMA_API_KEY = "vma_live_alias_secret";
+    process.env.VMA_BASE_URL = "https://vma.votrixai.com";
+
+    expect(() => new Votrix({ fetch: successFetch() })).toThrow(
+      "VMA_API_KEY and VOTRIX_VMA_API_KEY are both set but have different values; unset one or make them match",
+    );
+    try {
+      new Votrix({ fetch: successFetch() });
+    } catch (error) {
+      expect(String(error)).not.toContain("primary_secret");
+      expect(String(error)).not.toContain("alias_secret");
+    }
+
+    delete process.env.VOTRIX_VMA_API_KEY;
+    process.env.VOTRIX_VMA_BASE_URL = "https://staging-vma.votrixai.com";
+    expect(() => new Votrix({ fetch: successFetch() })).toThrow(
+      "VMA_BASE_URL and VOTRIX_VMA_BASE_URL are both set but have different values; unset one or make them match",
+    );
+  });
+
+  it("gives explicit options priority over conflicting or generic environment variables", () => {
+    clearConfigurationEnvironment();
+    process.env.VMA_API_KEY = "vma_test_primary";
+    process.env.VOTRIX_VMA_API_KEY = "vma_test_alias";
+    process.env.VMA_BASE_URL = "https://primary.votrix.test";
+    process.env.VOTRIX_VMA_BASE_URL = "https://alias.votrix.test";
+    process.env.VOTRIX_API_KEY = "generic-main-product-key";
+    process.env.VOTRIX_BASE_URL = "https://api.votrixai.com";
+
+    const client = new Votrix({
+      apiKey: "vma_test_explicit",
+      baseURL: "https://explicit.votrix.test",
+      fetch: successFetch(),
+    });
+    expect(client.apiKey).toBe("vma_test_explicit");
+    expect(client.baseURL).toBe("https://explicit.votrix.test/");
+
+    delete process.env.VMA_API_KEY;
+    delete process.env.VOTRIX_VMA_API_KEY;
+    expect(() => new Votrix({ fetch: successFetch() })).toThrow(
+      /apiKey is required/,
     );
   });
 
@@ -59,7 +131,7 @@ describe("client configuration and transport", () => {
     };
 
     const apiKeyClient = new Votrix({
-      apiKey: "vma_header_secret",
+      apiKey: "vma_test_header_secret",
       baseURL: "https://api.votrix.test/root/",
       beta: "votrix-test-beta",
       defaultHeaders: { "x-default-test": "default" },
@@ -74,7 +146,7 @@ describe("client configuration and transport", () => {
     });
 
     const bearerClient = new Votrix({
-      apiKey: "vma_bearer_secret",
+      apiKey: "vma_test_bearer_secret",
       baseURL: "https://api.votrix.test",
       authScheme: "bearer",
       fetch: fetcher,
@@ -85,20 +157,22 @@ describe("client configuration and transport", () => {
     });
 
     const apiKeyHeaders = observed[0];
-    expect(apiKeyHeaders?.get("x-api-key")).toBe("vma_header_secret");
+    expect(apiKeyHeaders?.get("x-api-key")).toBe("vma_test_header_secret");
     expect(apiKeyHeaders?.get("authorization")).toBeNull();
     expect(apiKeyHeaders?.get("accept")).toBe("application/json");
     expect(apiKeyHeaders?.get("votrix-managed-agents-beta")).toBe(
       "votrix-test-beta",
     );
     expect(apiKeyHeaders?.get("x-votrix-sdk-version")).toBe("0.1.0");
-    expect(apiKeyHeaders?.get("user-agent")).toBe("votrix-typescript/0.1.0");
+    expect(apiKeyHeaders?.get("user-agent")).toBe(
+      "votrix-managed-agents-typescript/0.1.0",
+    );
     expect(apiKeyHeaders?.get("x-default-test")).toBe("default");
     expect(apiKeyHeaders?.get("x-request-test")).toBe("request");
 
     const bearerHeaders = observed[1];
     expect(bearerHeaders?.get("authorization")).toBe(
-      "Bearer vma_bearer_secret",
+      "Bearer vma_test_bearer_secret",
     );
     expect(bearerHeaders?.get("x-api-key")).toBeNull();
   });
@@ -249,7 +323,7 @@ describe("client configuration and transport", () => {
   });
 
   it("redacts client, request, and response secrets from structured errors", async () => {
-    const clientKey = "vma_client_secret_value";
+    const clientKey = "vma_test_client_secret_value";
     const providerKey = "sk-provider-secret-value";
     const fetcher: Fetch = async () =>
       jsonResponse(
@@ -308,7 +382,7 @@ describe("client configuration and transport", () => {
         return jsonResponse(
           {
             ...apiKeyPayload(),
-            secret: "vma_returned_once",
+            secret: "vma_test_returned_once",
             internal_hash: "must-not-survive-create",
           },
           201,
@@ -340,7 +414,7 @@ describe("client configuration and transport", () => {
 
     expect(readKey).not.toHaveProperty("secret");
     expect(readKey).not.toHaveProperty("internal_hash");
-    expect(createdKey.secret).toBe("vma_returned_once");
+    expect(createdKey.secret).toBe("vma_test_returned_once");
     expect(createdKey).not.toHaveProperty("internal_hash");
     expect(credential).not.toHaveProperty("api_key");
     expect(credential).not.toHaveProperty("auth");
@@ -571,7 +645,7 @@ function apiKeyPayload(): Record<string, unknown> {
     type: "api_key",
     organization_id: "org_1",
     name: "Production",
-    prefix: "vma_test",
+    prefix: "vma_test_key",
     scopes: ["api", "api_keys:manage"],
     expires_at: null,
     created_by: "key_admin",
@@ -599,4 +673,8 @@ async function captureError(value: PromiseLike<unknown>): Promise<unknown> {
 function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
+}
+
+function clearConfigurationEnvironment(): void {
+  for (const name of configurationEnvironmentNames) delete process.env[name];
 }

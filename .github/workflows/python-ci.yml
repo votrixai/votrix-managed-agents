@@ -1,4 +1,4 @@
-name: Votrix Managed Agents CI
+name: Votrix Managed Agents (VMA) CI
 
 on:
   push:

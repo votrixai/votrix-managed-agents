@@ -30,8 +30,8 @@ async def test_bootstrap_api_key_creates_organization_and_one_hashed_admin_key()
     )
 
     assert result.organization_created is True
-    assert result.secret.startswith("vma_")
-    assert result.prefix == result.secret[:12]
+    assert result.secret.startswith(api_keys_q.TEST_API_KEY_PREFIX)
+    assert result.prefix == result.secret[: api_keys_q.DISPLAYED_API_KEY_PREFIX_LENGTH]
 
     async with session_scope() as db:
         organization = await db.get(Organization, "org_bootstrap")
@@ -76,7 +76,7 @@ async def test_bootstrap_refuses_duplicate_active_admin_without_explicit_overrid
 
 
 async def test_bootstrap_with_preprovisioned_key_is_idempotent():
-    supplied = "vma_preprovisioned_operator_key_for_staging"
+    supplied = "vma_test_preprovisioned_operator_key_for_staging"
 
     created = await bootstrap_api_key(
         organization_id="org_bootstrap_idempotent",
@@ -102,8 +102,89 @@ async def test_bootstrap_with_preprovisioned_key_is_idempotent():
 
 
 async def test_bootstrap_rejects_invalid_preprovisioned_key():
-    with pytest.raises(ValueError, match="vma_ prefix"):
+    with pytest.raises(ValueError, match="vma_live_ or vma_test_ prefix"):
         await bootstrap_api_key(
             organization_id="org_bootstrap_invalid_key",
             api_key="not-a-vma-key",
+        )
+
+
+@pytest.mark.parametrize(
+    ("app_env", "expected_prefix"),
+    [
+        ("production", api_keys_q.LIVE_API_KEY_PREFIX),
+        ("PRODUCTION", api_keys_q.LIVE_API_KEY_PREFIX),
+        ("staging", api_keys_q.TEST_API_KEY_PREFIX),
+        ("test", api_keys_q.TEST_API_KEY_PREFIX),
+        ("local", api_keys_q.TEST_API_KEY_PREFIX),
+        ("development", api_keys_q.TEST_API_KEY_PREFIX),
+        ("unknown", api_keys_q.TEST_API_KEY_PREFIX),
+    ],
+)
+def test_generated_api_key_prefix_is_environment_aware(app_env: str, expected_prefix: str):
+    secret = api_keys_q.generate_api_key(app_env=app_env)
+
+    assert secret.startswith(expected_prefix)
+    assert len(secret) > len(expected_prefix)
+
+
+def test_environment_specific_supplied_key_must_match_target():
+    with pytest.raises(ValueError, match="vma_live_"):
+        api_keys_q.validate_api_key_prefix(
+            "vma_test_wrong_environment",
+            app_env="production",
+        )
+    with pytest.raises(ValueError, match="vma_test_"):
+        api_keys_q.validate_api_key_prefix(
+            "vma_live_wrong_environment",
+            app_env="staging",
+        )
+
+
+def test_supplied_key_requires_sufficient_random_material():
+    with pytest.raises(ValueError, match="at least 32 characters"):
+        api_keys_q.validate_api_key_prefix(
+            "vma_test_short",
+            app_env="test",
+        )
+
+
+async def test_legacy_supplied_key_only_reuses_matching_active_admin():
+    legacy_key = "vma_legacy_operator_key_created_before_prefix_contract"
+    async with session_scope() as db:
+        db.add(
+            Organization(
+                id="org_bootstrap_legacy",
+                slug="bootstrap-legacy",
+                name="Bootstrap legacy",
+                metadata_={},
+            )
+        )
+        existing, _ = await api_keys_q.create_api_key(
+            db,
+            organization_id="org_bootstrap_legacy",
+            name="Legacy bootstrap admin",
+            token=legacy_key,
+            scopes=[api_keys_q.API_SCOPE, api_keys_q.API_KEYS_MANAGE_SCOPE],
+        )
+        existing_id = existing.id
+        await db.commit()
+
+    result = await bootstrap_api_key(
+        organization_id="org_bootstrap_legacy",
+        organization_slug="bootstrap-legacy",
+        organization_name="Bootstrap legacy",
+        api_key=legacy_key,
+    )
+
+    assert result.key_id == existing_id
+    assert result.secret == legacy_key
+    assert result.organization_created is False
+
+
+async def test_legacy_supplied_key_cannot_create_a_new_admin():
+    with pytest.raises(ValueError, match="only reuse an existing active management key"):
+        await bootstrap_api_key(
+            organization_id="org_bootstrap_new_legacy",
+            api_key="vma_legacy_key_must_not_be_created",
         )

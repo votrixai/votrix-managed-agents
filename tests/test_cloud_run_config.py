@@ -176,6 +176,7 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
     assert "--redact-secret" in operator_script
     assert "vma-operator-api-key" in operator_script
     assert "--set-secrets" not in operator_script
+    assert operator_script.count('APP_ENV="$TARGET" uv run') == 2
 
 
 def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:

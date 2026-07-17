@@ -36,7 +36,7 @@ ORGANIZATION_SLUG=${VMA_BOOTSTRAP_ORGANIZATION_SLUG:-$DEFAULT_ORGANIZATION_SLUG}
 ORGANIZATION_NAME=${VMA_BOOTSTRAP_ORGANIZATION_NAME:-$DEFAULT_ORGANIZATION_NAME}
 
 create_operator_version() {
-  uv run --project "$REPO_ROOT" python -c \
+  APP_ENV="$TARGET" uv run --project "$REPO_ROOT" python -c \
     'from app.db.queries.api_keys import generate_api_key; print(generate_api_key())' | \
     gcloud secrets versions add "$OPERATOR_SECRET" \
       --project="$PROJECT_ID" \
@@ -74,7 +74,7 @@ export DATABASE_URL
 gcloud secrets versions access latest \
   --secret="$OPERATOR_SECRET" \
   --project="$PROJECT_ID" | \
-  uv run --project "$REPO_ROOT" python -m scripts.bootstrap_api_key \
+  APP_ENV="$TARGET" uv run --project "$REPO_ROOT" python -m scripts.bootstrap_api_key \
     --organization-id "$ORGANIZATION_ID" \
     --organization-slug "$ORGANIZATION_SLUG" \
     --organization-name "$ORGANIZATION_NAME" \

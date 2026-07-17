@@ -229,7 +229,7 @@ async def test_native_sdk_api_key_lifecycle_returns_plaintext_only_once(sdk):
         scopes=["api", "api_keys:manage"],
         metadata={"test": "sdk-contract"},
     )
-    assert created.secret.get_secret_value().startswith("vma_")
+    assert created.secret.get_secret_value().startswith("vma_test_")
 
     listed = await sdk.api_keys.list(include_revoked=False)
     safe = next(item for item in listed.data if item.id == created.id)
@@ -238,7 +238,7 @@ async def test_native_sdk_api_key_lifecycle_returns_plaintext_only_once(sdk):
     assert "secret" not in retrieved.model_dump()
 
     rotated = await sdk.api_keys.rotate(created.id, reason="SDK contract rollover")
-    assert rotated.secret.get_secret_value().startswith("vma_")
+    assert rotated.secret.get_secret_value().startswith("vma_test_")
     assert rotated.replaces_key_id == created.id
 
     revoked = await sdk.api_keys.revoke(rotated.id, reason="SDK contract complete")

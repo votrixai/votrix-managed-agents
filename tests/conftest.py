@@ -68,6 +68,7 @@ async def _seed_database_api_key(
 async def test_database(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("APP_ENV", "test")
     # Never let a developer's real .env provision E2B during the test suite.
     monkeypatch.setenv("VMA_SANDBOX_PROVIDER", "state")
     # Route generic contract fixtures through an authless fake provider. Tests
