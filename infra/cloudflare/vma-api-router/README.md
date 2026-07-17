@@ -7,7 +7,7 @@ isolated Wrangler environments:
 | Wrangler environment | Public custom domain | Cloud Run origin |
 | --- | --- | --- |
 | `staging` | `staging-api.votrixai.com` | `votrix-managed-agents-staging-…run.app` |
-| `production` | `api.votrixai.com` | **Must be filled in after production deploy** |
+| `production` | `api.votrixai.com` | `votrix-managed-agents-…run.app` |
 
 The Worker validates the exact incoming hostname and requires a bare HTTPS
 `*.run.app` origin. It streams request and response bodies (including SSE),
@@ -45,14 +45,14 @@ The `staging` environment binds the Custom Domain
 `staging-api.votrixai.com`. Cloudflare provisions the DNS record and TLS
 certificate for a Custom Domain; do not create a competing CNAME first.
 
-## Enable and deploy production
+## Deploy production
 
-1. Deploy `votrix-managed-agents` to Cloud Run and copy its canonical
-   `https://…run.app` status URL.
-2. Replace only `env.production.vars.ORIGIN_URL` in `wrangler.jsonc`. The
-   committed `.invalid` value is intentional.
-3. Re-run `npm run check` and `npm run dry-run:production`.
-4. Deploy with the guarded command:
+The checked-in `env.production.vars.ORIGIN_URL` is the canonical Cloud Run
+status URL for `votrix-managed-agents`. After any service replacement that
+changes it, update that value and run `npm run types` before deployment.
+
+Re-run `npm run check` and `npm run dry-run:production`, then deploy with the
+guarded command:
 
 ```bash
 npm run deploy:production
