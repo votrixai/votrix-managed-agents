@@ -9,7 +9,7 @@
     "start": "serve out",
     "build": "next build --webpack",
     "lint": "eslint",
-    "typecheck": "fumadocs-mdx && next typegen && tsc --noEmit",
+    "typecheck": "next typegen && fumadocs-mdx && tsc --noEmit",
     "postinstall": "fumadocs-mdx && patch-package",
     "openapi:export": "cd .. && uv run python scripts/export_openapi.py",
     "openapi:sync": "npm run openapi:export"
