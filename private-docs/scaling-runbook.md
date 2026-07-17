@@ -6,8 +6,9 @@ This runbook describes how to size and scale VMA turn-execution capacity on
 Cloud Run. It assumes the P1 hardening and P2 API/worker split from
 `PLAN-horizontal-scaling.md` have shipped; a "before P2" section at the end
 covers the interim single-service topology. Autoscaling (P3, Cloud Tasks) is
-deliberately not built — triggers and scope live in `TODO.md` under
-"Deferred — P3 Cloud Tasks per-turn dispatch and autoscaling".
+not built yet — it is a committed follow-up roadmap sequenced after P2 plus an
+idempotency stage; scope lives in `TODO.md` under "Roadmap — P3 auto scale:
+Cloud Tasks per-turn dispatch". This runbook governs operations until it lands.
 
 ## Topology after P2
 
@@ -98,9 +99,10 @@ Scale up (add 1 instance) when either holds for more than a day:
 
 Scale down when the fleet is mostly idle for a week and queue waits are zero.
 
-Stop scaling by hand and build P3 instead when the `TODO.md` triggers fire —
-monthly manual adjustments, ≥5 mostly idle instances held for bursts, or a
-committed spiky workload. P3 is a ~3–5 day purely additive change after P2.
+P3 auto scale is a committed follow-up (see the `TODO.md` roadmap), sequenced
+after P2 plus its Stage A idempotency gate — budget ~1–1.5 weeks for both
+stages. The demand signals above raise its priority; they are no longer gates.
+Until it lands, manual fleet scaling per this runbook is the operating model.
 
 ## What scaling does NOT change
 
