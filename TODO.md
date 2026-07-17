@@ -339,6 +339,11 @@ identity and delegated resource namespaces remain deferred.
 
 ### Isolation audit and tests
 
+Pre-launch scope: the denial matrix and lookup/pagination/background audits
+below are specced for implementation in `PLAN-pre-launch-hardening.md` (W1)
+and gate the first production deploy via
+`private-docs/pre-launch-checklist.md`.
+
 - [ ] Add a two-Organization denial matrix proving Organization A cannot read,
   mutate, stream, or delete Organization B resources.
 - [ ] Audit ID-based lookup, pagination, and background execution paths for:
@@ -447,6 +452,15 @@ Demand signals that raise this roadmap's priority (informational now, no
 longer gates): queue waits regularly reaching tens of seconds; monthly manual
 fleet adjustments; ≥5 mostly idle instances held for burst headroom; a
 committed spiky workload.
+
+### Pre-launch gate
+
+The first production deploy is gated by `private-docs/pre-launch-checklist.md`:
+the three engineering plans (`PLAN-horizontal-scaling.md`,
+`PLAN-p3-autoscale.md`, `PLAN-pre-launch-hardening.md` — the last adds the
+tenant-isolation denial matrix and encryption key rotation), the four
+load-test scenarios, and the checklist's Tier 1 operator items (PITR restore
+drill, API versioning/event-retention decisions, region/residency decision).
 
 ### Explicitly deferred
 
