@@ -1,6 +1,6 @@
 const EXPECTED_PUBLIC_HOSTNAMES = {
-  staging: "staging-api.votrixai.com",
-  production: "api.votrixai.com",
+  staging: "staging-vma.votrixai.com",
+  production: "vma.votrixai.com",
 } as const;
 
 const HOP_BY_HOP_HEADERS = [

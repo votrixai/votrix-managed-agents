@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 
 const expectedHostnames = {
-  staging: "staging-api.votrixai.com",
-  production: "api.votrixai.com",
+  staging: "staging-vma.votrixai.com",
+  production: "vma.votrixai.com",
 };
 
 function fail(message) {
