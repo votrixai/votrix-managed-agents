@@ -6,8 +6,8 @@ isolated Wrangler environments:
 
 | Wrangler environment | Public custom domain | Cloud Run origin |
 | --- | --- | --- |
-| `staging` | `staging-api.votrixai.com` | `votrix-managed-agents-staging-…run.app` |
-| `production` | `api.votrixai.com` | `votrix-managed-agents-…run.app` |
+| `staging` | `staging-vma.votrixai.com` | `votrix-managed-agents-staging-…run.app` |
+| `production` | `vma.votrixai.com` | `votrix-managed-agents-…run.app` |
 
 The Worker validates the exact incoming hostname and requires a bare HTTPS
 `*.run.app` origin. It streams request and response bodies (including SSE),
@@ -42,7 +42,7 @@ npm run deploy:staging
 ```
 
 The `staging` environment binds the Custom Domain
-`staging-api.votrixai.com`. Cloudflare provisions the DNS record and TLS
+`staging-vma.votrixai.com`. Cloudflare provisions the DNS record and TLS
 certificate for a Custom Domain; do not create a competing CNAME first.
 
 ## Deploy production
@@ -64,10 +64,10 @@ URL. Do not bypass it with a direct `wrangler deploy` command.
 ## Verify after deployment
 
 ```bash
-curl -i https://staging-api.votrixai.com/health
-curl -i https://staging-api.votrixai.com/health/db
-curl -i https://api.votrixai.com/health
-curl -i https://api.votrixai.com/health/db
+curl -i https://staging-vma.votrixai.com/health
+curl -i https://staging-vma.votrixai.com/health/db
+curl -i https://vma.votrixai.com/health
+curl -i https://vma.votrixai.com/health/db
 ```
 
 Expected API responses include `Cache-Control: no-store`. Authenticated API
