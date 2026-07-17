@@ -60,7 +60,7 @@ done
 for trigger in vma-deploy-production vma-deploy-staging; do
   trigger_id=$(gcloud builds triggers describe "$trigger" \
     --project="$PROJECT_ID" \
-    --region="${VMA_TRIGGER_REGION:-global}" \
+    --region="${VMA_TRIGGER_REGION:-$REGION}" \
     --format="value(id)" 2>/dev/null || true)
   echo "[$trigger]"
   if [ -z "$trigger_id" ]; then

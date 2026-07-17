@@ -1,0 +1,24 @@
+name: "__TRIGGER_NAME__"
+filename: cloudbuild.yaml
+ignoredFiles:
+  - docs/**
+  - website/**
+  - sdks/**
+  - infra/cloudflare/**
+  - README.md
+  - CHANGELOG.md
+approvalConfig:
+  approvalRequired: __APPROVAL_REQUIRED__
+repositoryEventConfig:
+  repository: "__SOURCE_REPOSITORY__"
+  repositoryType: GITHUB
+  push:
+    branch: "__BRANCH_PATTERN__"
+serviceAccount: "__SERVICE_ACCOUNT__"
+substitutions:
+  _SERVICE_NAME: "__SERVICE_NAME__"
+  _SERVICE_CONFIG: "__SERVICE_CONFIG__"
+  _REPO: "__ARTIFACT_REPOSITORY__"
+  _REGION: "__REGION__"
+  _APP_ENV: "__APP_ENV__"
+  _SECRET_SUFFIX: "__SECRET_SUFFIX__"

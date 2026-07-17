@@ -283,7 +283,10 @@ path.
 
 ## Automatic deploys
 
-Connect the GitHub repository under **Cloud Build > Triggers**, then run:
+The checked-in setup uses the regional 2nd-gen Cloud Build repository
+`us-central1/votrix-github/votrix-managed-agents`. The GitHub App installation
+must grant access to `votrixai/votrix-managed-agents`. Once that one-time host
+connection and repository link are complete, run:
 
 ```bash
 ./scripts/gcloud/4-setup-triggers.sh <github-owner> <repo-name>
@@ -295,9 +298,28 @@ This creates:
   required by default
 - `vma-deploy-staging`: `staging` → staging, deployed automatically
 
-The setup command is idempotent: it updates either named trigger when it already
-exists and creates it otherwise. If production should intentionally deploy
-without a human approval gate, make that unsafe policy change explicit:
+The setup command is idempotent: it imports the complete desired trigger state,
+patching either named trigger when it already exists and creating it otherwise.
+This avoids the provider-specific `update github` path, which cannot reconcile a
+2nd-gen `repositoryEventConfig`. The script also fails closed when the connection
+is not `COMPLETE` or the linked repository points at a different GitHub remote.
+Override the defaults only when intentionally migrating the Cloud Build source:
+
+```bash
+VMA_TRIGGER_REGION=us-central1 \
+VMA_CLOUD_BUILD_CONNECTION=votrix-github \
+VMA_CLOUD_BUILD_REPOSITORY=votrix-managed-agents \
+  ./scripts/gcloud/4-setup-triggers.sh votrixai votrix-managed-agents
+```
+
+Regional triggers explicitly use the project's Compute Engine default service
+account, matching the existing backend triggers and the IAM grants established
+by `0-setup-registry.sh`. Set `VMA_CLOUD_BUILD_SERVICE_ACCOUNT` to another
+service-account email only after granting the equivalent Artifact Registry,
+Cloud Run, build, logging, and runtime-identity permissions.
+
+If production should intentionally deploy without a human approval gate, make
+that unsafe policy change explicit:
 
 ```bash
 VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL=false \

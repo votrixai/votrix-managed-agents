@@ -127,6 +127,9 @@ operator-provisioned Organization platform funding.
 - Cloud Build ignores Cloudflare-router-only changes as well as documentation
   and SDK-only changes, so an edge routing update cannot unnecessarily rebuild
   the API image or run database migrations.
+- Cloud Build deployment triggers now use the regional 2nd-gen GitHub
+  connection and verify both its completed installation state and exact linked
+  repository before creating or updating staging and production automation.
 - The one-binding-per-Session multiagent MVP now rejects mixed-provider rosters
   at Session creation. Keyless `fake` and `ollama` providers bind with source
   `none`.

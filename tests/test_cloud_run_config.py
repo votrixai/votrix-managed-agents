@@ -49,6 +49,7 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         "scripts/gcloud/2-deploy-production.sh",
         "scripts/gcloud/3-deploy-staging.sh",
         "scripts/gcloud/4-setup-triggers.sh",
+        "scripts/gcloud/trigger.yaml.in",
         "scripts/gcloud/5-allow-public.sh",
         "scripts/gcloud/6-bootstrap-operator.sh",
         "scripts/gcloud/7-run-acceptance.sh",
@@ -314,21 +315,39 @@ def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() 
 
 def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_changes() -> None:
     script = _read("scripts/gcloud/4-setup-triggers.sh")
+    template = _read("scripts/gcloud/trigger.yaml.in")
 
     assert '"^main$"' in script
     assert '"^staging$"' in script
     assert "^beta$" not in script
     assert "gcloud builds triggers describe" in script
-    assert "gcloud builds triggers update github" in script
-    assert "gcloud builds triggers create github" in script
-    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
-    assert 'PRODUCTION_APPROVAL_FLAG="--require-approval"' in script
-    assert "--no-require-approval" in script
+    assert "gcloud builds triggers import" in script
+    assert "gcloud builds triggers update github" not in script
+    assert "gcloud builds connections describe" in script
+    assert "gcloud builds repositories describe" in script
+    assert 'VMA_TRIGGER_REGION:-$REGION' in script
+    assert 'VMA_CLOUD_BUILD_CONNECTION:-votrix-github' in script
     assert (
-        'IGNORED_FILES="docs/**,website/**,sdks/**,infra/cloudflare/**,'
-        'README.md,CHANGELOG.md"' in script
+        "VMA_CLOUD_BUILD_SERVICE_ACCOUNT:-${PROJECT_NUMBER}-"
+        "compute@developer.gserviceaccount.com" in script
     )
-    assert script.count('--ignored-files="$IGNORED_FILES"') == 2
+    assert "__SOURCE_REPOSITORY__" in template
+    assert "__SERVICE_ACCOUNT__" in template
+    assert "repositoryEventConfig:" in template
+    assert "--repo-name" not in script
+    assert "--repo-owner" not in script
+    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
+    assert "PRODUCTION_APPROVAL_REQUIRED=true" in script
+    for ignored_path in (
+        "docs/**",
+        "website/**",
+        "sdks/**",
+        "infra/cloudflare/**",
+        "README.md",
+        "CHANGELOG.md",
+    ):
+        assert f"  - {ignored_path}" in template
+    assert 'VMA_TRIGGER_REGION:-$REGION' in _read("scripts/gcloud/status.sh")
 
 
 def test_public_access_helper_uses_the_manifest_invoker_check_mode() -> None:
