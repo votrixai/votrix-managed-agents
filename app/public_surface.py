@@ -12,6 +12,7 @@ PUBLIC_GA_RESOURCES = (
     "sessions",
     "files",
     "skills",
+    "usage",
     "vaults",
     "model_credentials",
     "model_providers",
@@ -63,6 +64,8 @@ def is_public_ga_path(path: str) -> bool:
     if normalized.startswith("/v1/skills"):
         return True
     if normalized.startswith("/v1/model_providers"):
+        return True
+    if normalized == "/v1/usage":
         return True
     return any(pattern.fullmatch(normalized) for pattern in _VAULT_GA_PATTERNS)
 

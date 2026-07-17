@@ -18,6 +18,7 @@ from ._constants import (
     MODEL_PROVIDERS_PATH,
     SESSIONS_PATH,
     SKILLS_PATH,
+    USAGE_PATH,
     VAULTS_PATH,
 )
 from ._models import (
@@ -33,9 +34,11 @@ from ._models import (
     SendEventsResult,
     Session,
     SessionEvent,
+    SessionFundingRequest,
     SessionResource,
     Skill,
     SkillVersion,
+    UsageEntry,
     Vault,
     VotrixModel,
 )
@@ -304,6 +307,7 @@ class SessionsResource:
         metadata: Mapping[str, Any] | _NotGiven = NOT_GIVEN,
         resources: Sequence[Mapping[str, Any]] | _NotGiven = NOT_GIVEN,
         vault_ids: Sequence[str] | _NotGiven = NOT_GIVEN,
+        funding: SessionFundingRequest | Mapping[str, Any] | None | _NotGiven = NOT_GIVEN,
         idempotency_key: str | None = None,
     ) -> Session:
         return await self._client.request(
@@ -317,6 +321,7 @@ class SessionsResource:
                 metadata=metadata,
                 resources=resources,
                 vault_ids=vault_ids,
+                funding=funding,
             ),
             headers={"Idempotency-Key": idempotency_key or str(uuid.uuid4())},
         )
@@ -383,6 +388,39 @@ class SessionsResource:
     async def delete(self, session_id: str) -> DeletedObject:
         return await self._client.request(
             "DELETE", f"{SESSIONS_PATH}/{_path_id(session_id)}", model=DeletedObject
+        )
+
+
+class UsageResource:
+    def __init__(self, client: AsyncVotrix) -> None:
+        self._client = client
+
+    def list(
+        self,
+        *,
+        limit: int = 50,
+        page: str | None = None,
+        session_id: str | None = None,
+        metric: str | None = None,
+        occurred_at_gt: str | datetime | None = None,
+        occurred_at_gte: str | datetime | None = None,
+        occurred_at_lt: str | datetime | None = None,
+        occurred_at_lte: str | datetime | None = None,
+    ) -> AsyncPaginator[UsageEntry]:
+        return _paginator(
+            self._client,
+            USAGE_PATH,
+            UsageEntry,
+            {
+                "limit": limit,
+                "page": page,
+                "session_id": session_id,
+                "metric": metric,
+                "occurred_at[gt]": occurred_at_gt,
+                "occurred_at[gte]": occurred_at_gte,
+                "occurred_at[lt]": occurred_at_lt,
+                "occurred_at[lte]": occurred_at_lte,
+            },
         )
 
 

@@ -162,6 +162,7 @@ class AsyncVotrix:
             ModelProvidersResource,
             SessionsResource,
             SkillsResource,
+            UsageResource,
             VaultsResource,
         )
 
@@ -171,6 +172,7 @@ class AsyncVotrix:
         self.sessions = SessionsResource(self)
         self.files = FilesResource(self)
         self.skills = SkillsResource(self)
+        self.usage = UsageResource(self)
         self.vaults = VaultsResource(self)
         self.model_providers = ModelProvidersResource(self)
 

@@ -74,7 +74,7 @@ A hosted or enterprise layer owns:
 - Remote sandbox fleet selection, isolation, images, lifecycle, snapshots, and regional placement.
 - A cross-process preview broker and distributed run locks.
 - Production queues, dead-letter handling, scheduler operation, webhook delivery, and retry SLOs.
-- Compliance controls, data residency, deletion verification, incident response, and customer support tooling.
+- Compliance controls, data residency, deletion verification, incident response, and Organization support tooling.
 
 These concerns should not become required foreign keys or imports in the Votrix core data model.
 
@@ -138,19 +138,24 @@ Prefer in-process provider injection over copying routers or placing an API-shap
 
 Agent resources select a provider/model. Built-in settings and
 `VMA_MODEL_PROVIDERS` control approved adapters, endpoints, routing policy,
-defaults, capabilities, and an internal Vault credential-slot name. They never
-contain a model API key, and VMA never reads model API keys from process
-environment. Each key-based Session must select a matching model Credential
-from its ordered `vault_ids`; absence returns `422` with code
-`model_credential_required`. Keyless `fake` and `ollama` adapters use source
-`none`.
+defaults, capabilities, and an internal provider credential-slot name. They
+never contain a model API key, and VMA never reads model API keys from process
+environment. At creation each key-based Session fixes either a matching model
+Credential from its ordered `vault_ids` or an exact Organization platform-key
+row, according to its explicit funding request and Organization policy. No
+billing account preserves the existing BYOK-only behavior. Keyless `fake` and
+`ollama` adapters use source `none`.
 
 The public model-Credential API is deliberately distinct from generic Vault
 Credentials used by MCP servers or other integrations. The provider ID maps to
 the private slot internally, so callers do not submit names such as
-`OPENROUTER_API_KEY`. One immutable model-Credential binding is stored per
-Session in the MVP, which requires a multiagent coordinator and its pinned
-subagents to use the same provider.
+`OPENROUTER_API_KEY`. One immutable funding binding is stored per Session in
+the MVP, which requires a multiagent coordinator and its pinned subagents to
+use the same provider.
+
+VMA does not infer an Organization's end users. The Organization backend maps
+its own users and billing records to VMA Session IDs. VMA records raw usage by
+Organization and Session only.
 
 A hosted product may route a tenant-supplied Vault credential through a
 tenant-aware model gateway, but must preserve provider capability checks,

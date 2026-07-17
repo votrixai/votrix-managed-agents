@@ -35,6 +35,7 @@ async def test_public_ga_openapi_contains_only_allowed_paths(public_ga_app) -> N
     assert "/v1/files" in paths
     assert "/v1/skills" in paths
     assert "/v1/api_keys" in paths
+    assert "/v1/usage" in paths
     assert paths
     assert all(is_public_ga_path(path) for path in paths)
 

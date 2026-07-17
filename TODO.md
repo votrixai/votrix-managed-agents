@@ -40,10 +40,11 @@ target, not a promise to clone every current or future Claude beta feature.
   with pagination, streaming, reconnecting SSE, retries, typed errors, API-key
   administration, and native model-Credential lifecycle.
 
-This is a BYOK/free public-beta baseline, not production HA or enterprise
-readiness. Multi-replica previews/Session ownership, Postgres RLS, Organization
-RBAC/SSO, enterprise audit export/retention, and webhook delivery remain open.
-Commercial billing is not a beta requirement.
+This is a BYOK-first public-beta baseline with optional operator-provisioned
+Organization platform keys, not production HA or enterprise readiness.
+Multi-replica previews/Session ownership, Postgres RLS, Organization RBAC/SSO,
+enterprise audit export/retention, and webhook delivery remain open. Platform
+funding does not yet constitute a commercial billing system.
 
 ### Native Python SDK and provider BYOK
 
@@ -200,14 +201,21 @@ cross-Session Memory Store source of truth.
   selected model provider's `api_key_env` without copying the key into E2B.
 - [x] Resolve the first matching model Credential once at Session creation,
   persist only its ID, and fail closed after revocation instead of changing the
-  Session's payer. The trusted caller expresses user/shared preference through
-  `vault_ids` ordering; VMA does not add a separate policy enum.
+  Session's funding source. The trusted caller expresses Vault preference
+  through `vault_ids` ordering.
+- [x] Add an optional native Session funding selector and Organization policy:
+  `byok`, `platform_credits`, or `organization_default`, with CMA-compatible
+  omission. Persist the exact Organization billing-account/provider-key row,
+  rotate secrets in place, and never re-run fallback during a later turn.
+- [x] Keep Organization platform keys encrypted, out of E2B, and mutable only
+  from a trusted operator CLI. VMA does not infer end users; the Organization
+  backend maps its own users and billing records to Session IDs.
 - [x] Complete the database-backed scoped API-key lifecycle and trusted
   bootstrap path required for the public beta.
 - [ ] Enforce Organization ownership for every relational row, R2 object, stream,
   checkpoint, work item, and E2B Sandbox binding.
 - [ ] Fix `votrix-backend` file/session ownership checks before using one shared
-  VMA service Organization for multiple Votrix customers.
+  VMA service Organization for multiple downstream Organizations.
 - [x] Add atomic per-Organization limits for requests/minute, active work, stored
   File/Skill bytes, and daily model tokens. Sandbox-count and sandbox-compute
   limits remain deferred.
@@ -230,6 +238,8 @@ background work, object storage, and external Sandbox lifecycle operations.
   ledger and enforce the daily token budget. A turn admitted below the limit
   may cross it; the full usage is retained and later turns are blocked until
   the UTC-day reset.
+- [x] Expose Organization-scoped raw usage facts with Session, metric, time,
+  and cursor filters without inventing downstream identity or monetary cost.
 - [x] Keep raw usage provider/model-attributed so operators can analyze BYOK
   cost without assuming Anthropic COGS. Priced billing is explicitly outside
   the free public-beta gate.
@@ -256,8 +266,10 @@ background work, object storage, and external Sandbox lifecycle operations.
 - Durable Claude-style multi-agent threads.
 - Native MCP tunnels, GitHub repository mounts, and Anthropic system Skills.
 - Daytona, Sandbox generations/snapshots, and automatic provider migration.
-- Paid billing: price books, monetary amounts, balances/credits, top-ups,
-  refunds, Stripe, invoices, plans, seats, taxes, and spend alerts.
+- Paid billing: price books, authoritative monetary amounts, credit grants,
+  atomic balance reservation/settlement, top-ups, refunds, Stripe, invoices,
+  plans, seats, taxes, and spend alerts. The current `platform_credits` selector
+  uses an upstream hard-limited Organization key and is not a prepaid ledger.
 - Byte-for-byte Claude compaction, undisclosed infrastructure behavior, or
   complete compatibility with future SDK endpoints that Votrix does not use.
 
@@ -343,7 +355,7 @@ identity and delegated resource namespaces remain deferred.
 
 ### Possible hosted identity path
 
-If all customer traffic passes through `votrix-backend`, consider accepting a
+If all Organization traffic passes through `votrix-backend`, consider accepting a
 short-lived backend-signed JWT containing `organization_id`, audience, scopes,
 and expiry instead of storing one long-lived backend API key per Organization.
 Direct Claude-compatible SDK users can continue to receive Organization-scoped API
@@ -351,7 +363,7 @@ keys. Do not trust an unsigned tenant identifier forwarded by another service.
 
 ### Explicitly deferred
 
-- Delegated project/customer resource namespaces.
+- Delegated project/account resource namespaces.
 - Organization membership and human-user RBAC.
 - Cross-namespace Organization administrator roles.
 - Commercial billing and advanced quota-policy ownership at the Organization

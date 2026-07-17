@@ -134,6 +134,8 @@ async def test_worker_records_fenced_model_usage_once(client, monkeypatch):
     assert entry.source_type == "session"
     assert entry.source_id == session_id
     assert entry.idempotency_key == f"model_tokens:{work_id}"
+    assert entry.data["funding_source"] == "none"
+    assert entry.data["accounting_phase"] == "postflight_actual"
     assert entry.dimensions == {
         "input_tokens": 30,
         "output_tokens": 12,

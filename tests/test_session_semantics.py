@@ -69,7 +69,7 @@ async def _wait_for_event_type(client, session_id: str, event_type: str):
 
 
 async def test_custom_tool_requires_action_and_resumes_from_result(client):
-    agent = await _create_agent(client, tools=[{"type": "custom", "name": "lookup_customer"}])
+    agent = await _create_agent(client, tools=[{"type": "custom", "name": "lookup_account"}])
     environment = await _create_environment(client)
     session = await _create_session(client, agent, environment)
 
@@ -83,7 +83,7 @@ async def test_custom_tool_requires_action_and_resumes_from_result(client):
     session = await _wait_for_stop_reason(client, session["id"], "requires_action")
     custom_tool_use_id = session["stop_reason"]["event_ids"][0]
     events = await _wait_for_event_type(client, session["id"], "agent.custom_tool_use")
-    assert next(event for event in events if event["id"] == custom_tool_use_id)["name"] == "lookup_customer"
+    assert next(event for event in events if event["id"] == custom_tool_use_id)["name"] == "lookup_account"
 
     response = await client.post(
         f"/v1/sessions/{session['id']}/events",
@@ -535,7 +535,7 @@ async def test_model_byok_uses_first_matching_vault_and_fails_closed_on_revocati
 
     vaults = []
     credentials = []
-    for display_name, secret in (("Personal BYOK", "personal-key"), ("Customer Shared", "shared-key")):
+    for display_name, secret in (("Personal BYOK", "personal-key"), ("Organization Shared", "shared-key")):
         response = await client.post(
             "/v1/vaults",
             headers=TEST_HEADERS,
@@ -719,7 +719,7 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     response = await client.post(
         "/v1/memory_stores",
         headers=TEST_HEADERS,
-        json={"name": "Customer context"},
+        json={"name": "Account context"},
     )
     assert response.status_code == 201, response.text
     memory_store = response.json()
@@ -727,7 +727,7 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     response = await client.post(
         f"/v1/memory_stores/{memory_store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "/customers/acme", "content": "ACME prefers email."},
+        json={"path": "/accounts/acme", "content": "ACME prefers email."},
     )
     assert response.status_code == 201, response.text
 
@@ -744,7 +744,7 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
                     "type": "memory_store",
                     "memory_store_id": memory_store["id"],
                     "access": "read_only",
-                    "instructions": "Use customer preferences.",
+                    "instructions": "Use account preferences.",
                 }
             ],
         },
@@ -755,7 +755,7 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     response = await client.post(
         f"/v1/sessions/{session['id']}/events",
         headers=TEST_HEADERS,
-        json={"events": [{"type": "user.message", "content": "summarize customer context"}]},
+        json={"events": [{"type": "user.message", "content": "summarize account context"}]},
     )
     assert response.status_code == 200, response.text
 
@@ -768,7 +768,7 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     run_state = response.json()["run_state"]
     memory_context = run_state["memory_context"]["memory_stores"][0]
     assert memory_context["memory_store_id"] == memory_store["id"]
-    assert memory_context["instructions"] == "Use customer preferences."
+    assert memory_context["instructions"] == "Use account preferences."
     assert memory_context["memories"][0]["content"] == "ACME prefers email."
 
 
@@ -923,8 +923,8 @@ async def test_define_outcome_emits_evaluation_span_and_session_summary(client):
             "events": [
                 {
                     "type": "user.define_outcome",
-                    "description": "Produce a customer-ready summary.",
-                    "rubric": {"type": "text", "content": "Must include the customer."},
+                    "description": "Produce an account-ready summary.",
+                    "rubric": {"type": "text", "content": "Must include the account."},
                     "max_iterations": 2,
                 }
             ]
@@ -934,7 +934,7 @@ async def test_define_outcome_emits_evaluation_span_and_session_summary(client):
 
     events = await _wait_for_event_type(client, session["id"], "span.outcome_evaluation_end")
     outcome_event = next(event for event in events if event["type"] == "span.outcome_evaluation_end")
-    assert outcome_event["outcome"]["objective"] == "Produce a customer-ready summary."
+    assert outcome_event["outcome"]["objective"] == "Produce an account-ready summary."
     assert outcome_event["outcome"]["max_iterations"] == 2
     assert outcome_event["result"]["type"] == "deterministic_local_grader"
     assert outcome_event["result"]["passed"] is True

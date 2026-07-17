@@ -1023,14 +1023,14 @@ async def test_anthropic_sdk_memory_stores_contract():
         content = "ACME prefers email."
         memory = await client.beta.memory_stores.memories.create(
             store.id,
-            path="/customers/acme.md",
+            path="/accounts/acme.md",
             content=content,
             view="full",
             **BETA_KWARG,
         )
         assert memory.type == "memory"
         assert memory.memory_store_id == store.id
-        assert memory.path == "/customers/acme.md"
+        assert memory.path == "/accounts/acme.md"
         assert memory.content == content
         assert memory.content_sha256 == hashlib.sha256(content.encode()).hexdigest()
         assert memory.memory_version_id.startswith("memver_")
@@ -1070,7 +1070,7 @@ async def test_anthropic_sdk_memory_stores_contract():
             item
             async for item in client.beta.memory_stores.memories.list(
                 store.id,
-                path_prefix="/customers/",
+                path_prefix="/accounts/",
                 view="full",
                 limit=20,
                 **BETA_KWARG,
@@ -1164,7 +1164,7 @@ async def test_anthropic_sdk_memory_stores_contract():
         assert post_delete_versions[0].content is None
         assert post_delete_versions[0].content_sha256 is None
         assert post_delete_versions[0].content_size_bytes is None
-        assert post_delete_versions[0].path == "/customers/acme.md"
+        assert post_delete_versions[0].path == "/accounts/acme.md"
         retrieved_deleted_version = await client.beta.memory_stores.memory_versions.retrieve(
             post_delete_versions[0].id,
             memory_store_id=store.id,

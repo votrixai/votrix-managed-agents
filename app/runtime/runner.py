@@ -16,16 +16,9 @@ from app.db.queries import sessions as sessions_q
 from app.governance import QuotaExceededError
 from app.governance_runtime import governance_service
 from app.runtime.agent_resolution import effective_agent_version
+from app.runtime.credential_broker import session_credential_broker
 from app.runtime.contracts import EffectiveAgentVersion, RuntimeEventEmitter, RuntimePreviewEmitter, RuntimeResult
-from app.runtime.model_credentials import (
-    MODEL_CREDENTIAL_BINDING_KEY,
-    ModelCredentialUnavailableError,
-    binding_from_status_details,
-    load_bound_model_credential,
-    resolve_model_credential_binding,
-    status_details_with_binding,
-    validate_binding_for_model,
-)
+from app.runtime.model_credentials import binding_from_status_details
 from app.runtime.model_inputs import referenced_managed_file_ids
 from app.runtime.providers import runtime_provider_id
 from app.runtime.sandbox import sandbox_plan_from_environment
@@ -388,6 +381,8 @@ async def _record_model_usage_after_result(
         elif session.status != SESSION_RUNNING:
             return False
 
+        funding_binding = binding_from_status_details(session.status_details)
+
         model_config = dict(effective_version.model or {})
         provider = runtime_provider_id(
             model_config,
@@ -412,6 +407,11 @@ async def _record_model_usage_after_result(
             data={
                 "work_id": work_lease.work_id if work_lease is not None else None,
                 "lease_generation": work_lease.generation if work_lease is not None else None,
+                "funding_source": (
+                    funding_binding.get("source")
+                    if funding_binding is not None
+                    else None
+                ),
             },
         )
         await db.commit()
@@ -911,6 +911,7 @@ async def _runtime_context_for_session(
     *,
     session_file_content_ids: set[str] | frozenset[str] | None = None,
     prefer_persisted_sandbox_inputs: bool = False,
+    include_run_secrets: bool = True,
 ) -> dict[str, Any]:
     """Resolve the run-scoped control-plane context.
 
@@ -919,7 +920,9 @@ async def _runtime_context_for_session(
     filesystem. Create-time provisioning, append fallback, and state backends
     leave it false and retain complete materialization. In the persisted case,
     ``session_file_content_ids`` selects only the immutable files whose bytes
-    the current model request needs.
+    the current model request needs. Sandbox materialization sets
+    ``include_run_secrets`` false because model and MCP credentials are not
+    sandbox inputs.
     """
     session_resources = await res_q.list_resources(
         db,
@@ -970,18 +973,36 @@ async def _runtime_context_for_session(
                 "memories": [_memory_context_item(memory) for memory in memories if not (memory.data or {}).get("redacted")],
             }
         )
-    credentials = await _vault_credentials_for_session(db, session)
-    model_credential = await _model_credential_for_session(db, session, version)
+    credentials = (
+        await _vault_credentials_for_session(db, session)
+        if include_run_secrets
+        else []
+    )
     runtime_context = {
         "organization_id": session.organization_id,
         "session_id": session.id,
         "checkpoint_thread_id": session.runtime_thread_id,
         "previous_run_state": dict(session.run_state or {}),
         "memory_stores": memory_stores,
-        "provider_secrets": _provider_secrets_from_credentials(
-            [model_credential] if model_credential is not None else []
+        "provider_secrets": (
+            await session_credential_broker.resolve_provider_secrets(
+                db,
+                session=session,
+                version=version,
+            )
+            if include_run_secrets
+            else {}
         ),
-        "mcp_auth": await _mcp_auth_context_for_session(db, session, version, credentials=credentials),
+        "mcp_auth": (
+            await _mcp_auth_context_for_session(
+                db,
+                session,
+                version,
+                credentials=credentials,
+            )
+            if include_run_secrets
+            else {"servers": [], "errors": []}
+        ),
         "session_resource_types": sorted(
             {
                 str((resource.data or {}).get("type") or "")
@@ -1092,33 +1113,6 @@ def _validate_descriptor_session_files(
         )
 
 
-async def _model_credential_for_session(db, session, version: EffectiveAgentVersion):
-    details = dict(session.status_details or {})
-    binding = binding_from_status_details(details)
-    if binding is None:
-        if MODEL_CREDENTIAL_BINDING_KEY in details:
-            raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
-        # Compatibility for Sessions created before durable bindings existed:
-        # select once on their first runtime turn, then persist the same contract
-        # used by newly created Sessions.
-        binding = await resolve_model_credential_binding(
-            db,
-            model=version.model,
-            runtime=version.runtime,
-            vault_ids=details.get("vault_ids") or [],
-            organization_id=session.organization_id,
-        )
-        details = status_details_with_binding(details, binding)
-        await sessions_q.update_session(db, session, status_details=details)
-
-    validate_binding_for_model(binding, model=version.model, runtime=version.runtime)
-    return await load_bound_model_credential(
-        db,
-        binding=binding,
-        organization_id=session.organization_id,
-    )
-
-
 async def _vault_credentials_for_session(db, session) -> list[Any]:
     credentials: list[Any] = []
     for vault_id in (session.status_details or {}).get("vault_ids") or []:
@@ -1143,19 +1137,6 @@ async def _vault_credentials_for_session(db, session) -> list[Any]:
     return credentials
 
 
-def _provider_secrets_from_credentials(credentials: list[Any]) -> dict[str, str]:
-    secrets: dict[str, str] = {}
-    for credential in credentials:
-        auth = decrypt_secret_values(dict((credential.data or {}).get("auth") or {}))
-        if auth.get("type") != "environment_variable":
-            continue
-        name = str(auth.get("secret_name") or "").strip()
-        value = auth.get("secret_value")
-        if name and isinstance(value, str) and value:
-            secrets.setdefault(name, value)
-    return secrets
-
-
 async def _mcp_auth_context_for_session(
     db,
     session,
@@ -1171,7 +1152,10 @@ async def _mcp_auth_context_for_session(
 
     by_url: dict[str, Any] = {}
     for credential in credentials:
-        auth = decrypt_secret_values(dict((credential.data or {}).get("auth") or {}))
+        stored_auth = dict((credential.data or {}).get("auth") or {})
+        if not _normalized_mcp_url(stored_auth.get("mcp_server_url")):
+            continue
+        auth = decrypt_secret_values(stored_auth)
         if not isinstance(auth, dict):
             continue
         url = _normalized_mcp_url(auth.get("mcp_server_url"))

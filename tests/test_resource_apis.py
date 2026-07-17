@@ -434,7 +434,7 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(
         "/v1/memory_stores",
         headers=TEST_HEADERS,
-        json={"name": "Customer memory"},
+        json={"name": "Organization memory"},
     )
     assert response.status_code == 201, response.text
     store = response.json()
@@ -442,12 +442,12 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": ["customers", "acme"], "content": "ACME prefers email."},
+        json={"path": ["accounts", "acme"], "content": "ACME prefers email."},
     )
     assert response.status_code == 201, response.text
     memory = response.json()
     assert memory["type"] == "memory"
-    assert memory["path"] == "/customers/acme"
+    assert memory["path"] == "/accounts/acme"
     assert memory["content_sha256"]
 
     response = await client.post(

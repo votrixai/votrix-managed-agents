@@ -177,7 +177,7 @@ def test_persisted_input_descriptor_preserves_existing_digest_and_manifest():
     bundle = SandboxInputBundle(
         files=(
             SandboxInputFile(
-                path="/mnt/memory/customer/memory.md",
+                path="/mnt/memory/account/memory.md",
                 content=b"mutable seed",
                 read_only=False,
                 source="memory_seed",
@@ -190,8 +190,8 @@ def test_persisted_input_descriptor_preserves_existing_digest_and_manifest():
             ),
         ),
         skill_sources=("/skills/custom/research/v1/",),
-        memory_sources=("/mnt/memory/customer/AGENTS.md",),
-        mutable_roots=("/mnt/memory/customer",),
+        memory_sources=("/mnt/memory/account/AGENTS.md",),
+        mutable_roots=("/mnt/memory/account",),
     )
 
     restored = SandboxInputDescriptor.from_dict(bundle.descriptor.to_dict())
@@ -199,7 +199,7 @@ def test_persisted_input_descriptor_preserves_existing_digest_and_manifest():
     assert restored == bundle.descriptor
     assert restored.input_digest == bundle.input_digest
     assert restored.input_digest == (
-        "sha256:083f9ee7c991dd6ad6a7307445a93997c3fbab79f0da245a6f13065c6339f006"
+        "sha256:37ee3cbfa6c980cea51d35b593c2306f5922e69953c52fd2df2fcd32cb3bf17b"
     )
     assert restored.immutable_manifest == bundle.immutable_manifest
     assert restored.total_size_bytes == len(b"immutable input") + len(b"mutable seed")
@@ -210,7 +210,7 @@ def test_modern_binding_derives_sources_from_validated_descriptor(monkeypatch):
     descriptor = SandboxInputBundle(
         files=(
             SandboxInputFile(
-                path="/mnt/memory/customer/AGENTS.md",
+                path="/mnt/memory/account/AGENTS.md",
                 content=b"memory index",
                 read_only=False,
                 source="memory_seed",
@@ -229,8 +229,8 @@ def test_modern_binding_derives_sources_from_validated_descriptor(monkeypatch):
             ),
         ),
         skill_sources=("/skills/custom/research/v1/",),
-        memory_sources=("/mnt/memory/customer/AGENTS.md",),
-        mutable_roots=("/mnt/memory/customer",),
+        memory_sources=("/mnt/memory/account/AGENTS.md",),
+        mutable_roots=("/mnt/memory/account",),
     ).descriptor
     policy = sandbox_policy_from_environment(
         {"type": "cloud", "networking": {"type": "none"}}
@@ -243,8 +243,8 @@ def test_modern_binding_derives_sources_from_validated_descriptor(monkeypatch):
         "input_digest": descriptor.input_digest,
         "immutable_manifest": descriptor.immutable_manifest,
         "skill_sources": ["/skills/custom/research/v1/"],
-        "memory_sources": ["/mnt/memory/customer/AGENTS.md"],
-        "mutable_roots": ["/workspace", "/mnt/session/outputs", "/mnt/memory/customer"],
+        "memory_sources": ["/mnt/memory/account/AGENTS.md"],
+        "mutable_roots": ["/workspace", "/mnt/session/outputs", "/mnt/memory/account"],
     }
 
     restored = persisted_input_descriptor_from_config(config, policy=policy)

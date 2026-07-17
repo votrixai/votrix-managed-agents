@@ -144,12 +144,12 @@ async def test_backend_provisioning_wire_contract():
                 },
                 {
                     "type": "custom",
-                    "name": "lookup_customer",
-                    "description": "Look up a customer.",
+                    "name": "lookup_account",
+                    "description": "Look up an account.",
                     "input_schema": {
                         "type": "object",
-                        "properties": {"customer_id": {"type": "string"}},
-                        "required": ["customer_id"],
+                        "properties": {"account_id": {"type": "string"}},
+                        "required": ["account_id"],
                     },
                 },
             ],
@@ -201,12 +201,12 @@ async def test_backend_session_file_event_and_sse_parser_wire_contract():
             tools=[
                 {
                     "type": "custom",
-                    "name": "lookup_customer",
-                    "description": "Look up a customer.",
+                    "name": "lookup_account",
+                    "description": "Look up an account.",
                     "input_schema": {
                         "type": "object",
-                        "properties": {"customer_id": {"type": "string"}},
-                        "required": ["customer_id"],
+                        "properties": {"account_id": {"type": "string"}},
+                        "required": ["account_id"],
                     },
                 }
             ],
@@ -229,7 +229,7 @@ async def test_backend_session_file_event_and_sse_parser_wire_contract():
                     "type": "memory_store",
                     "memory_store_id": memory_store.id,
                     "access": "read_write",
-                    "instructions": "Retain customer preferences.",
+                    "instructions": "Retain account preferences.",
                 }
             ],
             **BETA_KWARG,
@@ -339,7 +339,7 @@ async def test_backend_session_file_event_and_sse_parser_wire_contract():
                 {
                     "type": "user.custom_tool_result",
                     "custom_tool_use_id": custom_tool_use_id,
-                    "content": [{"type": "text", "text": "customer found"}],
+                    "content": [{"type": "text", "text": "account found"}],
                 }
             ],
             extra_headers={"Idempotency-Key": "consumer-contract-tool-result-1"},

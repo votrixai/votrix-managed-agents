@@ -7,7 +7,7 @@ VMA has two deliberately separate Python client contracts:
 
 | Client | Purpose |
 | --- | --- |
-| `from votrix import AsyncVotrix` | Recommended async client for VMA resources, model-provider discovery, and provider-based BYOK. |
+| `from votrix import AsyncVotrix` | Recommended async client for VMA resources, model-provider discovery, Session funding, and raw usage. |
 | `from votrix import Votrix` | Synchronous GA wrapper for API keys, model providers, Vaults, and native model Credentials. |
 | `from anthropic import AsyncAnthropic` | Compatibility client for the overlapping Claude Managed Agents wire surface. |
 
@@ -101,11 +101,11 @@ Only create and rotate responses contain the one-time plaintext key, wrapped
 as `SecretStr`. List, retrieve, and revoke return safe metadata only. The SDK
 does not expose the deferred Memory Store or generic Vault Credential APIs.
 
-## Provider discovery and end-user BYOK
+## Provider discovery and Organization BYOK
 
-Applications should never ask an end user to enter an internal name such as
-`OPENROUTER_API_KEY`. Discover the public provider IDs from VMA, create a Vault
-for the user, and submit the provider ID with the write-only key:
+Applications should never expose an internal name such as
+`OPENROUTER_API_KEY`. Discover the public provider IDs from VMA, create an
+Organization Vault, and submit the provider ID with the write-only key:
 
 ```python
 async with AsyncVotrix(
@@ -145,15 +145,15 @@ Model Credentials use the explicit `vaults.model_credentials` surface shown
 above. Generic Vault Credentials remain for MCP servers and other integrations;
 callers do not classify a raw generic secret by inventing a string type.
 
-When creating a Session, the trusted customer backend expresses preference only
-through Vault order:
+When creating a BYOK Session, the trusted Organization backend expresses Vault
+preference through order:
 
 ```python
 session = await client.sessions.create(
     agent=agent.id,
     environment_id=environment.id,
-    vault_ids=[end_user_vault_id, customer_shared_vault_id],
-    idempotency_key=customer_operation_id,
+    vault_ids=[end_user_vault_id, organization_shared_vault_id],
+    idempotency_key=organization_operation_id,
 )
 ```
 
@@ -165,10 +165,46 @@ specific Credential ID; rotation of the same Credential takes effect on a
 later turn, while archive or deletion fails closed. VMA never silently changes
 the payer inside an existing Session. If none of the submitted `vault_ids`
 contains a Credential for the Session model provider, Session creation returns
-HTTP `422` with code `model_credential_required`. VMA does not provide or fall
-back to a platform model key.
+HTTP `422` with code `model_credential_required` under a BYOK-only policy.
 
-The current multiagent MVP has one model-Credential binding per Session, so the
+The native SDK also supports an explicit Organization funding source:
+
+```python
+from votrix import SessionFundingRequest
+
+session = await client.sessions.create(
+    agent=agent.id,
+    environment_id=environment.id,
+    funding=SessionFundingRequest(type="platform_credits"),
+)
+```
+
+Valid values are `byok`, `platform_credits`, and `organization_default`.
+Omitting `funding` preserves the CMA-compatible request and behaves as
+`organization_default`; an Organization with no billing account remains
+BYOK-only. The default policy is evaluated once at Session creation. The
+selected Vault Credential or exact platform-provider key row stays fixed for
+the Session, so revocation fails closed instead of changing funding sources.
+Platform funding here means an operator-provisioned provider key; it is not a
+prepaid monetary balance or an invoice claim.
+
+Organization backends can read the raw usage facts they need for their own
+Session mapping and downstream accounting:
+
+```python
+page = await client.usage.list(
+    session_id=session.id,
+    metric="model_tokens",
+    limit=100,
+)
+for fact in page.data:
+    print(fact.quantity, fact.unit, fact.provider, fact.model)
+```
+
+The API also supports opaque pagination and time filters. It returns recorded
+provider facts only; it does not infer an end user or fabricate monetary cost.
+
+The current multiagent MVP has one funding binding per Session, so the
 coordinator and every pinned subagent must use the same provider. Create
 separate Sessions when different providers are required.
 

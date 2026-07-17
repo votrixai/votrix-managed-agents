@@ -5,13 +5,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Agent, AgentVersion, Environment, ManagedSession
+from app.db.queries import session_funding_bindings as funding_q
 from app.ids import new_id
 from app.runtime.model_credentials import (
     MODEL_CREDENTIAL_BINDING_KEY,
     ModelCredentialRequiredError,
-    resolve_model_credential_binding,
 )
-from app.runtime.providers import runtime_provider_id
+from app.runtime.funding import (
+    SessionFundingUnavailableError,
+    resolve_session_funding_binding,
+)
+from app.runtime.providers import runtime_model_id, runtime_provider_id
 from app.organization import resolve_organization_id
 
 
@@ -25,6 +29,7 @@ async def create_session(
     metadata: dict[str, Any] | None = None,
     resources: list[dict[str, Any]] | None = None,
     vault_ids: list[str] | None = None,
+    funding_type: str | None = None,
     agent_config: dict[str, Any] | None = None,
     organization_id: str | None = None,
 ) -> ManagedSession:
@@ -58,13 +63,15 @@ async def create_session(
         effective_model=effective_model,
         organization_id=scoped_organization_id,
     )
-    status_details[MODEL_CREDENTIAL_BINDING_KEY] = await resolve_model_credential_binding(
+    model_credential_binding = await resolve_session_funding_binding(
         db,
         model=effective_model,
         runtime=version_record.runtime,
         vault_ids=vault_ids,
+        funding_type=funding_type,
         organization_id=scoped_organization_id,
     )
+    status_details[MODEL_CREDENTIAL_BINDING_KEY] = model_credential_binding
     session = ManagedSession(
         id=new_id("sess"),
         runtime_thread_id=new_id("thread"),
@@ -80,6 +87,33 @@ async def create_session(
     )
     db.add(session)
     await db.flush()
+    try:
+        await funding_q.create_session_funding_binding(
+            db,
+            session_id=session.id,
+            source=str(model_credential_binding.get("source") or ""),
+            provider=runtime_provider_id(
+                effective_model,
+                runtime=version_record.runtime,
+            ),
+            model_id=runtime_model_id(
+                effective_model,
+                runtime=version_record.runtime,
+            ),
+            vault_id=model_credential_binding.get("vault_id"),
+            model_credential_id=model_credential_binding.get("credential_id"),
+            organization_billing_account_id=model_credential_binding.get(
+                "organization_billing_account_id"
+            ),
+            organization_provider_key_binding_id=model_credential_binding.get(
+                "organization_provider_key_binding_id"
+            ),
+            organization_id=scoped_organization_id,
+        )
+    except funding_q.SessionFundingBindingResourceError as exc:
+        raise SessionFundingUnavailableError(
+            "The selected Session funding source became unavailable"
+        ) from exc
     return session
 
 

@@ -95,7 +95,7 @@ If a context manager does not fit the application's lifetime, call
 ## Managed Agents resources
 
 The public-beta client exposes API keys, agents, environments, sessions, files,
-skills, Vaults, model Credentials, and model providers as typed async
+skills, Vaults, model Credentials, model providers, and raw usage as typed async
 resources:
 
 ```python
@@ -103,7 +103,7 @@ async with AsyncVotrix() as client:
     agent = await client.agents.create(
         name="support-agent",
         model={"id": "deepseek/deepseek-v4-pro", "provider": "openrouter"},
-        system="Help the customer clearly and concisely.",
+        system="Help the end user clearly and concisely.",
     )
 
     environment = await client.environments.create(
@@ -114,9 +114,16 @@ async with AsyncVotrix() as client:
     session = await client.sessions.create(
         agent=agent.id,
         environment_id=environment.id,
-        vault_ids=["vault_end_user", "vault_customer"],
+        vault_ids=["vault_end_user", "vault_organization"],
     )
+
+    usage = await client.usage.list(session_id=session.id, metric="model_tokens")
 ```
+
+Native callers may pass `SessionFundingRequest(type="platform_credits")` to
+`sessions.create`; the other values are `byok` and `organization_default`.
+Omission preserves the CMA-compatible request shape and uses the Organization
+default. Funding selection is fixed for the lifetime of the Session.
 
 Session creation and event submission automatically send a fresh
 `Idempotency-Key`, which makes the SDK's retry policy safe. Pass

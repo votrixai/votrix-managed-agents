@@ -4,8 +4,8 @@ The public API stays compatible with Claude Managed Agents: callers provide an
 ordered ``vault_ids`` list.  VMA resolves the first matching model credential
 once and persists only its resource ID.  Runtime turns re-read that exact row so
 rotation is immediate, while archive/delete revocation fails closed instead of
-silently switching the payer. Providers that require an API key never fall back
-to a service-owned credential.
+silently switching the funding source. Organization platform funding is a
+separate explicit source and is never selected during a later runtime turn.
 """
 
 from __future__ import annotations
@@ -100,9 +100,7 @@ async def load_bound_model_credential(
     if binding.get("source") == "none":
         return None
     if binding.get("source") != "vault":
-        raise ModelCredentialUnavailableError(
-            "Server-provided model credentials are disabled; create a new Session with a Organization Vault credential"
-        )
+        raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
 
     credential_id = str(binding.get("credential_id") or "")
     vault_id = str(binding.get("vault_id") or "")
@@ -160,23 +158,49 @@ def validate_binding_for_model(
     """Reject stale/corrupt bindings instead of silently changing auth source."""
     expected_provider = runtime_provider_id(model, runtime=runtime)
     expected_secret_name = runtime_provider_api_key_env(model, runtime=runtime)
-    if binding.get("source") not in {"none", "vault"}:
+    source = binding.get("source")
+    if source not in {"none", "vault", "platform"}:
         if binding.get("source") == "server":
             raise ModelCredentialUnavailableError(
-                "Server-provided model credentials are disabled; create a new Session with a Organization Vault credential"
+                "Server-provided model credentials from the legacy source are disabled; create a new Session"
             )
         raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
     if binding.get("secret_name") != expected_secret_name:
         raise ModelCredentialUnavailableError(
             "The Session model credential no longer matches its provider configuration; create a new Session"
         )
+    if (source == "none") != (expected_secret_name is None):
+        raise ModelCredentialUnavailableError(
+            "The Session model credential binding is invalid"
+        )
     bound_provider = binding.get("model_provider")
     if bound_provider is not None and bound_provider != expected_provider:
         raise ModelCredentialUnavailableError(
             "The Session model credential no longer matches its provider configuration; create a new Session"
         )
-    if binding.get("source") == "none" and (
-        binding.get("credential_id") is not None or binding.get("vault_id") is not None
+    vault_coordinates = (
+        binding.get("credential_id"),
+        binding.get("vault_id"),
+    )
+    platform_coordinates = (
+        binding.get("organization_billing_account_id"),
+        binding.get("organization_provider_key_binding_id"),
+    )
+    if source == "none" and any(
+        coordinate is not None
+        for coordinate in (*vault_coordinates, *platform_coordinates)
+    ):
+        raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
+    if source == "vault" and (
+        not all(isinstance(value, str) and value for value in vault_coordinates)
+        or any(value is not None for value in platform_coordinates)
+    ):
+        raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
+    if source == "platform" and (
+        any(value is not None for value in vault_coordinates)
+        or not all(
+            isinstance(value, str) and value for value in platform_coordinates
+        )
     ):
         raise ModelCredentialUnavailableError("The Session model credential binding is invalid")
 

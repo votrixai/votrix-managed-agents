@@ -212,7 +212,12 @@ async def build_session_input_bundle(db: AsyncSession, session, agent_version) -
     from app.runtime.runner import _runtime_context_for_session
 
     effective_version = effective_agent_version(agent_version, session.status_details)
-    runtime_context = await _runtime_context_for_session(db, session, effective_version)
+    runtime_context = await _runtime_context_for_session(
+        db,
+        session,
+        effective_version,
+        include_run_secrets=False,
+    )
     try:
         bundle = sandbox_input_bundle(
             runtime_context,

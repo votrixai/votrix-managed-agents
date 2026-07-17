@@ -52,6 +52,7 @@ from app.models.sessions import (
 )
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.runtime.agent_resolution import effective_agent_version, resolve_session_agent_config
+from app.runtime.funding import SessionFundingUnavailableError
 from app.runtime.model_credentials import ModelCredentialRequiredError
 from app.runtime.sandbox_lifecycle import (
     SandboxInputMismatchError,
@@ -219,8 +220,21 @@ async def create_session(
             metadata=normalize_metadata(body.metadata),
             resources=[],
             vault_ids=vault_ids,
+            funding_type=body.funding.type if body.funding is not None else None,
             agent_config=agent_config,
         )
+    except SessionFundingUnavailableError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "session_funding_unavailable",
+                    "message": str(exc),
+                },
+            },
+        ) from exc
     except ModelCredentialRequiredError as exc:
         raise HTTPException(
             status_code=422,

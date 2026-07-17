@@ -5,7 +5,12 @@ import json
 import httpx
 import pytest
 
-from votrix import AsyncVotrix
+from votrix import (
+    AsyncVotrix,
+    SessionFundingRequest,
+    UsageEntry,
+    UsagePage,
+)
 
 
 def make_client(handler):
@@ -111,6 +116,99 @@ async def test_provider_catalog_hides_internal_secret_mapping():
     dumped = provider.model_dump()
     assert "api_key_env" not in dumped
     assert "secret_name" not in dumped
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_usage_list_serializes_filters_and_parses_opaque_pages():
+    queries: list[dict[str, str]] = []
+
+    def usage_payload(entry_id: str, quantity: int) -> dict:
+        return {
+            "id": entry_id,
+            "type": "usage",
+            "organization_id": "org_sdk",
+            "metric": "model_tokens",
+            "quantity": quantity,
+            "unit": "token",
+            "provider": "openrouter",
+            "model": "deepseek/deepseek-v4-pro",
+            "source_type": "session",
+            "source_id": "sess_sdk",
+            "dimensions": {"input_tokens": quantity},
+            "data": {"accounting_phase": "postflight_actual"},
+            "occurred_at": "2026-07-16T14:00:00Z",
+            "future_usage_field": "preserved",
+        }
+
+    def handler(request: httpx.Request):
+        assert request.url.path == "/v1/usage"
+        query = dict(request.url.params)
+        queries.append(query)
+        if query.get("page") is None:
+            return httpx.Response(
+                200,
+                json={
+                    "data": [usage_payload("usage_2", 20)],
+                    "has_more": True,
+                    "first_id": "usage_2",
+                    "last_id": "usage_2",
+                    "next_page": "usage_opaque_next",
+                },
+            )
+        assert query["page"] == "usage_opaque_next"
+        return httpx.Response(
+            200,
+            json={
+                "data": [usage_payload("usage_1", 10)],
+                "has_more": False,
+                "first_id": "usage_1",
+                "last_id": "usage_1",
+                "next_page": None,
+            },
+        )
+
+    sdk, http_client = make_client(handler)
+    paginator = sdk.usage.list(
+        limit=1,
+        session_id="sess_sdk",
+        metric="model_tokens",
+        occurred_at_gt="2026-07-16T10:00:00Z",
+        occurred_at_gte="2026-07-16T11:00:00Z",
+        occurred_at_lt="2026-07-17T00:00:00Z",
+        occurred_at_lte="2026-07-17T01:00:00Z",
+    )
+    page: UsagePage = await paginator
+    assert isinstance(page.data[0], UsageEntry)
+    assert page.data[0].quantity == 20
+    assert page.data[0].future_usage_field == "preserved"
+
+    next_page = await page.get_next_page()
+    assert next_page is not None
+    assert next_page.data[0].id == "usage_1"
+    assert next_page.data[0].occurred_at.isoformat() == "2026-07-16T14:00:00+00:00"
+    assert await next_page.get_next_page() is None
+    assert queries == [
+        {
+            "limit": "1",
+            "session_id": "sess_sdk",
+            "metric": "model_tokens",
+            "occurred_at[gt]": "2026-07-16T10:00:00Z",
+            "occurred_at[gte]": "2026-07-16T11:00:00Z",
+            "occurred_at[lt]": "2026-07-17T00:00:00Z",
+            "occurred_at[lte]": "2026-07-17T01:00:00Z",
+        },
+        {
+            "limit": "1",
+            "session_id": "sess_sdk",
+            "metric": "model_tokens",
+            "occurred_at[gt]": "2026-07-16T10:00:00Z",
+            "occurred_at[gte]": "2026-07-16T11:00:00Z",
+            "occurred_at[lt]": "2026-07-17T00:00:00Z",
+            "occurred_at[lte]": "2026-07-17T01:00:00Z",
+            "page": "usage_opaque_next",
+        },
+    ]
     await http_client.aclose()
 
 
@@ -505,6 +603,7 @@ async def test_public_ga_client_surface_excludes_deferred_resources():
         "sessions",
         "files",
         "skills",
+        "usage",
         "vaults",
         "model_providers",
     } <= set(vars(sdk))
@@ -535,6 +634,34 @@ async def test_session_create_accepts_explicit_idempotency_key():
     assert seen == {
         "key": "create-session-42",
         "body": {"agent": "agent_1", "environment_id": "environment_1"},
+    }
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "funding_type",
+    ["organization_default", "byok", "platform_credits"],
+)
+async def test_session_create_serializes_native_funding_request(funding_type: str):
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "session_1", "type": "session"})
+
+    sdk, http_client = make_client(handler)
+    session = await sdk.sessions.create(
+        agent="agent_1",
+        environment_id="environment_1",
+        funding=SessionFundingRequest(type=funding_type),
+    )
+
+    assert session.id == "session_1"
+    assert seen["body"] == {
+        "agent": "agent_1",
+        "environment_id": "environment_1",
+        "funding": {"type": funding_type},
     }
     await http_client.aclose()
 

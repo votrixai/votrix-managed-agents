@@ -14,9 +14,9 @@ Current status is **implemented for provider resolution and model construction**
 Agent JSON selects a provider and model ID. It cannot supply an arbitrary base
 URL or raw API key. The two configuration sources are deliberately separate:
 
-1. Model credentials come only from the Session's create-time model-Credential
-   binding, created natively from a public provider ID and resolved to the
-   provider's private Vault credential slot by VMA.
+1. Model credentials come only from the Session's immutable create-time
+   funding binding: either an Organization Vault model Credential or an exact
+   Organization platform-provider key row.
 2. Server settings and `VMA_MODEL_PROVIDERS` supply only approved adapters,
    endpoint URLs, routing policy, model defaults, capabilities, and the private
    credential-slot name.
@@ -29,7 +29,7 @@ process environment or register tenant-specific Deep Agents provider profiles.
 Deep Agents provider and harness registries are process-global and are unsafe
 for per-request secrets.
 
-### Session model overrides and BYOK
+### Session model overrides and funding
 
 An Agent supplies the default model. Session creation may use CMA-compatible
 `agent_with_overrides` to replace that model for one Session; the resolved model
@@ -61,19 +61,30 @@ request order, selects the first matching model Credential, and stores only that
 Credential's ID as an immutable Session binding. For example:
 
 ```text
-vault_ids = [end_user_personal_vault, customer_shared_vault]
+vault_ids = [end_user_personal_vault, organization_shared_vault]
 ```
 
-This is BYOK-preferred at Session creation: a personal OpenRouter Credential wins
-when present; otherwise the shared Vault supplies one. After creation VMA reloads
-only the selected Credential ID. An invalid, archived, or deleted selected key
-fails closed and never switches that Session to the shared Vault. A new Session
-is required to choose a different payer. If no supplied Vault contains a
-matching Credential at creation, VMA rejects Session creation with HTTP `422`
-and stable code `model_credential_required`. There is no VMA platform key or
-server-key fallback. The trusted customer backend owns the decision about
-which Vaults and order to submit; VMA intentionally has no separate BYOK policy
-enum.
+This is BYOK-preferred at Session creation: the first matching OpenRouter
+Credential wins. After creation VMA reloads only the selected Credential ID.
+An invalid, archived, or deleted selected key fails closed and never switches
+that Session to another Vault. A new Session is required to choose a different
+funding source. If no supplied Vault contains a matching Credential under a
+BYOK-only policy, VMA rejects Session creation with HTTP `422` and stable code
+`model_credential_required`.
+
+Native callers may set `funding.type` to `byok`, `platform_credits`, or
+`organization_default`. Omitted requests remain compatible with CMA callers and
+use the Organization default; without an Organization billing account, that
+default is BYOK. Policies `byok_only`, `platform_only`, `prefer_byok`, and
+`prefer_platform` control create-time selection. Preference fallback occurs
+only during creation. The chosen Vault Credential or exact platform key row is
+then immutable, and later turns never switch after revocation or expiry.
+
+Platform keys are encrypted at rest, provisioned only through the trusted
+operator CLI, decrypted only for the model call, and never copied into E2B.
+The stored upstream spending limit is metadata; VMA does not yet implement a
+prepaid credit balance, monetary reservation, or provider invoice
+reconciliation.
 
 The MVP stores one immutable model-Credential binding per Session. Therefore a
 multiagent Session currently requires the coordinator and every pinned

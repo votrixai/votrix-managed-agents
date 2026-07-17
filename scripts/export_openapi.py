@@ -50,6 +50,10 @@ TAG_DESCRIPTIONS = {
     ),
     "files": ("Files", "Session and Organization file resources."),
     "skills": ("Skills", "Reusable skill archives and versioned skill definitions."),
+    "usage": (
+        "Usage",
+        "Organization-scoped raw usage facts with Session and time filters.",
+    ),
     "vaults": (
         "Vaults & credentials",
         "Credential vaults, secrets, and OAuth validation.",
@@ -97,6 +101,10 @@ SPECIAL_OPERATION_DESCRIPTIONS = {
     ("post", "/v1/sessions/{session_id}/events"): (
         "Appends one or more input events to a session and returns the durable event records. "
         "Use the event stream to observe subsequent agent output."
+    ),
+    ("get", "/v1/usage"): (
+        "Returns append-only raw usage facts for the current Organization. "
+        "Filter by Session, metric, or occurrence time without inferred billing identity."
     ),
     ("post", "/v1/deployments"): (
         "Creates a reusable deployment definition for running an agent manually or on a schedule. "
@@ -158,6 +166,10 @@ PARAMETER_DESCRIPTIONS = {
     "created_at[gte]": "Only return resources created at or after this RFC 3339 timestamp.",
     "created_at[lt]": "Only return resources created before this RFC 3339 timestamp.",
     "created_at[lte]": "Only return resources created at or before this RFC 3339 timestamp.",
+    "occurred_at[gt]": "Only return usage recorded after this RFC 3339 timestamp.",
+    "occurred_at[gte]": "Only return usage recorded at or after this RFC 3339 timestamp.",
+    "occurred_at[lt]": "Only return usage recorded before this RFC 3339 timestamp.",
+    "occurred_at[lte]": "Only return usage recorded at or before this RFC 3339 timestamp.",
     "order": "Sort direction for the returned records: `asc` or `desc`.",
     "order_by": "Resource field used to order the returned records.",
     "view": "Response detail level. Memory endpoints accept `basic` or `full`.",
@@ -202,6 +214,10 @@ PARAMETER_EXAMPLES = {
     "created_at[gte]": "2026-07-01T00:00:00Z",
     "created_at[lt]": "2026-08-01T00:00:00Z",
     "created_at[lte]": "2026-08-01T00:00:00Z",
+    "occurred_at[gt]": "2026-07-01T00:00:00Z",
+    "occurred_at[gte]": "2026-07-01T00:00:00Z",
+    "occurred_at[lt]": "2026-08-01T00:00:00Z",
+    "occurred_at[lte]": "2026-08-01T00:00:00Z",
     "order": "desc",
     "view": "full",
     "worker_id": "worker-primary",
@@ -335,10 +351,22 @@ PROPERTY_DESCRIPTIONS = {
     ("SessionCreateRequest", "title"): "Optional display title for the session.",
     ("SessionCreateRequest", "resources"): "Files or memory stores mounted into the session at creation time.",
     ("SessionCreateRequest", "vault_ids"): "Credential vault identifiers made available to the session.",
+    ("SessionCreateRequest", "funding"): "Optional create-time funding selection; omission uses the Organization default.",
     ("SessionResponse", "status"): "Current lifecycle status of the session.",
     ("SessionResponse", "last_event_seq"): "Highest durable event sequence recorded for the session.",
     ("SendEventsRequest", "events"): "Ordered input events to append to the session.",
     ("SessionEventInput", "type"): "Event type discriminator, such as `user.message` or `user.interrupt`.",
+    ("UsageEntryResponse", "organization_id"): "Identifier of the Organization that owns this usage fact.",
+    ("UsageEntryResponse", "metric"): "Exact raw metric recorded by the control plane.",
+    ("UsageEntryResponse", "quantity"): "Non-negative quantity recorded for this metric.",
+    ("UsageEntryResponse", "unit"): "Unit associated with the recorded quantity.",
+    ("UsageEntryResponse", "provider"): "Model or runtime provider that reported this usage, when available.",
+    ("UsageEntryResponse", "model"): "Concrete provider model associated with this usage, when available.",
+    ("UsageEntryResponse", "source_type"): "Control-plane resource type that produced this usage fact.",
+    ("UsageEntryResponse", "source_id"): "Identifier of the control-plane resource that produced this usage fact.",
+    ("UsageEntryResponse", "dimensions"): "Provider-reported raw usage dimensions such as input and output tokens.",
+    ("UsageEntryResponse", "data"): "Control-plane accounting metadata for this raw usage fact.",
+    ("UsageEntryResponse", "occurred_at"): "RFC 3339 timestamp when this usage occurred.",
 }
 
 
@@ -355,7 +383,7 @@ AGENT_EXAMPLE = {
     "version": 1,
     "model": {"id": "gpt-5.5"},
     "system": "Research the request and cite the sources you use.",
-    "description": "A research agent for customer questions.",
+    "description": "A research agent for account questions.",
     "tools": [],
     "mcp_servers": [],
     "skills": [],
@@ -387,13 +415,13 @@ SESSION_EXAMPLE = {
     "agent_id": AGENT_ID,
     "agent_version": 1,
     "environment_id": ENVIRONMENT_ID,
-    "title": "Investigate a customer request",
+    "title": "Investigate an account request",
     "status": "idle",
     "status_details": {},
     "stop_reason": None,
     "run_state": None,
     "sandbox_state": None,
-    "metadata": {"customer_id": "cus_example"},
+    "metadata": {"account_id": "acct_example"},
     "resources": [],
     "outcome_evaluations": [],
     "stats": {},
@@ -410,7 +438,7 @@ SESSION_EXAMPLE = {
 DEPLOYMENT_EXAMPLE = {
     "id": DEPLOYMENT_ID,
     "type": "deployment",
-    "name": "Daily customer report",
+    "name": "Daily account report",
     "agent": {"id": AGENT_ID, "version": 1},
     "environment_id": ENVIRONMENT_ID,
     "initial_events": [{"type": "user.message", "content": "Generate the daily report."}],
@@ -459,7 +487,7 @@ OPERATION_EXAMPLES = {
             "name": "Research assistant",
             "model": {"id": "gpt-5.5"},
             "system": "Research the request and cite the sources you use.",
-            "description": "A research agent for customer questions.",
+            "description": "A research agent for account questions.",
             "metadata": {"team": "support"},
         },
         "status": "201",
@@ -500,8 +528,8 @@ OPERATION_EXAMPLES = {
         "request": {
             "agent": {"type": "agent", "id": AGENT_ID, "version": 1},
             "environment_id": ENVIRONMENT_ID,
-            "title": "Investigate a customer request",
-            "metadata": {"customer_id": "cus_example"},
+            "title": "Investigate an account request",
+            "metadata": {"account_id": "acct_example"},
         },
         "status": "201",
         "response": SESSION_EXAMPLE,
@@ -543,7 +571,7 @@ OPERATION_EXAMPLES = {
     },
     ("post", "/v1/deployments"): {
         "request": {
-            "name": "Daily customer report",
+            "name": "Daily account report",
             "agent": {"id": AGENT_ID, "version": 1},
             "environment_id": ENVIRONMENT_ID,
             "initial_events": [{"type": "user.message", "content": "Generate the daily report."}],
@@ -557,9 +585,9 @@ OPERATION_EXAMPLES = {
         "response": DEPLOYMENT_EXAMPLE,
     },
     ("post", "/v1/deployments/{deployment_id}"): {
-        "request": {"name": "Weekday customer report"},
+        "request": {"name": "Weekday account report"},
         "status": "200",
-        "response": {**DEPLOYMENT_EXAMPLE, "name": "Weekday customer report"},
+        "response": {**DEPLOYMENT_EXAMPLE, "name": "Weekday account report"},
     },
     ("post", "/v1/deployments/{deployment_id}/run"): {
         "request": {"trigger": "manual", "title": "Run the report now"},

@@ -384,8 +384,8 @@ async def test_persisted_e2b_runtime_context_does_not_load_skill_archives(monkey
     async def no_credentials(*_args, **_kwargs):
         return []
 
-    async def no_model_credential(*_args, **_kwargs):
-        return None
+    async def no_provider_secrets(*_args, **_kwargs):
+        return {}
 
     async def no_mcp(*_args, **_kwargs):
         return {"servers": [], "errors": []}
@@ -399,7 +399,11 @@ async def test_persisted_e2b_runtime_context_does_not_load_skill_archives(monkey
     monkeypatch.setattr(runner.res_q, "list_resources", list_resources)
     monkeypatch.setattr(runner, "_persisted_e2b_inputs_for_session", persisted_inputs)
     monkeypatch.setattr(runner, "_vault_credentials_for_session", no_credentials)
-    monkeypatch.setattr(runner, "_model_credential_for_session", no_model_credential)
+    monkeypatch.setattr(
+        runner.session_credential_broker,
+        "resolve_provider_secrets",
+        no_provider_secrets,
+    )
     monkeypatch.setattr(runner, "_mcp_auth_context_for_session", no_mcp)
     monkeypatch.setattr(runner, "_subagents_for_runtime", no_subagents)
     monkeypatch.setattr(runner, "_skill_archives_for_runtime", forbidden_skill_download)

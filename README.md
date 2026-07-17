@@ -11,8 +11,9 @@ Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control
 VMA is not an Anthropic service and is not a drop-in behavioral replacement.
 The current release is a **public-beta foundation**: its GA schema is deliberately
 smaller than the repository's experimental route inventory, and it is suitable
-for a controlled BYOK/free beta rather than a high-availability or enterprise
-launch. Start with the [compatibility matrix](docs/compatibility-matrix.md) and
+for a controlled BYOK-first beta with optional operator-provisioned platform
+funding rather than a high-availability or enterprise launch. Start with the
+[compatibility matrix](docs/compatibility-matrix.md) and
 [known incompatibilities](docs/known-incompatibilities.md) before deploying it
 for real workloads.
 
@@ -22,8 +23,8 @@ Implemented in the Votrix core:
 
 - A public-beta `/v1` surface for API keys, agents and immutable versions,
   environments, sessions and events, files, Skills, Vaults, native model
-  Credentials, and the model-provider catalog. Additional repository routes
-  remain explicitly deferred when `VMA_PUBLIC_GA_ONLY=true`.
+  Credentials, the model-provider catalog, and raw usage. Additional repository
+  routes remain explicitly deferred when `VMA_PUBLIC_GA_ONLY=true`.
 - Postgres-backed Organization API keys with one-time secrets, independent
   create/list/retrieve/revoke/rotate lifecycle, expiration, and the `api`,
   `api_keys:manage`, and `worker` scopes.
@@ -42,8 +43,8 @@ Implemented in the Votrix core:
   Session creation. Event submission retains its dedicated transactional
   idempotency record.
 - A Deep Agents runtime adapter with server-controlled Anthropic, OpenAI,
-  DeepSeek, and custom model-provider routing configuration. Model credentials
-  come only from a Session-mounted Organization Vault.
+  DeepSeek, and custom model-provider routing configuration. Each Session fixes
+  either an Organization Vault BYOK credential or an Organization platform key.
 - LangGraph checkpoint selection for Postgres, SQLite, and explicit in-memory development mode.
 - Private S3-compatible object storage for files and skill archives.
 - An optional E2B sandbox provider for isolated session command and filesystem execution.
@@ -57,8 +58,9 @@ Important partial areas:
 - Organization RBAC/SSO, Postgres RLS, a multi-replica preview broker and
   complete per-Session/checkpoint ownership, enterprise audit export/retention,
   deployment scheduling, webhook delivery, and OAuth refresh remain deferred.
-- The beta is BYOK/free. Raw provider/model token usage is recorded for quota
-  enforcement and cost analysis only; price books, monetary balances, credits,
+- Raw provider/model token usage is recorded per Organization and Session for
+  quota enforcement and analysis. Operator-provisioned platform keys can power
+  trials, but price books, authoritative monetary balances/reservations,
   top-ups, refunds, Stripe, invoices, and paid plans are not part of this release.
 
 ## Architecture
@@ -116,9 +118,9 @@ bash run.sh --migrate
 Local, development, staging, and production environments all require a
 database-backed Organization API key. They fail closed until the first
 administrator key is created with `python -m scripts.bootstrap_api_key`; there
-is no process-global or anonymous authentication mode. Production Vault
-credentials also require `VMA_ENCRYPTION_KEY` unless an injected secret
-provider replaces database-backed secrets.
+is no process-global or anonymous authentication mode. Production Vault and
+platform-provider credentials also require `VMA_ENCRYPTION_KEY` unless an
+injected secret provider replaces database-backed secrets.
 
 After migrations, create the first key from a trusted administrator environment
 if the quick-start command above has not already done so:
@@ -168,9 +170,10 @@ application under `website/` combines the guides and interactive API reference.
 ## Configure a model provider
 
 Agent definitions choose a provider and model. VMA operators control connection
-URLs and routing policy, while each Organization supplies its own model API keys as
-Vault model Credentials. VMA does not load model API keys from its process
-environment or provider configuration.
+URLs and routing policy. An Organization can supply model API keys as Vault
+model Credentials, or a trusted service operator can provision an encrypted,
+Organization-scoped platform key. VMA does not load model API keys from its
+process environment or provider configuration.
 
 Session creation also accepts Claude-compatible `agent_with_overrides` for a
 one-Session replacement of model, system, tools, MCP servers, or Skills. Native
@@ -181,9 +184,32 @@ VMA reads the requested `vault_ids` in order and fixes the first matching model
 Credential as that Session's payer. Later turns use the same Credential and fail
 closed if it is revoked rather than switching to another Vault. If none of the
 Session's `vault_ids` contains a matching model Credential, Session creation
-returns `422 model_credential_required`; there is no server-key fallback.
+returns `422 model_credential_required` under a BYOK-only policy.
 The key is used only by the control-plane model client and is never copied into
 E2B.
+
+Native Session creation may also set `funding.type` to `byok`,
+`platform_credits`, or `organization_default`. Omission is equivalent to
+`organization_default` and remains compatible with existing CMA callers. With
+no Organization billing account, the default remains BYOK. The Organization
+policy is evaluated only while creating the Session; the resulting source and
+exact key row are immutable, and a later revocation never falls back to another
+source.
+
+Platform keys are provisioned only from a trusted operator environment. The
+provider key must already have the desired hard limit at the upstream provider;
+`spending_limit_usd_micros` is retained as metadata and is not a VMA balance:
+
+```bash
+export VMA_FUNDING_PROVIDER_API_KEY='<hard-limited provider sub-key>'
+uv run python -m scripts.provision_organization_funding \
+  --organization-id org_votrix \
+  --provider openrouter \
+  --policy platform_only \
+  --trial-expires-at 2026-08-01T00:00:00Z \
+  --spending-limit-usd-micros 5000000
+unset VMA_FUNDING_PROVIDER_API_KEY
+```
 
 The maintained local and Cloud Run profile uses OpenRouter's native LangChain
 integration, pins `deepseek/deepseek-v4-pro` to Fireworks with Together as its

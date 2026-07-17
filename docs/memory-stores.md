@@ -27,7 +27,7 @@ Object storage is not the source of truth for memory records. S3-compatible stor
 
 ```json
 {
-  "path": ["customers", "acme"],
+  "path": ["accounts", "acme"],
   "content": "ACME prefers email.",
   "actor": "api"
 }
@@ -37,7 +37,7 @@ The official string form is:
 
 ```json
 {
-  "path": "/customers/acme",
+  "path": "/accounts/acme",
   "content": "ACME prefers email."
 }
 ```
