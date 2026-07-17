@@ -199,7 +199,9 @@ async def test_transient_runtime_failure_reschedules_then_caps_retries(client, m
     assert first_retry["stop_reason"]["retry_after_seconds"] == 1
 
     events = await _wait_for_event_type(client, session["id"], "session.status_rescheduled")
-    assert any(event["type"] == "session.error" and event["transient"] for event in events)
+    retry_error = next(event for event in events if event["type"] == "session.error" and event["transient"])
+    assert retry_error["error"]["type"] == "unknown_error"
+    assert retry_error["error"]["retry_status"] == {"type": "retrying"}
 
     await runner.run_session_turn(session["id"])
     await runner.run_session_turn(session["id"])
@@ -902,6 +904,12 @@ async def test_missing_mcp_credentials_emit_session_error_without_blocking_sessi
     errors = [event for event in events if event["type"] == "session.error" and event.get("error_type") == "mcp_auth_missing"]
     assert errors
     assert errors[0]["mcp_server_name"] == "github"
+    assert errors[0]["error"] == {
+        "type": "mcp_authentication_failed_error",
+        "message": "MCP credential not found for github",
+        "retry_status": {"type": "exhausted"},
+        "mcp_server_name": "github",
+    }
 
     response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text

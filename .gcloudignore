@@ -1,0 +1,52 @@
+# Keep Cloud Build's upload context aligned with the runtime image. gcloud
+# evaluates this file before Docker can evaluate .dockerignore.
+.gcloudignore
+.git
+.github
+.agents
+.codex
+.env
+.env.*
+
+# Local environments, caches, generated packages, and frontend dependencies.
+.venv
+**/.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+**/*.egg-info
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+build
+**/build
+*.log
+.DS_Store
+
+# Sources that are not inputs to the control-plane runtime image.
+tests
+docs
+website
+sdks
+infra
+README.md
+CHANGELOG.md
+TODO.md
+LICENSE
+
+# Deployment control files are consumed outside the Docker build.
+cloudbuild.yaml
+service.*.yaml
+scripts/gcloud
+
+# Local durable state must never enter a remote build context.
+votrix_managed_agents.db*
+*.checkpoints.sqlite3
+.projects

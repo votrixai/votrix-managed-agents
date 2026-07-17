@@ -9,6 +9,7 @@ RUN uv sync --frozen --no-dev --no-install-project --extra sandbox-e2b
 
 COPY . .
 RUN uv sync --frozen --no-dev --extra sandbox-e2b
+RUN .venv/bin/python -c "import deepagents, e2b, langchain_e2b, langgraph.checkpoint.postgres.aio, psycopg"
 
 FROM python:3.12-slim
 

@@ -13,7 +13,12 @@ for service in "$PRODUCTION_SERVICE" "$STAGING_SERVICE"; do
     --project="$PROJECT_ID" \
     --region="$REGION" \
     --format="value(spec.template.spec.containers[0].image)" 2>/dev/null || true)
-  [ -n "$image" ] || continue
+  if [ -z "$image" ]; then
+    echo "[$service]"
+    echo "  Status: not deployed"
+    echo ""
+    continue
+  fi
 
   revision=$(gcloud run services describe "$service" \
     --project="$PROJECT_ID" \
@@ -42,8 +47,27 @@ for job in "${PRODUCTION_SERVICE}-migrate" "${STAGING_SERVICE}-migrate"; do
     --project="$PROJECT_ID" \
     --region="$REGION" \
     --format="value(spec.template.spec.template.spec.containers[0].image)" 2>/dev/null || true)
-  [ -n "$job_image" ] || continue
   echo "[$job]"
+  if [ -z "$job_image" ]; then
+    echo "  Status: not deployed"
+    echo ""
+    continue
+  fi
   echo "  Image: $job_image"
+  echo ""
+done
+
+for trigger in vma-deploy-production vma-deploy-staging; do
+  trigger_id=$(gcloud builds triggers describe "$trigger" \
+    --project="$PROJECT_ID" \
+    --region="${VMA_TRIGGER_REGION:-global}" \
+    --format="value(id)" 2>/dev/null || true)
+  echo "[$trigger]"
+  if [ -z "$trigger_id" ]; then
+    echo "  Status: not configured"
+  else
+    echo "  Status: configured"
+    echo "  ID: $trigger_id"
+  fi
   echo ""
 done

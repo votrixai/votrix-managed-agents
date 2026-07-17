@@ -24,6 +24,21 @@ FILES_BETAS = ["files-api-2025-04-14", MANAGED_AGENTS_BETA]
 DEFAULT_MODEL = "deepseek/deepseek-v4-pro"
 
 
+def _resolve_vault_ids(
+    cli_vault_ids: list[str] | tuple[str, ...] | None,
+    env_value: str | None,
+) -> tuple[str, ...]:
+    """Return ordered, de-duplicated Vault IDs without exposing their values."""
+
+    candidates = cli_vault_ids if cli_vault_ids is not None else (env_value or "").split(",")
+    vault_ids = tuple(
+        dict.fromkeys(value.strip() for value in candidates if value.strip())
+    )
+    if not vault_ids:
+        raise ValueError("at least one Vault ID is required")
+    return vault_ids
+
+
 def _stop_reason(session: Any) -> dict[str, Any] | None:
     value = getattr(session, "stop_reason", None)
     if value is None:
@@ -129,7 +144,15 @@ async def _delete_session_with_retry(
     raise RuntimeError(f"Failed to delete smoke Session {session_id}") from last_error
 
 
-async def run(*, base_url: str, api_key: str, model: str, timeout: float) -> None:
+async def run(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: float,
+    vault_ids: tuple[str, ...],
+) -> None:
+    vault_ids = _resolve_vault_ids(vault_ids, None)
     marker = f"vma-pilot-{secrets.token_hex(8)}"
     suffix = marker.rsplit("-", 1)[-1]
     session_id: str | None = None
@@ -196,6 +219,7 @@ async def run(*, base_url: str, api_key: str, model: str, timeout: float) -> Non
         session = await client.beta.sessions.create(
             agent=agent.id,
             environment_id=environment.id,
+            vault_ids=list(vault_ids),
             resources=[
                 {
                     "type": "file",
@@ -322,6 +346,15 @@ def main() -> None:
             or os.environ.get("VOTRIX_API_KEY")
         ),
     )
+    parser.add_argument(
+        "--vault-id",
+        action="append",
+        dest="vault_ids",
+        help=(
+            "Existing Vault containing a model-provider credential; repeat to preserve "
+            "lookup order. Defaults to comma-separated VMA_SMOKE_VAULT_IDS."
+        ),
+    )
     parser.add_argument("--model", default=os.environ.get("VMA_SMOKE_MODEL", DEFAULT_MODEL))
     parser.add_argument("--timeout", type=float, default=900)
     args = parser.parse_args()
@@ -329,12 +362,20 @@ def main() -> None:
         parser.error(
             "--api-key, VMA_SMOKE_API_KEY, or VOTRIX_API_KEY is required"
         )
+    try:
+        vault_ids = _resolve_vault_ids(
+            args.vault_ids,
+            os.environ.get("VMA_SMOKE_VAULT_IDS"),
+        )
+    except ValueError as exc:
+        parser.error(f"--vault-id or VMA_SMOKE_VAULT_IDS: {exc}")
     asyncio.run(
         run(
             base_url=args.base_url,
             api_key=args.api_key,
             model=args.model,
             timeout=args.timeout,
+            vault_ids=vault_ids,
         )
     )
 

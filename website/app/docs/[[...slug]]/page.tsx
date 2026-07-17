@@ -1,7 +1,8 @@
 import { OpenAPIPage } from '@/components/api-page';
 import { getMDXComponents } from '@/components/mdx';
+import { PageActions } from '@/components/page-actions';
 import { scopeOpenAPIPageProps } from '@/lib/openapi-page';
-import { getPageMarkdownUrl, source } from '@/lib/source';
+import { getServedPageMarkdownUrl, source } from '@/lib/source';
 import { gitConfig } from '@/lib/shared';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
@@ -11,8 +12,6 @@ import {
   DocsDescription,
   DocsPage,
   DocsTitle,
-  MarkdownCopyButton,
-  ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/docs/page';
 
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
@@ -20,12 +19,18 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const page = source.getPage(slug);
   if (!page) notFound();
 
+  const markdownUrl = getServedPageMarkdownUrl(page).url;
+
   if (page.type === 'openapi') {
     const openAPIPageProps = scopeOpenAPIPageProps(page.data.getOpenAPIPageProps());
 
     return (
       <DocsPage full className="votrix-api-reference">
         <h1 className="text-[1.75em] font-semibold">{page.data.title}</h1>
+        <PageActions
+          markdownUrl={markdownUrl}
+          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/website/public/openapi/vma.json`}
+        />
         <DocsBody>
           <OpenAPIPage {...openAPIPageProps} />
         </DocsBody>
@@ -34,7 +39,6 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   }
 
   const MDX = page.data.body;
-  const markdownUrl = getPageMarkdownUrl(page).url;
   const isAPIReference = page.url === '/docs/api';
 
   return (
@@ -45,13 +49,10 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
     >
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row items-center gap-2 border-b pb-6">
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
-        <ViewOptionsPopover
-          markdownUrl={markdownUrl}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/${page.path}`}
-        />
-      </div>
+      <PageActions
+        markdownUrl={markdownUrl}
+        githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/${page.path}`}
+      />
       <DocsBody className="docs-prose">
         <MDX
           components={getMDXComponents({
@@ -77,5 +78,11 @@ export async function generateMetadata(
   return {
     title: page.data.title,
     description: page.data.description,
+    alternates: {
+      canonical: page.url,
+      types: {
+        'text/markdown': getServedPageMarkdownUrl(page).url,
+      },
+    },
   };
 }

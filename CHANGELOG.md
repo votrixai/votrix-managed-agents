@@ -61,6 +61,11 @@ operator-provisioned Organization platform funding.
   SSE with `Last-Event-ID`, bounded replay-safe retries, typed request IDs and
   stable error codes, API-key administration, and automatic Session/event
   idempotency keys.
+- A server-side `@votrix/sdk` TypeScript client with Anthropic-style
+  `APIPromise` and `PagePromise` ergonomics, all public native resources,
+  multipart uploads, streaming binary downloads, reconnecting/deduplicating
+  SSE, secret-safe responses, ESM/CommonJS builds, resource/transport tests,
+  and npm Trusted Publishing workflows.
 - Public-beta readiness documentation and a dated next-session handoff.
 
 ### Changed

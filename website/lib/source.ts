@@ -1,7 +1,13 @@
 import { docs } from 'collections/server';
-import { loader } from 'fumadocs-core/source';
+import { llms, loader } from 'fumadocs-core/source';
 import { openapi } from '@/lib/openapi';
-import { docsContentRoute, docsRoute } from '@/lib/shared';
+import { renderOpenAPIPageMarkdown } from '@/lib/openapi-markdown';
+import {
+  appDescription,
+  appName,
+  docsRoute,
+  legacyDocsContentRoute,
+} from '@/lib/shared';
 
 export const source = loader(
   {
@@ -21,12 +27,28 @@ export const source = loader(
 );
 
 export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {
+  return {
+    url:
+      page.slugs.length === 0
+        ? `${docsRoute}/index.md`
+        : `${docsRoute}/${page.slugs.join('/')}.md`,
+  };
+}
+
+export function getLegacyPageMarkdownUrl(page: (typeof source)['$inferPage']) {
   const segments = [...page.slugs, 'content.md'];
 
   return {
     segments,
-    url: `${docsContentRoute}/${segments.join('/')}`,
+    url: `${legacyDocsContentRoute}/${segments.join('/')}`,
   };
+}
+
+/** Keep Copy/Open functional in `next dev`; production builds materialize canonical *.md files. */
+export function getServedPageMarkdownUrl(page: (typeof source)['$inferPage']) {
+  return process.env.NODE_ENV === 'development'
+    ? getLegacyPageMarkdownUrl(page)
+    : getPageMarkdownUrl(page);
 }
 
 function rewriteRelativeDocLinks(
@@ -63,19 +85,12 @@ function rewriteRelativeDocLinks(
 
 export async function getLLMText(page: (typeof source)['$inferPage']) {
   if (page.type === 'openapi') {
-    const operation = page.data.getOpenAPIPageProps().operations?.[0];
-    const endpoint = operation
-      ? `\`${operation.method.toUpperCase()} ${operation.path}\``
-      : 'OpenAPI operation';
-    const description = page.data.description
-      ? `\n\n${page.data.description}`
-      : '';
-
-    return [
-      `# ${page.data.title} (${page.url})`,
-      `${endpoint}${description}`,
-      'Full machine-readable schema: [/openapi/vma.json](/openapi/vma.json)',
-    ].join('\n\n');
+    return renderOpenAPIPageMarkdown({
+      title: page.data.title ?? 'API endpoint',
+      description: page.data.description,
+      pageUrl: page.url,
+      props: page.data.getOpenAPIPageProps(),
+    });
   }
 
   const processed = rewriteRelativeDocLinks(
@@ -83,4 +98,39 @@ export async function getLLMText(page: (typeof source)['$inferPage']) {
     page,
   );
   return `# ${page.data.title} (${page.url})\n\n${processed}`;
+}
+
+export function getLLMsIndex() {
+  let index = llms(source).index();
+  const firstLineEnd = index.indexOf('\n');
+  if (firstLineEnd !== -1) {
+    index = `${index.slice(0, firstLineEnd)}\n\n> ${appDescription}\n${index.slice(
+      firstLineEnd + 1,
+    )}`;
+  }
+
+  for (const page of source.getPages()) {
+    index = index.replaceAll(
+      `](${page.url})`,
+      `](${getServedPageMarkdownUrl(page).url})`,
+    );
+  }
+
+  return [
+    index.trimEnd(),
+    '## OpenAPI specs',
+    `- [${appName} OpenAPI schema](/openapi/vma.json): Complete OpenAPI 3.1 schema for the public API.`,
+    '## Complete documentation',
+    '- [All documentation in one file](/llms-full.txt): Full guides and API reference for LLM context.',
+  ].join('\n\n');
+}
+
+export async function getLLMsFullText() {
+  const pages = await Promise.all(source.getPages().map(getLLMText));
+  return [
+    `# ${appName} documentation`,
+    `> ${appDescription}`,
+    `Source index: [/llms.txt](/llms.txt)`,
+    ...pages,
+  ].join('\n\n');
 }

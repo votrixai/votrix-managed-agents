@@ -6,6 +6,7 @@ from pydantic import Field
 
 from app.db.models import SessionEvent
 from app.models.common import ApiModel, FlexibleApiModel
+from app.session_errors import normalize_session_error_payload
 
 
 class SessionEventInput(FlexibleApiModel):
@@ -31,6 +32,9 @@ class SendEventsResponse(ApiModel):
 
 def event_to_response(event: SessionEvent) -> SessionEventResponse:
     data = dict(event.payload)
+    if event.type == "session.error":
+        # Older rows predate the nested Managed Agents SDK ``error`` contract.
+        data = normalize_session_error_payload(data)
     data.update(
         {
             "id": event.id,

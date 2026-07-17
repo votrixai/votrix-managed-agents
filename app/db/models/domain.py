@@ -40,6 +40,29 @@ class Organization(TimestampMixin, Base):
         return resolve_organization_id(value)
 
 
+class OrganizationOwner(TimestampMixin, Base):
+    __tablename__ = "organization_owners"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "user_id",
+            name="uq_organization_owners_organization_user",
+        ),
+        Index("ix_organization_owners_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320))
+    granted_by: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
 class OrganizationBillingAccount(TimestampMixin, Base):
     __tablename__ = "organization_billing_accounts"
     __table_args__ = (

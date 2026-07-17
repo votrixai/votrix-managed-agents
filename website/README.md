@@ -42,6 +42,30 @@ keep the patch version aligned when upgrading `fumadocs-openapi`.
 `npm run build` writes a fully static site to `website/out/`. Deploy that
 directory to any static host or CDN; a Node.js service is not required.
 
+The build also materializes a Markdown representation for every page at
+`/docs/<path>.md` (the docs root is `/docs/index.md`). The older
+`/llms.mdx/docs/<path>/content.md` paths remain available for local development
+and compatibility. LLM discovery is available at `/llms.txt`,
+`/llms-full.txt`, and their `/.well-known/` aliases.
+
+Because a generic static export cannot carry arbitrary response metadata,
+configure the deployment CDN to return these headers for `.md`, `llms*.txt`,
+`/.well-known/llms*.txt`, and `/openapi/*.json` responses:
+
+```text
+X-Content-Type-Options: nosniff
+X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+X-Llms-Txt: /llms.txt
+```
+
+Serve `.md` and `llms*.txt` as `text/markdown; charset=utf-8`; keep the OpenAPI
+document as `application/json`.
+
+The site deliberately uses explicit `.md` URLs instead of HTTP `Accept`
+negotiation so it remains portable across static hosts. Verify the production
+headers after deployment with `curl -I`.
+
 The playground calls the API directly from the browser. The API must allow the
 documentation origin through CORS. VMA currently enables cross-origin methods
 and headers in `app/factory.py`, so no Fumadocs proxy route is used.

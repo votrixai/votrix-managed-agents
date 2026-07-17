@@ -74,9 +74,52 @@ class DatabaseApiKeyAuthProvider:
             )
 
 
+class HostedUserAuthProvider:
+    """Authenticate a Supabase user and bind an explicitly selected owned Organization."""
+
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentOrganization:
+        from app.db.engine import session_scope
+        from app.db.models import Organization
+        from app.db.queries.organization_owners import is_owner
+        from app.human_auth import authenticate_user
+
+        token = _bearer_token(credentials.authorization)
+        if not token:
+            raise HTTPException(status_code=401, detail="Missing user access token")
+        organization_id_header = request.headers.get("x-organization-id")
+        try:
+            organization_id = resolve_organization_id(organization_id_header)
+        except (MissingOrganizationContextError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="X-Organization-Id is required") from exc
+        user = await authenticate_user(token)
+        async with session_scope() as db:
+            organization = await db.get(Organization, organization_id)
+            if organization is None or organization.archived_at is not None:
+                raise HTTPException(status_code=404, detail="Organization not found")
+            if not await is_owner(db, organization_id, user.id):
+                raise HTTPException(status_code=403, detail="Not an owner of this Organization")
+        return CurrentOrganization(
+            id=organization_id,
+            slug=organization.slug,
+            source="supabase_owner",
+            api_key_id=user.id,
+            scopes=frozenset({API_SCOPE}),
+        )
+
+
+class CompositeAuthProvider(DatabaseApiKeyAuthProvider):
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentOrganization:
+        bearer = _bearer_token(credentials.authorization)
+        # Supabase access tokens are JWTs. Preserve support for legacy opaque
+        # bearer API keys as well as the canonical vma_ format.
+        if credentials.x_api_key or not bearer or bearer.count(".") != 2:
+            return await super().authenticate(request, credentials)
+        return await HostedUserAuthProvider().authenticate(request, credentials)
+
+
 def default_auth_provider() -> AuthProvider:
     """Use the same fail-closed tenant-key authentication in every environment."""
-    return DatabaseApiKeyAuthProvider()
+    return CompositeAuthProvider()
 
 
 async def require_api_access(

@@ -144,10 +144,39 @@ five execute concurrently and the durable queue absorbs the remainder.
 
 ## Manual deploys
 
+Run the read-only readiness check first. It verifies the enabled APIs,
+Artifact Registry, Cloud Build IAM, runtime identity, enabled secret versions,
+per-secret access, the target manifest, git state, and release branches without
+reading any secret value:
+
+```bash
+./scripts/gcloud/preflight.sh all
+```
+
+For an intentional dirty staging experiment, use
+`./scripts/gcloud/preflight.sh staging --allow-dirty`; production preflight and
+deployment never accept dirty source. E2B template existence and the actual
+Postgres/R2/E2B credentials remain runtime checks, so preflight does not replace
+the migration Job or staging acceptance smoke.
+
 ```bash
 ./scripts/gcloud/2-deploy-production.sh
 ./scripts/gcloud/3-deploy-staging.sh
 ```
+
+Both commands require a clean git worktree, including no staged or untracked
+files. Production never permits an override, because a commit-looking image tag
+must identify exactly the committed source that was built. For an intentional
+staging-only experiment, use:
+
+```bash
+./scripts/gcloud/3-deploy-staging.sh --allow-dirty
+```
+
+That opt-in image receives a unique
+`<commit>-dirty-<UTC timestamp>-<process>` tag; it cannot be mistaken for the
+clean commit image. Either script also accepts a legacy positional region or
+`--region=REGION`.
 
 Both scripts enforce the same sequence:
 
@@ -166,8 +195,14 @@ After staging deploys, run the controlled one-Session acceptance first:
 ```bash
 VMA_SMOKE_BASE_URL=https://YOUR-STAGING-CLOUD-RUN-URL \
 VMA_SMOKE_API_KEY=... \
+VMA_SMOKE_VAULT_IDS=vault_... \
 uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
 ```
+
+`VMA_SMOKE_VAULT_IDS` must reference an existing staging Vault containing the
+model Credential selected by the smoke Agent. The hosted service intentionally
+has no platform model API key, so the acceptance would otherwise fail closed
+with `model_credential_required` before exercising E2B or R2.
 
 Then use an existing staging Vault containing the selected model Credential to
 run the ten-Session burst:
@@ -186,11 +221,38 @@ archives the Agent. It reports provision, trigger, queue, first-event, and
 total latency with p50/p95/max summaries. The run makes real model and E2B calls
 and therefore consumes the corresponding provider quotas.
 
+For the first controlled rollout, the GCP wrapper can migrate an existing
+operator-owned model-key Secret Manager value into an encrypted VMA Vault and
+run the one-Session smoke without exposing either credential:
+
+```bash
+VMA_SMOKE_MODEL_API_KEY_SECRET=YOUR_OPERATOR_MODEL_KEY_SECRET \
+  ./scripts/gcloud/7-run-acceptance.sh staging
+```
+
+The named source is never mounted into Cloud Run and is used only by the
+trusted operator command. After the Vault-backed smoke passes, retire any
+transitional model-key secret; the active encrypted Credential belongs to the
+staging Organization Vault.
+
 ## Bootstrap the first tenant API key
 
 Authentication is database-backed in every environment. After the first
-successful migration, run the bootstrap CLI once from a trusted operator
-machine using the matching untracked environment file:
+successful migration, the recommended GCP path pre-provisions an operator key
+in Secret Manager and idempotently stores only its digest in VMA's database:
+
+```bash
+./scripts/gcloud/6-bootstrap-operator.sh staging
+./scripts/gcloud/6-bootstrap-operator.sh production
+```
+
+These create `vma-operator-api-key-staging` and `vma-operator-api-key`. Neither
+secret is mounted into Cloud Run; they are operator/client credentials, not a
+shared runtime authentication bypass. The script never prints the plaintext
+key and can be retried safely with the same pre-provisioned value.
+
+For a non-GCP secret sink, run the lower-level bootstrap CLI once from a trusted
+operator machine using the matching untracked environment file:
 
 ```bash
 set -a
@@ -220,8 +282,23 @@ Connect the GitHub repository under **Cloud Build > Triggers**, then run:
 
 This creates:
 
-- `vma-deploy-production`: `main` → production
-- `vma-deploy-staging`: `beta` → staging
+- `vma-deploy-production`: `main` → production, with manual build approval
+  required by default
+- `vma-deploy-staging`: `staging` → staging, deployed automatically
+
+The setup command is idempotent: it updates either named trigger when it already
+exists and creates it otherwise. If production should intentionally deploy
+without a human approval gate, make that unsafe policy change explicit:
+
+```bash
+VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL=false \
+  ./scripts/gcloud/4-setup-triggers.sh <github-owner> <repo-name>
+```
+
+The default is `true`. Both triggers ignore changes limited to `docs/**`,
+`website/**`, `sdks/**`, `README.md`, and `CHANGELOG.md`, so documentation and
+SDK-only commits do not rebuild the API image or run migrations. A commit that
+also changes any non-ignored path still triggers the normal deployment.
 
 Cloud Build uses the same manifests and the same blocking migration-job sequence
 as manual deployment.
@@ -234,8 +311,11 @@ After both services exist:
 ./scripts/gcloud/5-allow-public.sh
 ```
 
-This exposes the Cloud Run URLs. VMA still requires a database-backed Organization
-API key; public ingress does not add an anonymous authentication path.
+The manifests already disable the Cloud Run Invoker IAM check. This command is
+an idempotent repair/verification step using the same recommended Cloud Run
+setting; it does not create an `allUsers` IAM binding. VMA still requires a
+database-backed Organization API key, so public ingress does not add an
+anonymous application path.
 
 ## Status
 
@@ -259,5 +339,8 @@ the image configured on each migration job.
 | `scripts/gcloud/2-deploy-production.sh` | Manual production rollout |
 | `scripts/gcloud/3-deploy-staging.sh` | Manual staging rollout |
 | `scripts/gcloud/4-setup-triggers.sh` | GitHub Cloud Build triggers |
-| `scripts/gcloud/5-allow-public.sh` | Public Cloud Run invoker access |
+| `scripts/gcloud/5-allow-public.sh` | Repair the public Invoker IAM-check setting |
+| `scripts/gcloud/6-bootstrap-operator.sh` | Securely bootstrap an operator API key to Secret Manager and Postgres |
+| `scripts/gcloud/7-run-acceptance.sh` | Provision the BYOK smoke Vault and run real R2/E2B/model acceptance |
+| `scripts/gcloud/preflight.sh` | Read-only GCP, IAM, secret metadata, manifest, and git readiness |
 | `scripts/gcloud/status.sh` | Deployed service and job status |

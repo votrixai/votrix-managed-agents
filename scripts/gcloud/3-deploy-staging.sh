@@ -1,21 +1,74 @@
 #!/bin/sh
 # Build, migrate, and deploy the staging Cloud Run service.
 
-set -e
+set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd)
 . "${SCRIPT_DIR}/config.sh"
 
-REGION="${1:-$REGION}"
+usage() {
+  echo "Usage: $0 [region|--region=REGION] [--allow-dirty]" >&2
+}
+
+REGION_OVERRIDE=""
+ALLOW_DIRTY=false
+for arg in "$@"; do
+  case "$arg" in
+    --region=*)
+      REGION_OVERRIDE=${arg#--region=}
+      if [ -z "$REGION_OVERRIDE" ]; then
+        usage
+        exit 2
+      fi
+      ;;
+    --allow-dirty)
+      ALLOW_DIRTY=true
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $arg" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      if [ -n "$REGION_OVERRIDE" ]; then
+        echo "Only one region may be specified." >&2
+        usage
+        exit 2
+      fi
+      REGION_OVERRIDE=$arg
+      ;;
+  esac
+done
+
+REGION="${REGION_OVERRIDE:-$REGION}"
 MANIFEST="${REPO_ROOT}/service.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-staging"
 
-if git -C "$REPO_ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
-  TAG=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
+if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
+  echo "Staging deploys must run from a git checkout with a commit." >&2
+  exit 1
+fi
+
+COMMIT_TAG=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)
+WORKTREE_STATUS=$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)
+if [ -n "$WORKTREE_STATUS" ] && [ "$ALLOW_DIRTY" != "true" ]; then
+  echo "Staging deploys require a clean git worktree by default." >&2
+  echo "Commit the changes, or retry explicitly with --allow-dirty." >&2
+  git -C "$REPO_ROOT" status --short >&2
+  exit 1
+fi
+
+if [ -n "$WORKTREE_STATUS" ]; then
+  TAG="${COMMIT_TAG}-dirty-$(date -u +%Y%m%d%H%M%S)-$$"
+  echo "WARNING: building dirty staging worktree as unique tag ${TAG}." >&2
 else
-  TAG=$(date -u +%Y%m%d%H%M%S)
+  TAG=$COMMIT_TAG
 fi
 IMAGE="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${STAGING_SERVICE}:${TAG}"
 

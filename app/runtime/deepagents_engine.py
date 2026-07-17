@@ -48,6 +48,7 @@ from app.runtime.sandbox_outputs import (
     MAX_OUTPUT_TOTAL_BYTES,
     SANDBOX_OUTPUT_ROOT,
 )
+from app.session_errors import session_error_payload
 
 
 class DeepAgentsRuntimeError(RuntimeError):
@@ -160,13 +161,13 @@ async def execute_deep_agent(
         for warning in warnings:
             if warning.get("type") == "mcp_connection_error":
                 await _emit(
-                    {
-                        "type": "session.error",
-                        "error_type": "mcp_connection_error",
-                        "message": warning.get("message") or "MCP connection failed",
-                        "mcp_server_name": warning.get("server_name"),
-                        "source": "deepagents",
-                    },
+                    session_error_payload(
+                        warning.get("message") or "MCP connection failed",
+                        error_type="mcp_connection_error",
+                        retry_status="exhausted",
+                        mcp_server_name=warning.get("server_name"),
+                        source="deepagents",
+                    ),
                     emit_event,
                     tool_events,
                 )

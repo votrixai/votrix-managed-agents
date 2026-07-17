@@ -73,3 +73,37 @@ async def test_bootstrap_refuses_duplicate_active_admin_without_explicit_overrid
             )
         )
     assert count == 2
+
+
+async def test_bootstrap_with_preprovisioned_key_is_idempotent():
+    supplied = "vma_preprovisioned_operator_key_for_staging"
+
+    created = await bootstrap_api_key(
+        organization_id="org_bootstrap_idempotent",
+        api_key=supplied,
+    )
+    repeated = await bootstrap_api_key(
+        organization_id="org_bootstrap_idempotent",
+        api_key=supplied,
+    )
+
+    assert created.secret == supplied
+    assert repeated.secret == supplied
+    assert repeated.key_id == created.key_id
+    assert repeated.organization_created is False
+
+    async with session_scope() as db:
+        count = await db.scalar(
+            select(func.count()).select_from(ApiKey).where(
+                ApiKey.organization_id == "org_bootstrap_idempotent"
+            )
+        )
+    assert count == 1
+
+
+async def test_bootstrap_rejects_invalid_preprovisioned_key():
+    with pytest.raises(ValueError, match="vma_ prefix"):
+        await bootstrap_api_key(
+            organization_id="org_bootstrap_invalid_key",
+            api_key="not-a-vma-key",
+        )

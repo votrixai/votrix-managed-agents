@@ -376,11 +376,11 @@ programmatic handling. The official SDK contract suite demonstrates how to
 point `AsyncAnthropic` at the VMA base URL; route coverage is documented in
 [Managed Agents API coverage](docs/managed-agents-api-coverage.md).
 
-For new VMA integrations, use the native SDK. `AsyncVotrix` preserves the
-familiar resource-oriented Managed Agents shape while exposing VMA-only
-features such as API-key administration, the model-provider catalog, and
-provider-based model credentials. `Votrix` provides the synchronous
-administrative subset:
+For new VMA integrations, use a native SDK. Python's `AsyncVotrix` preserves
+the familiar resource-oriented Managed Agents shape, while `Votrix` provides
+the synchronous administrative subset. The server-side TypeScript package
+provides the same public resource families with Anthropic-style promises,
+automatic pagination, SSE, uploads, and streaming downloads.
 
 After the first PyPI release:
 
@@ -395,7 +395,7 @@ from votrix import AsyncVotrix
 
 client = AsyncVotrix(
     api_key="vma_...",
-    base_url="https://managed-agents.votrixai.com",
+    base_url="https://api.votrixai.com",
 )
 
 providers = [provider async for provider in client.model_providers.list()]
@@ -412,6 +412,30 @@ multi-provider and BYOK functionality. The SDK is an independent project under
 [`sdks/python`](sdks/python/README.md); it does not replace the server's existing
 `votrix_managed_agents` embedding package.
 
+The TypeScript SDK is also pre-release and can currently be installed from
+this repository:
+
+```bash
+cd sdks/typescript
+npm ci
+npm run build
+
+# Then run this from the consuming Node.js project:
+cd /path/to/your-node-project
+npm install /absolute/path/to/votrix-managed-agents/sdks/typescript
+```
+
+```ts
+import Votrix from "@votrix/sdk";
+
+const client = new Votrix({
+  apiKey: process.env.VOTRIX_API_KEY,
+  baseURL: "https://api.votrixai.com",
+});
+
+const providers = await client.modelProviders.list();
+```
+
 ## Tests
 
 ```bash
@@ -419,6 +443,7 @@ uv run pytest
 uv run pytest -m contract
 ./scripts/test-backend-contract-matrix.sh
 cd sdks/python && uv run pytest && uv run pyright && uv build
+cd sdks/typescript && npm run check && npm run attw
 ```
 
 The contract extra installs the official client:
@@ -436,6 +461,7 @@ Strict SDK parsing proves the covered response shapes are accepted by the pinned
 - [Claude Managed Agents alignment](docs/claude-managed-agents-alignment.md)
 - [Managed Agents API coverage](docs/managed-agents-api-coverage.md)
 - [Python SDK](docs/python-sdk.md)
+- [TypeScript SDK](docs/typescript-sdk.md)
 - [Agent versioning](docs/agent-versioning.md)
 - [Sandbox runtime](docs/sandbox-runtime.md)
 - [Model providers](docs/openai-compatible-providers.md)
@@ -471,4 +497,4 @@ This is an early `0.1.0` project. Deep Agents tools, skills, memory, MCP output,
 
 ## License
 
-[MIT](LICENSE)
+Proprietary. Copyright Votrix. All rights reserved. This repository is not open source.

@@ -1,8 +1,9 @@
 """Create the first tenant administrator API key.
 
 Run this only from a trusted migration/admin environment after `alembic upgrade
-head`. The generated plaintext is written once to stdout; VMA stores only its
-SHA-256 digest.
+head`. By default the generated plaintext is written once to stdout; the GCP
+operator flow instead supplies a pre-provisioned key on stdin and redacts it
+from stdout. VMA stores only its SHA-256 digest.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import secrets
 import sys
 from dataclasses import dataclass
 
@@ -41,6 +43,7 @@ async def bootstrap_api_key(
     organization_name: str | None = None,
     key_name: str = "Bootstrap admin",
     allow_additional_admin_key: bool = False,
+    api_key: str | None = None,
 ) -> BootstrapResult:
     organization_id = resolve_organization_id(
         _required_text(organization_id, "organization_id", max_length=64)
@@ -56,6 +59,10 @@ async def bootstrap_api_key(
         max_length=255,
     )
     key_name = _required_text(key_name, "key_name", max_length=255)
+    if api_key is not None:
+        api_key = _required_text(api_key, "api_key", max_length=512)
+        if not api_key.startswith("vma_"):
+            raise ValueError("api_key must use the vma_ prefix")
 
     async with session_scope() as db:
         result = await db.execute(
@@ -86,6 +93,24 @@ async def bootstrap_api_key(
             if api_keys_q.API_KEYS_MANAGE_SCOPE in (item.scopes or [])
             and not api_keys_q.api_key_is_expired(item)
         ]
+        if api_key is not None:
+            supplied_hash = api_keys_q.hash_api_key(api_key)
+            matching_admin = next(
+                (
+                    item
+                    for item in active_admins
+                    if secrets.compare_digest(item.key_hash, supplied_hash)
+                ),
+                None,
+            )
+            if matching_admin is not None:
+                return BootstrapResult(
+                    key_id=matching_admin.id,
+                    organization_id=organization_id,
+                    prefix=matching_admin.prefix,
+                    secret=api_key,
+                    organization_created=False,
+                )
         if active_admins and not allow_additional_admin_key:
             prefixes = ", ".join(item.prefix for item in active_admins)
             raise BootstrapConflict(
@@ -98,6 +123,7 @@ async def bootstrap_api_key(
             db,
             organization_id=organization_id,
             name=key_name,
+            token=api_key,
             scopes=[api_keys_q.API_SCOPE, api_keys_q.API_KEYS_MANAGE_SCOPE],
             created_by="bootstrap_api_key",
             metadata={"provisioned_by": "bootstrap_api_key"},
@@ -134,41 +160,60 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly allow another active management key in the same Organization.",
     )
+    parser.add_argument(
+        "--api-key-stdin",
+        action="store_true",
+        help=(
+            "Read a pre-generated vma_ API key from stdin. This makes bootstrap "
+            "idempotent when an operator secret is provisioned before the database row."
+        ),
+    )
+    parser.add_argument(
+        "--redact-secret",
+        action="store_true",
+        help="Omit the plaintext key from stdout; requires --api-key-stdin.",
+    )
     return parser
 
 
 async def _run(args: argparse.Namespace) -> BootstrapResult:
+    api_key = None
+    if args.api_key_stdin:
+        api_key = sys.stdin.read().strip()
     return await bootstrap_api_key(
         organization_id=args.organization_id,
         organization_slug=args.organization_slug,
         organization_name=args.organization_name,
         key_name=args.key_name,
         allow_additional_admin_key=args.allow_additional_admin_key,
+        api_key=api_key,
     )
 
 
 def main() -> None:
-    args = _parser().parse_args()
+    parser = _parser()
+    args = parser.parse_args()
+    if args.redact_secret and not args.api_key_stdin:
+        parser.error("--redact-secret requires --api-key-stdin")
     try:
         result = asyncio.run(_run(args))
     except (BootstrapConflict, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
 
-    # This is the sole plaintext emission. Redirect stdout directly into the
-    # intended secret manager and do not persist it in shell history or logs.
-    print(
-        json.dumps(
-            {
-                "id": result.key_id,
-                "organization_id": result.organization_id,
-                "prefix": result.prefix,
-                "secret": result.secret,
-                "organization_created": result.organization_created,
-            },
-            separators=(",", ":"),
-        )
-    )
+    # This is the sole optional plaintext emission. Redirect stdout directly
+    # into the intended secret sink and do not persist it in shell history or
+    # logs. The GCP flow uses --redact-secret because its key already lives in
+    # Secret Manager.
+    payload = {
+        "id": result.key_id,
+        "organization_id": result.organization_id,
+        "prefix": result.prefix,
+        "organization_created": result.organization_created,
+    }
+    if not args.redact_secret:
+        payload["secret"] = result.secret
+    print(json.dumps(payload, separators=(",", ":")))
 
 
 if __name__ == "__main__":

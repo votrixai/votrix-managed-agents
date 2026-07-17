@@ -26,6 +26,7 @@ from app.routers import (
     model_providers,
     sessions,
     skills,
+    organizations,
     usage,
 )
 
@@ -114,7 +115,8 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def enforce_public_ga_surface(request: Request, call_next):
-        if settings.vma_public_ga_only and not is_public_ga_path(request.url.path):
+        private_hosted_path = request.url.path.startswith("/internal/") or request.url.path == "/v1/me/organizations"
+        if settings.vma_public_ga_only and not private_hosted_path and not is_public_ga_path(request.url.path):
             return JSONResponse(
                 status_code=404,
                 content=error_payload(
@@ -226,6 +228,8 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(model_providers.router)
     app.include_router(usage.router)
     app.include_router(generic_resources.router)
+    app.include_router(organizations.me_router)
+    app.include_router(organizations.admin_router)
 
     @app.get("/health", tags=["health"], response_model=HealthResponse)
     async def health():

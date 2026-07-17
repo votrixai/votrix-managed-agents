@@ -48,6 +48,9 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         "scripts/gcloud/3-deploy-staging.sh",
         "scripts/gcloud/4-setup-triggers.sh",
         "scripts/gcloud/5-allow-public.sh",
+        "scripts/gcloud/6-bootstrap-operator.sh",
+        "scripts/gcloud/7-run-acceptance.sh",
+        "scripts/gcloud/preflight.sh",
         "scripts/gcloud/status.sh",
     ):
         assert (ROOT / relative_path).is_file(), f"missing GCP deployment file: {relative_path}"
@@ -148,6 +151,13 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
     assert (ROOT / "scripts/bootstrap_api_key.py").is_file()
     readme = _read("scripts/gcloud/README.md")
     assert "python -m scripts.bootstrap_api_key" in readme
+    assert "6-bootstrap-operator.sh" in readme
+
+    operator_script = _read("scripts/gcloud/6-bootstrap-operator.sh")
+    assert "--api-key-stdin" in operator_script
+    assert "--redact-secret" in operator_script
+    assert "vma-operator-api-key" in operator_script
+    assert "--set-secrets" not in operator_script
 
 
 def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
@@ -248,6 +258,78 @@ def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
     assert migration_execute > migration_deploy
     assert "--wait" in cloudbuild[migration_execute:service_deploy]
     assert service_deploy > migration_execute
+
+
+def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() -> None:
+    production = _read("scripts/gcloud/2-deploy-production.sh")
+    staging = _read("scripts/gcloud/3-deploy-staging.sh")
+
+    assert "status --porcelain --untracked-files=normal" in production
+    assert "Production deploys require a clean git worktree." in production
+    assert "Production deploys never allow a dirty git worktree." in production
+    assert "--short=12 HEAD" in production
+
+    assert "status --porcelain --untracked-files=normal" in staging
+    assert "--allow-dirty" in staging
+    assert 'ALLOW_DIRTY=false' in staging
+    assert '-dirty-$(date -u +%Y%m%d%H%M%S)-$$' in staging
+    assert "--short=12 HEAD" in staging
+
+    for script in (production, staging):
+        migration_deploy = script.find("gcloud run jobs deploy")
+        migration_execute = script.find("gcloud run jobs execute")
+        service_deploy = script.find("gcloud run services replace")
+        assert migration_deploy >= 0
+        assert migration_execute > migration_deploy
+        assert "--wait" in script[migration_execute:service_deploy]
+        assert service_deploy > migration_execute
+
+
+def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_changes() -> None:
+    script = _read("scripts/gcloud/4-setup-triggers.sh")
+
+    assert '"^main$"' in script
+    assert '"^staging$"' in script
+    assert "^beta$" not in script
+    assert "gcloud builds triggers describe" in script
+    assert "gcloud builds triggers update github" in script
+    assert "gcloud builds triggers create github" in script
+    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
+    assert 'PRODUCTION_APPROVAL_FLAG="--require-approval"' in script
+    assert "--no-require-approval" in script
+    assert 'IGNORED_FILES="docs/**,website/**,sdks/**,README.md,CHANGELOG.md"' in script
+    assert script.count('--ignored-files="$IGNORED_FILES"') == 2
+
+
+def test_public_access_helper_uses_the_manifest_invoker_check_mode() -> None:
+    script = _read("scripts/gcloud/5-allow-public.sh")
+
+    assert script.count("--no-invoker-iam-check") == 2
+    assert "allUsers" not in script
+    assert "add-iam-policy-binding" not in script
+
+
+def test_preflight_is_read_only_and_checks_both_environment_secret_sets() -> None:
+    script = _read("scripts/gcloud/preflight.sh")
+
+    assert "secrets versions access" not in script
+    assert "secrets versions list" in script
+    assert "roles/secretmanager.secretAccessor" in script
+    assert "roles/iam.serviceAccountUser" in script
+    assert "value(format)" in script
+    assert "value(disabled)" in script
+    assert "--dry-run" in script
+    assert 'check_environment_secrets ""' in script
+    assert 'check_environment_secrets "-staging"' in script
+    assert "ls-remote --exit-code --heads origin staging" in script
+
+
+def test_status_reports_missing_resources_instead_of_being_silent() -> None:
+    script = _read("scripts/gcloud/status.sh")
+
+    assert script.count("Status: not deployed") == 2
+    assert "vma-deploy-production vma-deploy-staging" in script
+    assert "Status: not configured" in script
 
 
 def test_checkpoint_database_url_is_an_optional_application_override() -> None:
@@ -363,8 +445,33 @@ def test_container_build_is_frozen_and_includes_e2b() -> None:
     assert 'CMD ["./entrypoint.sh"]' in dockerfile
 
     dockerignore = _read(".dockerignore")
-    for ignored in (".env.*", "tests", "cloudbuild.yaml", "service.*.yaml", "scripts/gcloud"):
+    for ignored in (
+        ".env.*",
+        "tests",
+        "sdks",
+        "node_modules",
+        ".next",
+        "cloudbuild.yaml",
+        "service.*.yaml",
+        "scripts/gcloud",
+    ):
         assert ignored in dockerignore
+
+    gcloudignore = _read(".gcloudignore")
+    for ignored in (
+        ".env.*",
+        ".venv",
+        "tests",
+        "docs",
+        "website",
+        "sdks",
+        "node_modules",
+        ".next",
+        "cloudbuild.yaml",
+        "service.*.yaml",
+        "scripts/gcloud",
+    ):
+        assert ignored in gcloudignore
 
 
 def test_shell_entrypoints_are_executable() -> None:

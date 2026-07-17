@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.db.models import ManagedSession, SessionEvent
 from app.ids import new_id
 from app.organization import resolve_organization_id
+from app.session_errors import normalize_session_error_payload
 
 
 async def append_event(
@@ -92,6 +93,8 @@ def _normalize_payload(
 ) -> dict[str, Any]:
     normalized = dict(payload or {})
     normalized.setdefault("type", event_type)
+    if event_type == "session.error":
+        normalized = normalize_session_error_payload(normalized)
     normalized["processed_at"] = _default_processed_at(event_type)
     return normalized
 

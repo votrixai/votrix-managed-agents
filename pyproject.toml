@@ -3,7 +3,7 @@ name = "votrix-managed-agents"
 version = "0.1.0"
 description = "Self-hosted, multi-tenant managed-agents control plane powered by Deep Agents."
 requires-python = ">=3.12"
-license = { file = "LICENSE" }
+license = "LicenseRef-Proprietary"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -26,6 +26,7 @@ dependencies = [
     "langchain-deepseek>=1.1.0,<2.0.0",
     "langchain-mcp-adapters>=0.3.0,<1.0.0",
     "langgraph-checkpoint-postgres>=3.1.0,<4.0.0",
+    "psycopg[binary]>=3.3.4,<4.0.0",
     "langgraph-checkpoint-sqlite>=3.1.0,<4.0.0",
     "langchain-openrouter>=0.2.6,<1.0.0",
 ]

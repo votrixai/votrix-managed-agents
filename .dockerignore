@@ -20,6 +20,9 @@ votrix_managed_agents.db*
 tests
 docs
 website
+sdks
+node_modules
+.next
 dist
 build
 .DS_Store

@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     vma_organization_storage_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=0)
     vma_encryption_key: str = ""
     vma_allow_plaintext_secrets_local: bool = True
+    vma_supabase_url: str = ""
+    vma_supabase_publishable_key: str = ""
 
     e2b_api_key: str = ""
     e2b_domain: str = ""

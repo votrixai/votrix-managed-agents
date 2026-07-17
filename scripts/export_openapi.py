@@ -15,7 +15,7 @@ from votrix_managed_agents import create_app
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "website" / "public" / "openapi" / "vma.json"
-DEFAULT_SERVER_URL = "https://managed-agents.votrixai.com"
+DEFAULT_SERVER_URL = "https://api.votrixai.com"
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
 
 TAG_DESCRIPTIONS = {

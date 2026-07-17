@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 import asyncio
+from datetime import datetime, timezone
 import hashlib
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -14,6 +16,7 @@ from anthropic._streaming import SSEDecoder  # noqa: E402
 from anthropic.types.beta.sessions.beta_managed_agents_stream_session_events import (  # noqa: E402
     BetaManagedAgentsStreamSessionEvents,
 )
+from app.models.events import event_to_response  # noqa: E402
 from tests.conftest import TEST_API_KEY  # noqa: E402
 
 pytestmark = pytest.mark.contract
@@ -708,6 +711,74 @@ async def test_anthropic_sdk_session_event_stream_parser_contract():
 
         assert parsed_event.type == "session.status_idle"
         assert parsed_event.session_id == session.id
+
+
+@pytest.mark.parametrize(
+    ("legacy_payload", "expected_error_type", "expected_retry_status"),
+    [
+        (
+            {
+                "type": "session.error",
+                "message": "runtime failed",
+                "error_type": "RuntimeError",
+                "processed_at": "2026-07-17T00:00:00Z",
+            },
+            "unknown_error",
+            "terminal",
+        ),
+        (
+            {
+                "type": "session.error",
+                "message": "rate limited",
+                "error_type": "ProviderRateLimitError",
+                "transient": True,
+                "attempt": 1,
+                "processed_at": "2026-07-17T00:00:00Z",
+            },
+            "unknown_error",
+            "retrying",
+        ),
+        (
+            {
+                "type": "session.error",
+                "message": "MCP credential not found for github",
+                "error_type": "mcp_auth_missing",
+                "mcp_server_name": "github",
+                "processed_at": "2026-07-17T00:00:00Z",
+            },
+            "mcp_authentication_failed_error",
+            "exhausted",
+        ),
+    ],
+)
+async def test_anthropic_sdk_strictly_parses_legacy_session_error_events(
+    legacy_payload,
+    expected_error_type,
+    expected_retry_status,
+):
+    event = SimpleNamespace(
+        id="evt_session_error_contract",
+        type="session.error",
+        session_id="sess_session_error_contract",
+        seq=7,
+        created_at=datetime(2026, 7, 17, tzinfo=timezone.utc),
+        payload=legacy_payload,
+    )
+    public_payload = event_to_response(event).model_dump(mode="json")
+    sdk = AsyncAnthropic(api_key=TEST_API_KEY, _strict_response_validation=True)
+    try:
+        parsed_event = sdk._process_response_data(
+            data=public_payload,
+            cast_to=BetaManagedAgentsStreamSessionEvents,
+            response=httpx.Response(200, request=httpx.Request("GET", "http://testserver")),
+        )
+    finally:
+        await sdk.close()
+
+    assert parsed_event.type == "session.error"
+    assert parsed_event.error.type == expected_error_type
+    assert parsed_event.error.retry_status.type == expected_retry_status
+    assert parsed_event.error_type == legacy_payload["error_type"]
 
 
 async def test_anthropic_sdk_user_tool_result_event_contract():

@@ -95,4 +95,23 @@ def test_docs_remain_blocked_from_search_indexing() -> None:
     assert layout.count("follow: false") >= 2
     assert "noarchive: true" in layout
     assert "nosnippet: true" in layout
-    assert robots.splitlines() == ["User-agent: *", "Disallow: /"]
+
+    # Search crawlers must be able to read the HTML noindex tag, while raw
+    # Markdown/OpenAPI routes and AI training/search crawlers remain blocked.
+    assert "User-agent: Googlebot\nAllow: /" in robots
+    assert "User-agent: Bingbot\nAllow: /" in robots
+    assert robots.count("Disallow: /*.md$") == 2
+    for crawler in (
+        "GPTBot",
+        "OAI-SearchBot",
+        "ClaudeBot",
+        "Claude-SearchBot",
+        "Google-Extended",
+        "CCBot",
+    ):
+        assert f"User-agent: {crawler}\nDisallow: /" in robots
+
+    for user_agent in ("ChatGPT-User", "Claude-User"):
+        assert f"User-agent: {user_agent}\nAllow: /" in robots
+
+    assert robots.rstrip().endswith("User-agent: *\nDisallow: /")

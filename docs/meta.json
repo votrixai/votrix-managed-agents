@@ -9,6 +9,7 @@
     "managed-agents-api-coverage",
     "anthropic-sdk-contract-tests",
     "python-sdk",
+    "typescript-sdk",
     "---Architecture & runtime---",
     "votrix-core-architecture",
     "agent-versioning",

@@ -30,9 +30,11 @@ def setup(app_env: str = "local", sentry_dsn: str = "", log_level: str = "INFO")
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
+        add_cloud_logging_severity,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
         redact_secrets,
     ]
@@ -74,6 +76,17 @@ def setup(app_env: str = "local", sentry_dsn: str = "", log_level: str = "INFO")
 
 def redact_secrets(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     return _redact_secret_values(event_dict)
+
+
+def add_cloud_logging_severity(
+    _logger: Any,
+    _method_name: str,
+    event_dict: dict[str, Any],
+) -> dict[str, Any]:
+    level = event_dict.get("level")
+    if level is not None and "severity" not in event_dict:
+        event_dict["severity"] = str(level).upper()
+    return event_dict
 
 
 def _redact_secret_values(value: Any) -> Any:

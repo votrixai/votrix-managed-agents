@@ -46,7 +46,7 @@ export default function HomePage() {
         <div>
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border bg-fd-card/75 px-3 py-1.5 text-xs font-medium text-fd-muted-foreground shadow-sm backdrop-blur">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--votrix-brand)]" />
-            Open source · Self hosted · Multi tenant
+            Private beta · Self hosted · Multi tenant
           </div>
           <h1 className="max-w-[760px] text-balance text-5xl font-semibold leading-[1.02] tracking-[-0.055em] text-fd-foreground sm:text-6xl lg:text-7xl">
             Run long-lived agents on infrastructure you control.

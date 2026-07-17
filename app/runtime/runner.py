@@ -26,6 +26,7 @@ from app.runtime.sandbox_inputs import SandboxInputDescriptor
 from app.runtime.sandbox_outputs import persist_discovered_outputs
 from app.runtime.work_queue import WorkExecutionLease
 from app.secret_cipher import decrypt_secret_values
+from app.session_errors import session_error_payload
 from app.session_state import (
     SESSION_IDLE,
     SESSION_RESCHEDULING,
@@ -330,11 +331,11 @@ async def _run_session_turn(
                 db,
                 session,
                 event_type="session.error",
-                payload={
-                    "type": "session.error",
-                    "message": str(exc),
-                    "error_type": exc.__class__.__name__,
-                },
+                payload=session_error_payload(
+                    str(exc),
+                    error_type=exc.__class__.__name__,
+                    retry_status="terminal",
+                ),
             )
             await events_q.append_event(
                 db,
@@ -660,13 +661,13 @@ async def _mark_transient_runtime_failure(db, session, exc: Exception) -> None:
             db,
             session,
             event_type="session.error",
-            payload={
-                "type": "session.error",
-                "message": str(exc),
-                "error_type": exc.__class__.__name__,
-                "transient": True,
-                "attempt": attempt,
-            },
+            payload=session_error_payload(
+                str(exc),
+                error_type=exc.__class__.__name__,
+                retry_status="terminal",
+                transient=True,
+                attempt=attempt,
+            ),
         )
         await events_q.append_event(
             db,
@@ -695,13 +696,13 @@ async def _mark_transient_runtime_failure(db, session, exc: Exception) -> None:
         db,
         session,
         event_type="session.error",
-        payload={
-            "type": "session.error",
-            "message": str(exc),
-            "error_type": exc.__class__.__name__,
-            "transient": True,
-            "attempt": attempt,
-        },
+        payload=session_error_payload(
+            str(exc),
+            error_type=exc.__class__.__name__,
+            retry_status="retrying",
+            transient=True,
+            attempt=attempt,
+        ),
     )
     await events_q.append_event(
         db,
@@ -1373,12 +1374,12 @@ async def _append_runtime_context_events(db, session, runtime_context: dict[str,
             db,
             session,
             event_type="session.error",
-            payload={
-                "type": "session.error",
-                "error_type": "mcp_auth_missing",
-                "message": f"MCP credential not found for {error.get('mcp_server_name') or error.get('mcp_server_url')}",
+            payload=session_error_payload(
+                f"MCP credential not found for {error.get('mcp_server_name') or error.get('mcp_server_url')}",
+                error_type="mcp_auth_missing",
+                retry_status="exhausted",
                 **error,
-            },
+            ),
         )
         emitted = True
     return emitted
