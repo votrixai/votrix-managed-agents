@@ -69,7 +69,7 @@ operator-provisioned Organization platform funding.
 - A no-cache Cloudflare Worker router with isolated staging and production
   environments, exact-host and Cloud Run-origin validation, streamed request
   and SSE response bodies, request-ID propagation, redirect rewriting, and
-  Custom Domains for `staging-api.votrixai.com` and `api.votrixai.com`.
+  Custom Domains for `staging-vma.votrixai.com` and `vma.votrixai.com`.
 - Public-beta readiness documentation and a dated next-session handoff.
 
 ### Changed
