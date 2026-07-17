@@ -3,7 +3,7 @@
 `@votrix/sdk` is the server-side TypeScript client for the native Votrix
 Managed Agents API. It provides typed resources, automatic cursor pagination,
 reconnecting server-sent events, streamed downloads, bounded retries, and
-provider-based BYOK helpers.
+typed Session funding and raw-usage helpers.
 
 The package requires Node.js 22 or newer and ships both ESM and CommonJS
 entrypoints.
@@ -69,7 +69,7 @@ and `created_at`.
 
 ## Resource surface
 
-The client exposes eight top-level resources:
+The client exposes nine top-level resources:
 
 | Resource                | Main operations                                                                                                             |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -81,6 +81,7 @@ The client exposes eight top-level resources:
 | `client.skills`         | Create, retrieve, list, and delete Skills; manage archives and versions through `skills.versions`.                          |
 | `client.vaults`         | Manage Vaults and provider credentials through `vaults.modelCredentials`.                                                   |
 | `client.modelProviders` | Discover and retrieve the public model-provider catalog.                                                                    |
+| `client.usage`          | List Organization-scoped, append-only raw usage facts with Session, metric, time, and opaque-page filters.                  |
 
 A minimal Agent-to-Session flow looks like this:
 
@@ -291,8 +292,50 @@ delete purge the stored provider key before changing lifecycle state.
 
 Pass Vault IDs to Session creation in preference order. Votrix resolves a
 credential for the Session's model provider and pins that Credential ID. It
-does not silently fall back to a platform model key or switch payers inside an
-existing Session.
+does not switch funding sources inside an existing Session.
+
+## Session funding and raw usage
+
+Native callers can require BYOK, require operator-provisioned platform
+funding, or use the Organization's default funding policy:
+
+```ts
+const session = await client.sessions.create({
+  agent: agent.id,
+  environment_id: environment.id,
+  funding: { type: "platform_credits" },
+});
+```
+
+Valid funding values are `byok`, `platform_credits`, and
+`organization_default`. Omitting `funding` preserves the CMA-compatible wire
+shape and behaves as `organization_default`. The selected source is fixed at
+Session creation and is available on create, retrieve, and list responses at
+`session.status_details.model_credential_binding`. That public binding exposes
+only its source, provider, and safe resource IDs; it never includes provider
+key material or private platform-key coordinates.
+
+Platform funding means an operator-provisioned provider key. It is not a
+prepaid monetary balance. Read the raw provider facts needed for downstream
+accounting through `client.usage`:
+
+```ts
+const page = await client.usage.list({
+  session_id: session.id,
+  metric: "model_tokens",
+  limit: 100,
+  "occurred_at[gte]": "2026-07-01T00:00:00Z",
+});
+
+for (const fact of page.data) {
+  console.log(fact.quantity, fact.unit, fact.provider, fact.model);
+}
+```
+
+Usage uses opaque `next_page` cursors and also supports `occurred_at[gt]`,
+`occurred_at[lt]`, and `occurred_at[lte]`. Entries contain recorded raw
+quantities and provider dimensions; the SDK does not invent an end user,
+price, or monetary cost.
 
 ## API-key safety and server-only use
 

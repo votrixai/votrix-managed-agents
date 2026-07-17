@@ -43,4 +43,5 @@ export {
   SessionResources,
 } from "./resources/sessions.js";
 export { Skills, SkillVersions } from "./resources/skills.js";
+export { Usage } from "./resources/usage.js";
 export { ModelCredentials, Vaults } from "./resources/vaults.js";

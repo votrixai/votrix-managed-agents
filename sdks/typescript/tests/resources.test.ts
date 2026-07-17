@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import Votrix from "../src/index.js";
+import Votrix, {
+  type Session,
+  type SessionFundingBinding,
+  type UsageEntry,
+} from "../src/index.js";
 
 interface RecordedRequest {
   url: URL;
@@ -138,6 +142,7 @@ describe("public resources", () => {
     expect(client.skills).toBeDefined();
     expect(client.vaults).toBeDefined();
     expect(client.modelProviders).toBeDefined();
+    expect(client.usage).toBeDefined();
     expect(client.agents.versions).toBeDefined();
     expect(client.sessions.events).toBeDefined();
     expect(client.sessions.resources).toBeDefined();
@@ -438,6 +443,126 @@ describe("public resources", () => {
         .slice(2)
         .map((request) => request.headers.get("idempotency-key")),
     ).toEqual(Array(4).fill("caller-idempotency-key"));
+  });
+
+  it("sends explicit Session funding and types its immutable response binding", async () => {
+    const sessionPayload = {
+      id: "sess_funded",
+      type: "session",
+      status_details: {
+        model_credential_binding: {
+          version: 1,
+          source: "platform",
+          credential_id: null,
+          vault_id: null,
+          model_provider: "openrouter",
+        },
+      },
+    };
+    const { client, requests } = makeClient((request) => {
+      if (request.method === "GET" && request.url.pathname === "/v1/sessions") {
+        return listResponse([sessionPayload]);
+      }
+      return jsonResponse(
+        sessionPayload,
+        request.method === "POST" ? 201 : 200,
+      );
+    });
+
+    const created: Session = await client.sessions.create({
+      agent: "agt_funded",
+      environment_id: "env_funded",
+      funding: { type: "platform_credits" },
+    });
+    const retrieved: Session = await client.sessions.retrieve(created.id);
+    const listed = await client.sessions.list({ limit: 1 });
+
+    const bindings: Array<SessionFundingBinding | null | undefined> = [
+      created.status_details.model_credential_binding,
+      retrieved.status_details.model_credential_binding,
+      listed.data[0]?.status_details.model_credential_binding,
+    ];
+    expect(bindings.map((binding) => binding?.source)).toEqual([
+      "platform",
+      "platform",
+      "platform",
+    ]);
+    expect(jsonBody(requestAt(requests, 0))).toEqual({
+      agent: "agt_funded",
+      environment_id: "env_funded",
+      funding: { type: "platform_credits" },
+    });
+    expect(requestAt(requests, 1).url.pathname).toBe(
+      "/v1/sessions/sess_funded",
+    );
+    expect(requestAt(requests, 2).url.searchParams.get("limit")).toBe("1");
+  });
+
+  it("lists raw usage with opaque pagination and exact filters", async () => {
+    const usagePayload = (id: string, quantity: number): UsageEntry => ({
+      id,
+      type: "usage",
+      organization_id: "org_sdk",
+      metric: "model_tokens",
+      quantity,
+      unit: "token",
+      provider: "openrouter",
+      model: "deepseek/deepseek-v4-pro",
+      source_type: "session",
+      source_id: "sess_sdk",
+      dimensions: { input_tokens: quantity },
+      data: { accounting_phase: "postflight_actual" },
+      occurred_at: "2026-07-16T14:00:00Z",
+      future_usage_field: "preserved",
+    });
+    const { client, requests } = makeClient((request) => {
+      const page = request.url.searchParams.get("page");
+      if (page === null) {
+        return listResponse([usagePayload("usage_2", 20)], {
+          hasMore: true,
+          nextPage: "usage_opaque_next",
+        });
+      }
+      expect(page).toBe("usage_opaque_next");
+      return listResponse([usagePayload("usage_1", 10)]);
+    });
+
+    const page = await client.usage.list({
+      limit: 1,
+      session_id: "sess_sdk",
+      metric: "model_tokens",
+      "occurred_at[gt]": "2026-07-16T10:00:00Z",
+      "occurred_at[gte]": "2026-07-16T11:00:00Z",
+      "occurred_at[lt]": "2026-07-17T00:00:00Z",
+      "occurred_at[lte]": "2026-07-17T01:00:00Z",
+    });
+    expect(page.data[0]).toMatchObject({
+      id: "usage_2",
+      quantity: 20,
+      future_usage_field: "preserved",
+    });
+    const nextPage = await page.getNextPage();
+    expect(nextPage.data[0]?.id).toBe("usage_1");
+    expect(nextPage.hasNextPage()).toBe(false);
+
+    expect(requests.map((request) => request.url.pathname)).toEqual([
+      "/v1/usage",
+      "/v1/usage",
+    ]);
+    expect(Object.fromEntries(requestAt(requests, 0).url.searchParams)).toEqual(
+      {
+        limit: "1",
+        session_id: "sess_sdk",
+        metric: "model_tokens",
+        "occurred_at[gt]": "2026-07-16T10:00:00Z",
+        "occurred_at[gte]": "2026-07-16T11:00:00Z",
+        "occurred_at[lt]": "2026-07-17T00:00:00Z",
+        "occurred_at[lte]": "2026-07-17T01:00:00Z",
+      },
+    );
+    expect(requestAt(requests, 1).url.searchParams.get("page")).toBe(
+      "usage_opaque_next",
+    );
   });
 
   it("keeps raw page responses readable and preserves distinct resource versions", async () => {

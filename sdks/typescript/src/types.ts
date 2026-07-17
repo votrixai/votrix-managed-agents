@@ -239,6 +239,35 @@ export interface EnvironmentListParams {
 
 // Sessions, events, and attached resources
 
+export type SessionFundingType =
+  "organization_default" | "byok" | "platform_credits";
+
+/** Create-time funding preference. Omission preserves the CMA request shape. */
+export interface SessionFundingRequest {
+  type: SessionFundingType;
+}
+
+export type SessionFundingSource = "vault" | "platform" | "none";
+
+/**
+ * Public, immutable funding binding returned in
+ * `session.status_details.model_credential_binding`.
+ *
+ * Internal secret coordinates are deliberately absent from this type and from
+ * the public API response.
+ */
+export interface SessionFundingBinding extends OpenObject {
+  version: number;
+  source: SessionFundingSource;
+  credential_id: string | null;
+  vault_id: string | null;
+  model_provider: string;
+}
+
+export interface SessionStatusDetails extends OpenObject {
+  model_credential_binding?: SessionFundingBinding | null;
+}
+
 export interface SessionFileResourceInput {
   type: "file";
   file_id: string;
@@ -317,7 +346,7 @@ export interface Session extends OpenObject {
   environment_id: string;
   title?: string | null;
   status: string;
-  status_details: JSONMetadata;
+  status_details: SessionStatusDetails;
   stop_reason?: OpenObject | null;
   run_state?: OpenObject | null;
   sandbox_state?: OpenObject | null;
@@ -342,6 +371,7 @@ export interface SessionCreateParams {
   metadata?: Metadata;
   resources?: readonly SessionResourceInput[];
   vault_ids?: readonly string[];
+  funding?: SessionFundingRequest | null;
 }
 
 export interface SessionUpdateParams {
@@ -428,6 +458,35 @@ export interface SessionResourceUpdateParams {
 
 export interface SessionResourceDeleteParams {
   session_id: string;
+}
+
+// Raw usage
+
+export interface UsageEntry extends OpenObject {
+  id: string;
+  type: "usage";
+  organization_id: string;
+  metric: string;
+  quantity: number;
+  unit: string;
+  provider?: string | null;
+  model?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  dimensions: JSONMetadata;
+  data: JSONMetadata;
+  occurred_at: string;
+}
+
+export interface UsageListParams {
+  limit?: number;
+  page?: string;
+  session_id?: string;
+  metric?: string;
+  "occurred_at[gt]"?: string;
+  "occurred_at[gte]"?: string;
+  "occurred_at[lt]"?: string;
+  "occurred_at[lte]"?: string;
 }
 
 // Files

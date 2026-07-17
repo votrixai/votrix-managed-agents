@@ -6,6 +6,7 @@ import { Files } from "./resources/files.js";
 import { ModelProviders } from "./resources/model-providers.js";
 import { Sessions } from "./resources/sessions.js";
 import { Skills } from "./resources/skills.js";
+import { Usage } from "./resources/usage.js";
 import { Vaults } from "./resources/vaults.js";
 
 /** Promise-based, server-side client for the native Votrix Managed Agents API. */
@@ -18,6 +19,7 @@ export class Votrix extends APIClient {
   readonly skills: Skills;
   readonly vaults: Vaults;
   readonly modelProviders: ModelProviders;
+  readonly usage: Usage;
 
   constructor(options: VotrixOptions = {}) {
     super(options);
@@ -29,6 +31,7 @@ export class Votrix extends APIClient {
     this.skills = new Skills(this);
     this.vaults = new Vaults(this);
     this.modelProviders = new ModelProviders(this);
+    this.usage = new Usage(this);
   }
 }
 

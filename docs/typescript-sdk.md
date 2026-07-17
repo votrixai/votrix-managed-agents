@@ -1,6 +1,6 @@
 ---
 title: TypeScript SDK
-description: Use the server-side @votrix/sdk client for native Managed Agents resources, pagination, SSE, downloads, and provider BYOK.
+description: Use the server-side @votrix/sdk client for native Managed Agents resources, Session funding, raw usage, pagination, SSE, and downloads.
 ---
 
 `@votrix/sdk` is the native, server-side TypeScript client for Votrix Managed
@@ -41,16 +41,17 @@ configuration is separate.
 
 ## Resources
 
-| Client property  | Coverage                                                     |
-| ---------------- | ------------------------------------------------------------ |
-| `apiKeys`        | Organization-key create, list, retrieve, rotate, and revoke. |
-| `agents`         | Agent lifecycle and immutable `versions`.                    |
-| `environments`   | Environment lifecycle.                                       |
-| `sessions`       | Session lifecycle, `events`, SSE, and attached `resources`.  |
-| `files`          | Upload, metadata, list, streamed download, and delete.       |
-| `skills`         | Skill lifecycle, archives, file inputs, and `versions`.      |
-| `vaults`         | Vault lifecycle and nested `modelCredentials`.               |
-| `modelProviders` | Public model-provider discovery.                             |
+| Client property  | Coverage                                                                |
+| ---------------- | ----------------------------------------------------------------------- |
+| `apiKeys`        | Organization-key create, list, retrieve, rotate, and revoke.            |
+| `agents`         | Agent lifecycle and immutable `versions`.                               |
+| `environments`   | Environment lifecycle.                                                  |
+| `sessions`       | Session lifecycle, `events`, SSE, and attached `resources`.             |
+| `files`          | Upload, metadata, list, streamed download, and delete.                  |
+| `skills`         | Skill lifecycle, archives, file inputs, and `versions`.                 |
+| `vaults`         | Vault lifecycle and nested `modelCredentials`.                          |
+| `modelProviders` | Public model-provider discovery.                                        |
+| `usage`          | Raw Organization usage with Session, metric, time, and page filters.    |
 
 Resource and method names use camelCase. Request and response fields preserve
 the API's snake_case wire names.
@@ -143,7 +144,47 @@ await client.vaults.modelCredentials.rotate(vault.id, credential.id, {
 
 Responses never expose the provider key, authentication payload, or internal
 secret-slot name. Sessions receive Vault IDs in preference order; Votrix pins
-the selected Credential ID and does not fall back to a platform model key.
+the selected Credential ID and never switches funding sources during the
+Session.
+
+## Session funding and usage
+
+Native callers can explicitly select the create-time funding behavior:
+
+```ts
+const session = await client.sessions.create({
+  agent: agent.id,
+  environment_id: environment.id,
+  funding: { type: "platform_credits" },
+});
+```
+
+The valid values are `byok`, `platform_credits`, and
+`organization_default`. Omitting the field keeps the CMA-compatible request
+shape and uses the Organization default. The immutable public result is typed
+at `session.status_details.model_credential_binding` on Session create,
+retrieve, and list responses. Secret material and private platform-key
+coordinates are never returned.
+
+List append-only raw usage facts when the trusted Organization backend needs
+Session attribution or downstream accounting:
+
+```ts
+const page = await client.usage.list({
+  session_id: session.id,
+  metric: "model_tokens",
+  limit: 100,
+  "occurred_at[gte]": "2026-07-01T00:00:00Z",
+});
+
+for (const fact of page.data) {
+  console.log(fact.quantity, fact.unit, fact.provider, fact.model);
+}
+```
+
+Pagination uses the opaque `next_page` value automatically. The usage API
+returns provider-reported facts, not prices, balances, or calculated monetary
+costs.
 
 ## Errors and release
 

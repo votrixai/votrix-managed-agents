@@ -8,6 +8,9 @@ interface OpenAPIOperation {
 
 interface OpenAPIDocument {
   paths: Record<string, Record<string, OpenAPIOperation>>;
+  components?: {
+    schemas?: Record<string, { properties?: Record<string, unknown> }>;
+  };
 }
 
 const openAPIPath = new URL(
@@ -67,6 +70,7 @@ describe("committed public OpenAPI surface", () => {
       ],
       "/v1/model_providers": ["get"],
       "/v1/model_providers/{provider_id}": ["get"],
+      "/v1/usage": ["get"],
     };
 
     for (const [path, methods] of Object.entries(expected)) {
@@ -87,5 +91,25 @@ describe("committed public OpenAPI surface", () => {
     expect(sessionListParameters.map((parameter) => parameter.name)).toContain(
       "memory_store_id",
     );
+
+    const usageParameters = document.paths["/v1/usage"]?.get?.parameters ?? [];
+    expect(usageParameters.map((parameter) => parameter.name)).toEqual(
+      expect.arrayContaining([
+        "limit",
+        "page",
+        "session_id",
+        "metric",
+        "occurred_at[gt]",
+        "occurred_at[gte]",
+        "occurred_at[lt]",
+        "occurred_at[lte]",
+      ]),
+    );
+
+    const schemas = document.components?.schemas ?? {};
+    expect(schemas.SessionFundingRequest).toBeDefined();
+    expect(schemas.SessionCreateRequest?.properties?.funding).toBeDefined();
+    expect(schemas.UsageEntryResponse).toBeDefined();
+    expect(schemas.UsagePageResponse).toBeDefined();
   });
 });
