@@ -120,7 +120,11 @@ the current production caller and target SDK both pass the consumer suite.
   terminal completion/error/stop release the active-work reservation
   idempotently.
 - [ ] Deliver ordered token/tool previews across processes, or persist bounded
-  batched deltas that SSE clients can tail by sequence.
+  batched deltas that SSE clients can tail by sequence. Addressed by P2.5 in
+  `PLAN-horizontal-scaling.md`: a Postgres `pg_notify` preview broker
+  (`VMA_PREVIEW_BROKER=pg_notify`) that publishes coalesced preview frames from
+  workers and replays them on API instances, keeping `event_deltas` typewriter
+  streaming across the API/worker split with no public-API change.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
 
@@ -360,6 +364,58 @@ short-lived backend-signed JWT containing `organization_id`, audience, scopes,
 and expiry instead of storing one long-lived backend API key per Organization.
 Direct Claude-compatible SDK users can continue to receive Organization-scoped API
 keys. Do not trust an unsigned tenant identifier forwarded by another service.
+
+### Deferred — P3 Cloud Tasks per-turn dispatch and autoscaling
+
+Decision (2026-07-17): do not build now. P1 multi-instance hardening plus the
+P2 API/worker service split with a fixed, manually scaled worker fleet is the
+accepted operating model. Implementation spec for P1+P2 lives in
+`PLAN-horizontal-scaling.md`; the operator runbook is
+`private-docs/scaling-runbook.md`.
+
+What P3 is: one Cloud Tasks task per queued turn, pushed to a private
+OIDC-authenticated worker endpoint, so Cloud Run scales worker instances on
+in-flight turns.
+
+Facts settled during evaluation (do not re-litigate without new data):
+
+- It does not improve performance under normal load. Turn execution time is
+  unchanged and pickup latency improves by only ~0.2s versus polling. Its sole
+  user-visible effect is under saturation: unbounded queue waiting becomes a
+  few seconds of instance cold start.
+- Alternatives were rejected for concrete reasons: Pub/Sub push (600s max ack
+  deadline < 900s turn timeout), queue-depth autoscaling (Cloud Run has no
+  custom-metric scaling), Cloud Run worker pools (manual instance counts ≈ P2),
+  GKE + KEDA (disproportionate ops burden).
+- Constraint to re-check before building: turn timeout must remain ≤ 30
+  minutes (Cloud Tasks dispatch deadline). `vma_run_timeout_seconds` is 900s
+  today.
+
+Build triggers — start this work when any one holds:
+
+- [ ] Work items regularly wait tens of seconds in `queued` while every worker
+  slot is busy.
+- [ ] Operators are adjusting worker instance counts monthly or more often.
+- [ ] The fixed fleet has grown to ≥5 mostly idle instances kept for burst
+  headroom.
+- [ ] A known spiky workload is committed (for example a customer batch-launching
+  many Sessions at once) or an unpredictable public launch is scheduled.
+
+Scope when built (~3–5 days, purely additive after P2): a dispatcher module
+creating named tasks (`wk-{work_id}-a{attempt}`) after commit; an
+OIDC-authenticated `POST /internal/work/{id}/execute` route on the worker
+service calling the existing idempotent `execute_work_item`; an explicit
+execute-outcome → HTTP status mapping table — the one design-sensitive piece:
+infrastructure retries must never consume `vma_work_max_attempts` (only
+attempts that actually acquire a lease may count); the embedded poller demoted
+to a 15–30s reconciler; a queue + IAM setup script; autoscaling manifest pins
+with `containerConcurrency` as the per-instance turn bound; race and mapping
+tests.
+
+Known risks to engineer around: retry-semantics coupling with the attempt cap,
+and elasticity amplifying downstream pressure (Supabase connection limits, E2B
+sandbox concurrency, model-provider rate limits, spend). Derive `maxScale`
+from the connection budget in the scaling runbook, never from intuition.
 
 ### Explicitly deferred
 
