@@ -356,7 +356,7 @@ Constants: `_CHANNEL = "vma_preview"`; `PREVIEW_INSTANCE_ID = uuid4().hex` (proc
 - [x] 4th lease of a failing work item → work `error/max_attempts_exceeded`, session terminated with `session.error` + `session.status_terminated` events, quota released; cap=0 disables.
 - [x] No transaction holds a work-row lock while acquiring a session-row lock; the exhaustion path commits the work-row transaction before opening the Session transaction.
 - [x] One `AsyncPostgresSaver` + one connection pool per process; `setup()` once; lifespan closes it; SQLite/memory paths remain fresh per call.
-- [ ] Real-PostgreSQL janitor contention remains an external release gate when no isolated `VMA_TEST_POSTGRES_URL` is available. The advisory lock is implemented connection-scoped, and non-Postgres behavior has focused coverage.
+- [x] A non-persistent development Supabase smoke held the janitor advisory lock on one connection, verified that a competing cleanup skipped, released it, and verified that the next cleanup ran. Non-Postgres behavior also has focused coverage.
 - [x] Worker poll loop survives transient exceptions (`once=True` still propagates).
 - [x] `combined` role preserves local/test behavior with routers and workers.
 - [x] Worker app exposes only health endpoints; API app runs no worker or janitor tasks.
