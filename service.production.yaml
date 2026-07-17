@@ -75,7 +75,7 @@ spec:
             - name: VMA_ORGANIZATION_STORAGE_BYTES
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
-              value: "https://app.votrix.ai,https://docs.votrixai.com"
+              value: "https://vma-builder-app.vercel.app,https://app.votrix.ai,https://docs.votrixai.com"
             - name: VMA_DEFAULT_MODEL_PROVIDER
               value: "openrouter"
             - name: VMA_MODEL_PROVIDERS

@@ -135,12 +135,17 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
                 flat,
             ), f"{name} is not pinned for {environment}"
 
+        builder_origin = (
+            "https://vma-builder-app-staging.vercel.app"
+            if environment == "staging"
+            else "https://vma-builder-app.vercel.app"
+        )
         browser_origin = (
             "https://staging-app.votrix.ai"
             if environment == "staging"
             else "https://app.votrix.ai"
         )
-        expected_cors = f"{browser_origin},https://docs.votrixai.com"
+        expected_cors = f"{builder_origin},{browser_origin},https://docs.votrixai.com"
         assert re.search(
             rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
             flat,
