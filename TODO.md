@@ -369,59 +369,85 @@ and expiry instead of storing one long-lived backend API key per Organization.
 Direct Claude-compatible SDK users can continue to receive Organization-scoped API
 keys. Do not trust an unsigned tenant identifier forwarded by another service.
 
-### Deferred — P3 Cloud Tasks per-turn dispatch and autoscaling
+### Roadmap — P3 auto scale: Cloud Tasks per-turn dispatch (committed end state)
 
-Decision (2026-07-17): do not build now. P1 multi-instance hardening plus the
-P2 API/worker service split and mandatory P2.5 cross-instance preview transport,
-with a warm, manually bounded worker fleet, are the accepted operating model.
-The implementation record for P1+P2+P2.5 lives in
-`PLAN-horizontal-scaling.md`; the operator runbook is
-`private-docs/scaling-runbook.md`.
+Decision history (2026-07-17): first deferred in favor of the fixed worker
+fleet, then committed the same day as the target operating model once the
+design was laid out. Sequencing is strict: this starts only after the P1
+hardening and the P2/P2.5 split from `PLAN-horizontal-scaling.md` have
+shipped, and Stage A below is a hard gate for Stage B. Until it lands, the
+fixed fleet in `private-docs/scaling-runbook.md` is the operating model.
 
-What P3 is: one Cloud Tasks task per queued turn, pushed to a private
-OIDC-authenticated worker endpoint, so Cloud Run scales worker instances on
-in-flight turns.
+Shape — "turn = request", the Cloud Run-native contract. Postgres stays the
+only source of truth; Cloud Tasks is a wake-up signal and scale driver, so a
+broken or misconfigured queue degrades to today's polling instead of losing
+work:
+
+    user turn → Postgres work item (durable, exists today)
+             → named Cloud Task (`wk-{work_id}-a{attempt}`)
+             → OIDC `POST /internal/work/{id}/execute` on the worker service
+             → existing lease-fenced `execute_work_item`
+             → Cloud Run scales worker instances on in-flight turns
 
 Facts settled during evaluation (do not re-litigate without new data):
 
-- It does not improve performance under normal load. Turn execution time is
-  unchanged and pickup latency improves by only ~0.2s versus polling. Its sole
+- No performance change under normal load (~0.2s faster pickup). The sole
   user-visible effect is under saturation: unbounded queue waiting becomes a
-  few seconds of instance cold start.
+  few seconds of cold start. Buy the cold-start tail down with a minScale
+  floor.
+- Turns execute inside the HTTP request, so Cloud Run scale-in does not reap
+  instances with executing turns (in-flight requests are drained). The
+  residual interruption risk — infrastructure SIGTERM (10s grace) and OOM —
+  already exists today at `maxScale=1`; Stage A bounds its blast radius.
 - Alternatives were rejected for concrete reasons: Pub/Sub push (600s max ack
   deadline < 900s turn timeout), queue-depth autoscaling (Cloud Run has no
-  custom-metric scaling), Cloud Run worker pools (manual instance counts ≈ P2),
-  GKE + KEDA (disproportionate ops burden).
+  custom-metric scaling), Cloud Run worker pools (manual instance counts ≈
+  fixed fleet), GKE + KEDA (disproportionate ops burden).
 - Constraint to re-check before building: turn timeout must remain ≤ 30
   minutes (Cloud Tasks dispatch deadline). `vma_run_timeout_seconds` is 900s
   today.
 
-Build triggers — start this work when any one holds:
+#### Stage A — bounded-duplicate turn replay (hard gate, ~2–4 days)
 
-- [ ] Work items regularly wait tens of seconds in `queued` while every worker
-  slot is busy.
-- [ ] Operators are adjusting worker instance counts monthly or more often.
-- [ ] The manually provisioned fleet has grown to ≥5 mostly idle instances kept
-  for burst headroom.
-- [ ] A known spiky workload is committed (for example an Organization
-  batch-launching many Sessions at once) or an unpredictable public launch is
-  scheduled.
+Absorbs the open P0-1 item "Prevent duplicate model execution, event emission,
+and raw usage attribution". The honest contract is bounded at-least-once, not
+exactly-once (issued E2B commands cannot be rolled back):
 
-Scope when built (~3–5 days, purely additive after P2): a dispatcher module
-creating named tasks (`wk-{work_id}-a{attempt}`) after commit; an
-OIDC-authenticated `POST /internal/work/{id}/execute` route on the worker
-service calling the existing idempotent `execute_work_item`; an explicit
-execute-outcome → HTTP status mapping table — the one design-sensitive piece:
-infrastructure retries must never consume `vma_work_max_attempts` (only
-attempts that actually acquire a lease may count); the embedded poller demoted
-to a 15–30s reconciler; a queue + IAM setup script; autoscaling manifest pins
-with `containerConcurrency` as the per-instance turn bound; race and mapping
-tests.
+- [ ] A turn whose graph run completed is never re-executed: make finalization
+  crash-safe so a crash between run completion and the finalize commit cannot
+  replay the whole turn on retry (detect via the durable checkpoint state for
+  the already-consumed input seq).
+- [ ] Replaying an interrupted superstep does not duplicate already-persisted
+  events where identity is derivable, and every retried attempt appends a
+  visible retry-marker event so operators and clients can see the takeover.
+- [x] Model-usage attribution is already work-fenced via the
+  `model_tokens:{work_id}` idempotency key.
+- [ ] Replay count is bounded by `VMA_WORK_MAX_ATTEMPTS` (ships with P1.1).
 
-Known risks to engineer around: retry-semantics coupling with the attempt cap,
-and elasticity amplifying downstream pressure (Supabase connection limits, E2B
-sandbox concurrency, model-provider rate limits, spend). Derive `maxScale`
-from the connection budget in the scaling runbook, never from intuition.
+#### Stage B — Cloud Tasks push dispatch (~3–5 days, purely additive after P2)
+
+- [ ] Dispatcher module creating named tasks (`wk-{work_id}-a{attempt}`) after
+  commit; creation is idempotent (ALREADY_EXISTS swallowed).
+- [ ] OIDC-authenticated `POST /internal/work/{id}/execute` on the worker
+  service calling `execute_work_item`.
+- [ ] Explicit execute-outcome → HTTP status mapping table — the one
+  design-sensitive piece: infrastructure retries must never consume
+  `VMA_WORK_MAX_ATTEMPTS` (only attempts that actually acquire a lease count);
+  terminal outcomes return 200; only transient failures return 5xx.
+- [ ] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
+  the recovery path for expired leases and missed dispatches. Push is an
+  optimization over poll, never a replacement.
+- [ ] Queue + IAM setup script; autoscaling manifest pins with
+  `containerConcurrency` as the per-instance turn bound; `maxScale` derived
+  from the connection/E2B/spend budgets in the scaling runbook (never from
+  intuition); `minScale ≥ 1`.
+- [ ] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
+  retry storms, reconciler pickup of undispatched work.
+
+Demand signals that raise this roadmap's priority (informational now, no
+longer gates): queue waits regularly reaching tens of seconds; monthly manual
+fleet adjustments; ≥5 mostly idle instances held for burst headroom; a
+committed spiky workload.
 
 ### Explicitly deferred
 
