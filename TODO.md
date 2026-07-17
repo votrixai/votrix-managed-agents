@@ -372,11 +372,14 @@ keys. Do not trust an unsigned tenant identifier forwarded by another service.
 ### Roadmap — P3 auto scale: Cloud Tasks per-turn dispatch (committed end state)
 
 Decision history (2026-07-17): first deferred in favor of the fixed worker
-fleet, then committed the same day as the target operating model once the
-design was laid out. Sequencing is strict: this starts only after the P1
-hardening and the P2/P2.5 split from `PLAN-horizontal-scaling.md` have
-shipped, and Stage A below is a hard gate for Stage B. Until it lands, the
-fixed fleet in `private-docs/scaling-runbook.md` is the operating model.
+fleet, then committed the same day as the target operating model, then — on
+learning the service has not launched yet — pulled into the first release:
+the full sequence P1 → P2 → P2.5 → Stage A → Stage B → load test ships as the
+launch architecture. Implementation spec: `PLAN-p3-autoscale.md` (companion to
+`PLAN-horizontal-scaling.md`, which must land first; separate commits, never
+interleaved). Stage A below remains a hard gate for Stage B. The fixed fleet
+in `private-docs/scaling-runbook.md` stays as the `VMA_WORK_DISPATCH_MODE=poll`
+fallback mode.
 
 Shape — "turn = request", the Cloud Run-native contract. Postgres stays the
 only source of truth; Cloud Tasks is a wake-up signal and scale driver, so a
