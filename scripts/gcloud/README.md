@@ -305,9 +305,10 @@ VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL=false \
 ```
 
 The default is `true`. Both triggers ignore changes limited to `docs/**`,
-`website/**`, `sdks/**`, `README.md`, and `CHANGELOG.md`, so documentation and
-SDK-only commits do not rebuild the API image or run migrations. A commit that
-also changes any non-ignored path still triggers the normal deployment.
+`website/**`, `sdks/**`, `infra/cloudflare/**`, `README.md`, and
+`CHANGELOG.md`, so documentation, SDK, and Cloudflare-router-only commits do
+not rebuild the API image or run migrations. A commit that also changes any
+non-ignored path still triggers the normal deployment.
 
 Cloud Build uses the same manifests and the same blocking migration-job sequence
 as manual deployment.

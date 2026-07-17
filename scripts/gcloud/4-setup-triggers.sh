@@ -11,7 +11,7 @@ OWNER="${1:?Usage: $0 <github-owner> <repo-name>}"
 REPO="${2:?Usage: $0 <github-owner> <repo-name>}"
 TRIGGER_REGION="${VMA_TRIGGER_REGION:-global}"
 PRODUCTION_REQUIRE_APPROVAL="${VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true}"
-IGNORED_FILES="docs/**,website/**,sdks/**,README.md,CHANGELOG.md"
+IGNORED_FILES="docs/**,website/**,sdks/**,infra/cloudflare/**,README.md,CHANGELOG.md"
 
 case "$PRODUCTION_REQUIRE_APPROVAL" in
   true)

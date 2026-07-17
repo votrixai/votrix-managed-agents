@@ -324,7 +324,10 @@ def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_chan
     assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
     assert 'PRODUCTION_APPROVAL_FLAG="--require-approval"' in script
     assert "--no-require-approval" in script
-    assert 'IGNORED_FILES="docs/**,website/**,sdks/**,README.md,CHANGELOG.md"' in script
+    assert (
+        'IGNORED_FILES="docs/**,website/**,sdks/**,infra/cloudflare/**,'
+        'README.md,CHANGELOG.md"' in script
+    )
     assert script.count('--ignored-files="$IGNORED_FILES"') == 2
 
 

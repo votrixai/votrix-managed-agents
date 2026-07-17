@@ -1,0 +1,27 @@
+{
+  "name": "@votrix/vma-api-router",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types src/worker-configuration.d.ts",
+    "types:check": "wrangler types --check src/worker-configuration.d.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run types:check && npm run typecheck && npm test",
+    "dry-run:staging": "wrangler deploy --env staging --dry-run --outdir dist/staging",
+    "dry-run:production": "wrangler deploy --env production --dry-run --outdir dist/production",
+    "deploy:staging": "node scripts/assert-deployable-origin.mjs staging && wrangler deploy --env staging",
+    "deploy:production": "node scripts/assert-deployable-origin.mjs production && wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.5",
+    "@types/node": "26.1.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.111.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

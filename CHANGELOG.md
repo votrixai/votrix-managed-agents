@@ -66,6 +66,10 @@ operator-provisioned Organization platform funding.
   multipart uploads, streaming binary downloads, reconnecting/deduplicating
   SSE, secret-safe responses, ESM/CommonJS builds, resource/transport tests,
   and npm Trusted Publishing workflows.
+- A no-cache Cloudflare Worker router with isolated staging and production
+  environments, exact-host and Cloud Run-origin validation, streamed request
+  and SSE response bodies, request-ID propagation, redirect rewriting, and
+  Custom Domains for `staging-api.votrixai.com` and `api.votrixai.com`.
 - Public-beta readiness documentation and a dated next-session handoff.
 
 ### Changed
@@ -117,6 +121,12 @@ operator-provisioned Organization platform funding.
   Vault credential slot only. Embedded `api_key` values are rejected and
   `api_key_env` is no longer resolved from process environment. Cloud Run
   deployment inputs no longer contain model-provider keys.
+- Hosted staging and production now receive environment-isolated Supabase URL
+  and publishable-key Secret Manager bindings. Browser CORS explicitly admits
+  `X-Organization-Id` from the configured Votrix app and documentation origins.
+- Cloud Build ignores Cloudflare-router-only changes as well as documentation
+  and SDK-only changes, so an edge routing update cannot unnecessarily rebuild
+  the API image or run database migrations.
 - The one-binding-per-Session multiagent MVP now rejects mixed-provider rosters
   at Session creation. Keyless `fake` and `ollama` providers bind with source
   `none`.
@@ -132,6 +142,12 @@ operator-provisioned Organization platform funding.
 - Session creation retries no longer create duplicate Sessions when callers or
   the native SDK reuse an idempotency key.
 - Native SDK HTTP errors retain the server's stable error code and request ID.
+- The production image now installs the PostgreSQL binary wrapper explicitly,
+  preventing hosted Session execution from failing with a missing `libpq`
+  implementation on the slim Python base image.
+- Runtime `session.error` events now use the Anthropic-compatible nested error
+  contract while normalizing historical rows, and Cloud Logging receives real
+  exception tracebacks plus severity instead of an unevaluated `exc_info` flag.
 
 ### Security
 
@@ -184,6 +200,9 @@ operator-provisioned Organization platform funding.
 - Added deterministic E2B estimate formula/configuration tests and lifecycle
   tests for open/close interval accumulation, idempotent closure, pause/resume,
   delete, disabling, and non-E2B providers; no external E2B call is required.
+- Added Cloudflare workerd coverage for streaming uploads and SSE, auth/header
+  preservation, request correlation, redirects, cache bypass, configuration
+  validation, and fail-closed upstream errors.
 - Existing validation entry points include the server test suite, dual-version
   Anthropic consumer contract matrix, Alembic upgrade/check, SDK pytest/pyright/
   build/wheel smoke, and Fumadocs typecheck/lint/build.
