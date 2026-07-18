@@ -204,8 +204,9 @@ The maintained horizontally scaled topology includes:
 - Private S3-compatible object storage for bytes and artifacts.
 - A private Cloud Tasks-driven worker service with a five-turn per-instance
   limit and a permanent PostgreSQL reconciler for missed dispatches and expired
-  leases. Production runs `minScale=1 / maxScale=8`; staging runs
-  `minScale=1 / maxScale=2`.
+  leases. Production and staging initially run `minScale=1 / maxScale=2`.
+  Production can raise its independent bound after the larger fleet passes the
+  database, E2B, provider, and spend gates in the scaling runbook.
 
 Hosted manifests use `VMA_PREVIEW_BROKER=pg_notify`; workers publish and API
 processes hold one dedicated PostgreSQL `LISTEN` connection each. Local and
