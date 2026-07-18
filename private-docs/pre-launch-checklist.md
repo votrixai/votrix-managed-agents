@@ -85,16 +85,13 @@ a one-way door in practice.
             `rescheduling`/`retry_at`, attempt cap, bounded at-least-once tool
             side effects (recommend `tool_use_id` idempotency keys for
             high-risk custom tools), full `requires_action` handshake.
-      - [ ] Streaming guide: SSE endpoints, `Last-Event-ID` resume semantics,
-            cursor-less open behavior, `event_deltas` as best-effort preview,
-            reconnect example code.
-      - [ ] Rate limits & quotas reference: the four quota families and the
-            `X-RateLimit-*` / `X-Quota-*` header tables, 429 handling.
-      - [ ] Errors reference: envelope shape, stable codes, `retry_status`
-            semantics, what to retry.
+      - [x] Streaming guide (`docs/streaming.md`, shipped 2026-07-18).
+      - [x] Rate limits & quotas reference (`docs/rate-limits.md`, shipped
+            2026-07-18).
+      - [x] Errors reference (`docs/errors.md`, shipped 2026-07-18).
+      - [x] Limits table (`docs/limits.md`, shipped 2026-07-18).
       - [ ] Nice-to-have: quickstart (if `index.mdx` isn't one), custom-tools
-            walkthrough, idempotency page, limits table (50MB upload / 64MB
-            session input / 25MB skill / 900s turn budget).
+            walkthrough, idempotency page.
 
 ## Explicitly NOT launch blockers
 
