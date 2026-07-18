@@ -16,8 +16,8 @@ import './global.css';
 export const metadata: Metadata = {
   metadataBase: new URL('https://docs.votrixai.com'),
   title: {
-    default: 'Votrix Managed Agents',
-    template: '%s | Votrix Managed Agents',
+    default: 'Votrix Managed Agents (VMA)',
+    template: '%s | Votrix Managed Agents (VMA)',
   },
   description:
     'Open-source infrastructure and API reference for long-running managed agents.',

@@ -1,4 +1,4 @@
-# Votrix Managed Agents Python SDK
+# Votrix Managed Agents (VMA) Python SDK
 
 `votrix` is the Python client for the native Votrix Managed Agents API.
 `AsyncVotrix` covers the broader native resource surface; `Votrix` provides a
@@ -39,8 +39,8 @@ Pass the API key and service URL explicitly:
 from votrix import AsyncVotrix
 
 client = AsyncVotrix(
-    api_key="vma_...",
-    base_url="https://managed-agents.example.com",
+    api_key="vma_live_...",
+    base_url="https://vma.example.com",
 )
 ```
 
@@ -48,8 +48,8 @@ Alternatively, set both environment variables and construct the client with no
 credentials in application code:
 
 ```bash
-export VOTRIX_API_KEY="vma_..."
-export VOTRIX_BASE_URL="https://managed-agents.example.com"
+export VMA_API_KEY="vma_live_..."
+export VMA_BASE_URL="https://vma.example.com"
 ```
 
 ```python
@@ -58,14 +58,18 @@ from votrix import AsyncVotrix
 client = AsyncVotrix()
 ```
 
-`base_url` or `VOTRIX_BASE_URL` is always required. The default authentication
-scheme sends `x-api-key`. For a deployment that accepts bearer authentication,
-select it explicitly:
+`base_url` or `VMA_BASE_URL` is always required. `VOTRIX_VMA_API_KEY` and
+`VOTRIX_VMA_BASE_URL` are supported as namespaced aliases. The default
+authentication scheme sends `x-api-key`. For a deployment that accepts bearer
+authentication, select it explicitly:
+
+Production keys start with `vma_live_`; staging, development, local, and test
+keys start with `vma_test_`.
 
 ```python
 client = AsyncVotrix(
-    api_key="vma_...",
-    base_url="https://managed-agents.example.com",
+    api_key="vma_live_...",
+    base_url="https://vma.example.com",
     auth_scheme="bearer",
 )
 ```
@@ -215,8 +219,8 @@ The same BYOK lifecycle is available synchronously:
 from votrix import Votrix
 
 with Votrix(
-    api_key="vma_...",
-    base_url="https://managed-agents.example.com",
+    api_key="vma_live_...",
+    base_url="https://vma.example.com",
 ) as client:
     provider = client.model_providers.retrieve("openrouter")
     vault = client.vaults.create(display_name="End-user credentials")

@@ -231,12 +231,17 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
                     flat,
                 ), f"{name} is not pinned for {role_path}"
 
+        builder_origin = (
+            "https://vma-builder-app-staging.vercel.app"
+            if environment == "staging"
+            else "https://vma-builder-app.vercel.app"
+        )
         browser_origin = (
             "https://staging-app.votrix.ai"
             if environment == "staging"
             else "https://app.votrix.ai"
         )
-        expected_cors = f"{browser_origin},https://docs.votrixai.com"
+        expected_cors = f"{builder_origin},{browser_origin},https://docs.votrixai.com"
         for role_path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
             assert re.search(
                 rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
@@ -270,6 +275,7 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
     assert "--redact-secret" in operator_script
     assert "vma-operator-api-key" in operator_script
     assert "--set-secrets" not in operator_script
+    assert operator_script.count('APP_ENV="$TARGET" uv run') == 2
 
 
 def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:

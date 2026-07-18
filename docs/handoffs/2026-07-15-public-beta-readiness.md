@@ -293,7 +293,7 @@ The last command writes the plaintext API key once. Run it in a trusted
 administrator environment and move the output directly to the intended secret
 store. Do not write it into the repository or service logs. Use the
 authenticated API for later keys and rotations. Local/development clients may
-read the stored Organization secret through `VOTRIX_API_KEY`; the service does not
+read the stored Organization secret through `VMA_API_KEY`; the service does not
 use that client variable as a process-global authentication setting.
 
 ### Checked-in Cloud Run path

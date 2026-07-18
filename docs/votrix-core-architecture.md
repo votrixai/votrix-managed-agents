@@ -202,8 +202,10 @@ The maintained horizontally scaled topology includes:
 - PostgreSQL for control-plane data, LangGraph checkpoints, and the best-effort
   hosted preview transport.
 - Private S3-compatible object storage for bytes and artifacts.
-- A manually scaled worker fleet that polls durable work independently from API
-  request autoscaling.
+- A private Cloud Tasks-driven worker service with a five-turn per-instance
+  limit and a permanent PostgreSQL reconciler for missed dispatches and expired
+  leases. Production runs `minScale=1 / maxScale=8`; staging runs
+  `minScale=1 / maxScale=2`.
 
 Hosted manifests use `VMA_PREVIEW_BROKER=pg_notify`; workers publish and API
 processes hold one dedicated PostgreSQL `LISTEN` connection each. Local and
@@ -218,9 +220,10 @@ use their own session/direct URL.
 
 This topology is horizontally operable but not an exactly-once side-effect
 engine. Provider calls, MCP tools, and sandbox commands still need their own
-idempotency and cancellation semantics. A production scheduler for due
-Deployments, webhook delivery, and queue-driven push dispatch/automatic worker
-scaling remain separate future services; P3 is deliberately deferred.
+idempotency and cancellation semantics. Cloud Tasks provides per-turn push
+dispatch and worker autoscaling, while PostgreSQL work rows and the reconciler
+remain authoritative. A production scheduler for due Deployments and webhook
+delivery remain separate future services.
 
 ## Data ownership
 

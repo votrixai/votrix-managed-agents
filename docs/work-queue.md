@@ -11,8 +11,10 @@ This queue is visible state for session execution. It does not mean local develo
 
 - User events enqueue a work item with `session_id`, trigger, attempt count, and queued timestamp.
 - `cloud` environments can be consumed inline in local mode. The checked-in
-  hosted profile separates API instances from a private, manually scaled Cloud
-  Run worker fleet; each worker process runs bounded durable consumers.
+  hosted profile separates API instances from a private Cloud Run worker
+  service. Cloud Tasks sends one OIDC-authenticated request per turn, each
+  instance admits at most five concurrent turns, and a permanent PostgreSQL
+  reconciler recovers missed dispatches and expired leases.
 - `local` environments are an explicit development/test escape hatch and are also consumed inline.
 - `self_hosted` environments only enqueue work. Workers use the environment work routes to lease and report progress.
 - `GET /v1/environments/{environment_id}/work/poll` leases one queued item and
@@ -39,11 +41,12 @@ This queue is visible state for session execution. It does not mean local develo
   keeps its reservation.
 
 This durable queue and the Session execution lease support the maintained
-multi-instance worker fleet. They fence stale terminal writes and share
+multi-instance worker service. They fence stale terminal writes and share
 checkpoints through PostgreSQL, but they do not make provider, MCP, or sandbox
-side effects exactly-once. Strong worker identity/RBAC, managed push dispatch,
-queue-depth autoscaling, and a separate dead-letter resource remain future
-work; P3 is deliberately deferred.
+side effects exactly-once. Hosted turns use named Cloud Tasks as wake-up and
+autoscaling signals; PostgreSQL remains the source of truth, and the permanent
+reconciler preserves progress when task creation or delivery fails. A separate
+dead-letter resource and stronger worker identity/RBAC remain future work.
 
 Live previews do not travel through work rows. Local mode defaults to the
 in-process preview bus, while checked-in hosted services publish bounded frames

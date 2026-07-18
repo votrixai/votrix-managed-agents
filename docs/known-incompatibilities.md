@@ -153,16 +153,19 @@ The maintained Cloud Run deployment uses database-backed work and Session
 execution leases across multiple API and worker instances. Checkpoint state is
 shared in PostgreSQL, stale generations are fenced before durable event and
 terminal writes, cleanup is serialized with a PostgreSQL advisory lock, and
-work retries have a terminal attempt cap. These guarantees make the checked-in
-fixed worker fleet safe to operate across instances.
+work retries have a terminal attempt cap. Named Cloud Tasks drive the private
+worker service from one to eight production instances or one to two staging
+instances, with at most five turns per instance. A permanent PostgreSQL
+reconciler recovers missed dispatches and expired leases.
 
-They do not turn remote effects into exactly-once operations. A worker can lose
-its lease after a provider request or sandbox command has started, and recovery
-may repeat an effect that lacks its own idempotency key. Keep external tools
-idempotent where possible and treat durable work/event state—not preview
-delivery—as authoritative. Per-turn push dispatch and queue-depth-driven worker
-autoscaling remain deferred P3 work; the current workers poll PostgreSQL and are
-scaled manually.
+These guarantees do not turn remote effects into exactly-once operations. A
+worker can lose its lease after a provider request or sandbox command has
+started, and recovery may repeat an effect that lacks its own idempotency key.
+Keep external tools idempotent where possible and treat durable work/event
+state—not Cloud Tasks or preview delivery—as authoritative. Cloud Tasks
+provides per-turn push dispatch and request-driven worker autoscaling; the
+PostgreSQL reconciler remains the correctness fallback rather than the primary
+scale signal.
 
 ### Cancellation is not end-to-end
 

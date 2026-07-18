@@ -24,8 +24,8 @@ undoes; before launch it is a test-writing exercise.
       deploys, sweep, drop old key).
 
 Why pre-launch: today `vma_encryption_key` is a single key with no rotation
-path (verified in `app/secret_cipher.py`); once customer BYOK credentials
-accumulate, any key incident forces re-onboarding every customer.
+path (verified in `app/secret_cipher.py`); once Organization BYOK credentials
+accumulate, any key incident forces re-onboarding every affected Organization.
 
 ### 3. Backup / PITR + restore drill  (owner: operator)
 - [ ] PITR (or equivalent continuous backup) enabled on the **production**
@@ -52,7 +52,7 @@ work queue, vault). Nothing in the repo or scripts currently mentions backups.
 
 ### 5. Region / data residency  (owner: operator; record the decision)
 - [ ] Confirm the stack's regions (Cloud Run `us-central1`, Supabase AWS
-      region, R2, E2B) against target-customer expectations, or explicitly
+      region, R2, E2B) against target-account requirements, or explicitly
       record "no residency commitment at launch": ______
 
 Why pre-launch: moving regions later is a full data migration with downtime —
@@ -68,8 +68,8 @@ a one-way door in practice.
       `votrixai.com` roots. Pick the permanent API hostname before any client
       SDK configuration points at it: ______
 - [ ] **Deletion semantics**: the schema soft-deletes (`deleted_at`); define
-      the hard-delete path (DB rows + R2 objects + E2B teardown) for customer
-      data-deletion requests before there is real customer data.
+      the hard-delete path (DB rows + R2 objects + E2B teardown) for Organization
+      data-deletion requests before there is real Organization data.
 
 ## Explicitly NOT launch blockers
 

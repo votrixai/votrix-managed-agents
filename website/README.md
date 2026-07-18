@@ -1,4 +1,4 @@
-# Votrix documentation site
+# Votrix Managed Agents (VMA)
 
 This directory contains the Fumadocs application for Votrix Managed Agents.
 Narrative content remains in the repository-level `docs/` directory so product

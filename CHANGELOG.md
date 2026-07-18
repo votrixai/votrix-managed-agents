@@ -65,7 +65,7 @@ operator-provisioned Organization platform funding.
   SSE with `Last-Event-ID`, bounded replay-safe retries, typed request IDs and
   stable error codes, API-key administration, and automatic Session/event
   idempotency keys.
-- A server-side `@votrix/sdk` TypeScript client with Anthropic-style
+- A server-side `@votrix/managed-agents` TypeScript client with Anthropic-style
   `APIPromise` and `PagePromise` ergonomics, all public native resources,
   multipart uploads, streaming binary downloads, reconnecting/deduplicating
   SSE, secret-safe responses, ESM/CommonJS builds, resource/transport tests,
@@ -73,11 +73,16 @@ operator-provisioned Organization platform funding.
 - A no-cache Cloudflare Worker router with isolated staging and production
   environments, exact-host and Cloud Run-origin validation, streamed request
   and SSE response bodies, request-ID propagation, redirect rewriting, and
-  Custom Domains for `staging-api.votrixai.com` and `api.votrixai.com`.
+  Custom Domains for `staging-vma.votrixai.com` and `vma.votrixai.com`.
 - Public-beta readiness documentation and a dated next-session handoff.
 
 ### Changed
 
+- The external product contract is now explicitly Votrix Managed Agents (VMA):
+  the TypeScript package is `@votrix/managed-agents`, client credentials use
+  `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use
+  `vma_live_` in production or `vma_test_` everywhere else. Generic main-product
+  Votrix SDK and credential names are no longer consumed by VMA clients.
 - **Pre-launch breaking reset:** the top-level tenant is now Organization,
   identified by `organization_id` and `org_*` IDs. Legacy tenant names,
   fields, CLI flags, defaults, and compatibility aliases were removed. Existing
@@ -90,9 +95,10 @@ operator-provisioned Organization platform funding.
   append-only `resources.add` downloads only the new file, while legacy
   bindings perform one compatibility hydration before persisting a descriptor.
 - The Cloud Run beta profile now separates public API instances from a private,
-  manually scaled worker fleet. Production starts with two workers and five
-  turn consumers per worker; API request autoscaling is independent from Agent
-  turn capacity.
+  Cloud Tasks-driven worker service. Production keeps one warm worker, permits
+  up to eight, and limits each instance to five concurrent turns; staging keeps
+  one warm worker and permits two. A permanent PostgreSQL reconciler recovers
+  missed dispatches and expired leases independently of API request scaling.
 - PostgreSQL control-plane traffic now uses a bounded, configurable SQLAlchemy
   application pool by default; SQLite keeps `NullPool`, and
   `VMA_DB_POOL_SIZE=0` is the explicit PostgreSQL opt-out.

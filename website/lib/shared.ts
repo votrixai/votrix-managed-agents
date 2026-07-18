@@ -1,4 +1,4 @@
-export const appName = 'Votrix Managed Agents';
+export const appName = 'Votrix Managed Agents (VMA)';
 export const appDescription =
   'Build and operate long-running agents through a durable, Organization-scoped REST API.';
 export const docsRoute = '/docs';

@@ -6,6 +6,7 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db.models import ApiKey
 from app.ids import new_id
 from app.organization import resolve_organization_id
@@ -15,10 +16,50 @@ API_KEYS_MANAGE_SCOPE = "api_keys:manage"
 WORKER_SCOPE = "worker"
 KNOWN_API_KEY_SCOPES = frozenset({API_SCOPE, API_KEYS_MANAGE_SCOPE, WORKER_SCOPE})
 DEFAULT_API_KEY_SCOPES = (API_SCOPE,)
+LIVE_API_KEY_PREFIX = "vma_live_"
+TEST_API_KEY_PREFIX = "vma_test_"
+KNOWN_API_KEY_PREFIXES = (LIVE_API_KEY_PREFIX, TEST_API_KEY_PREFIX)
+DISPLAYED_API_KEY_PREFIX_LENGTH = 17
+MINIMUM_API_KEY_RANDOM_LENGTH = 32
 
 
-def generate_api_key() -> str:
-    return f"vma_{secrets.token_urlsafe(32)}"
+def api_key_prefix(*, app_env: str | None = None) -> str:
+    """Return the public key prefix for an application environment.
+
+    Only an exact production environment emits live-looking credentials. Every
+    other value fails safely to the test prefix.
+    """
+
+    environment = app_env if app_env is not None else get_settings().app_env
+    if str(environment).strip().lower() == "production":
+        return LIVE_API_KEY_PREFIX
+    return TEST_API_KEY_PREFIX
+
+
+def generate_api_key(*, app_env: str | None = None) -> str:
+    return f"{api_key_prefix(app_env=app_env)}{secrets.token_urlsafe(32)}"
+
+
+def validate_api_key_prefix(token: str, *, app_env: str | None = None) -> None:
+    """Validate a newly supplied environment-aware operator key."""
+
+    expected_prefix = api_key_prefix(app_env=app_env)
+    if token.startswith(KNOWN_API_KEY_PREFIXES):
+        if not token.startswith(expected_prefix):
+            raise ValueError(
+                f"api_key must use the {expected_prefix} prefix for this environment"
+            )
+        if len(token) < len(expected_prefix) + MINIMUM_API_KEY_RANDOM_LENGTH:
+            raise ValueError(
+                "api_key must contain at least "
+                f"{MINIMUM_API_KEY_RANDOM_LENGTH} characters after the prefix"
+            )
+        return
+    raise ValueError("api_key must use the vma_live_ or vma_test_ prefix")
+
+
+def is_legacy_api_key(token: str) -> bool:
+    return token.startswith("vma_") and not token.startswith(KNOWN_API_KEY_PREFIXES)
 
 
 def hash_api_key(token: str) -> str:
@@ -44,7 +85,7 @@ async def create_api_key(
         organization_id=resolve_organization_id(organization_id),
         name=name,
         key_hash=hash_api_key(plaintext),
-        prefix=plaintext[:12],
+        prefix=plaintext[:DISPLAYED_API_KEY_PREFIX_LENGTH],
         scopes=list(normalized_scopes),
         expires_at=expires_at,
         created_by=created_by,

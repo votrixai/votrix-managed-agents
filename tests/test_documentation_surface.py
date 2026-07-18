@@ -26,7 +26,7 @@ def public_operations(
 async def test_openapi_schema_remains_available_without_embedded_docs_ui(client):
     response = await client.get("/openapi.json")
     assert response.status_code == 200, response.text
-    assert response.json()["info"]["title"] == "Votrix Managed Agents"
+    assert response.json()["info"]["title"] == "Votrix Managed Agents (VMA)"
 
     for path in ("/docs", "/redoc"):
         response = await client.get(path)
@@ -49,7 +49,7 @@ def test_documentation_uses_the_current_votrixai_domain():
         DEFAULT_OUTPUT.parents[2] / "components" / "api-page.tsx"
     ).read_text(encoding="utf-8")
 
-    assert DEFAULT_SERVER_URL == "https://api.votrixai.com"
+    assert DEFAULT_SERVER_URL == "https://vma.votrixai.com"
     assert "votrix" + ".ai" not in committed
     assert "votrix-managed-agents-openapi-v2-" in api_page
 
@@ -107,7 +107,7 @@ def test_documentation_schema_adds_examples_and_code_samples_to_core_writes():
         for sample in samples:
             assert server_url in sample["source"]
             assert "votrix-managed-agents-beta" in sample["source"]
-            assert "VOTRIX_API_KEY" in sample["source"]
+            assert "VMA_API_KEY" in sample["source"]
             if sample["id"] == "python":
                 compile(sample["source"], "<openapi-python-sample>", "exec")
 

@@ -16,7 +16,7 @@ from votrix import (
 def make_client(handler):
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_resources",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,
@@ -319,7 +319,7 @@ async def test_api_key_lifecycle_exposes_secrets_only_once():
             "type": "api_key",
             "organization_id": "org_test",
             "name": "Production",
-            "prefix": "vma_test",
+            "prefix": "vma_test_key",
             "scopes": ["api", "api_keys:manage"],
             "expires_at": None,
             "created_by": "key_admin",
@@ -341,9 +341,9 @@ async def test_api_key_lifecycle_exposes_secrets_only_once():
         body = json.loads(request.content) if request.content else {}
         calls.append((request.method, request.url.path, dict(request.url.params), body))
         if request.method == "POST" and request.url.path == "/v1/api_keys":
-            return httpx.Response(201, json=payload("key_1", secret="vma_create_secret"))
+            return httpx.Response(201, json=payload("key_1", secret="vma_test_create_secret"))
         if request.url.path.endswith("/rotate"):
-            return httpx.Response(201, json=payload("key_2", secret="vma_rotate_secret"))
+            return httpx.Response(201, json=payload("key_2", secret="vma_test_rotate_secret"))
         if request.url.path.endswith("/revoke"):
             # A defensive extra field must never leak through the safe metadata model.
             return httpx.Response(200, json=payload("key_2", secret="must_be_ignored", revoked=True))
@@ -365,10 +365,10 @@ async def test_api_key_lifecycle_exposes_secrets_only_once():
     rotated = await sdk.api_keys.rotate(created.id, reason="rollover")
     revoked = await sdk.api_keys.revoke(rotated.id, reason="rollover")
 
-    assert created.secret.get_secret_value() == "vma_create_secret"
-    assert rotated.secret.get_secret_value() == "vma_rotate_secret"
-    assert "vma_create_secret" not in repr(created.secret)
-    assert "vma_rotate_secret" not in repr(rotated.secret)
+    assert created.secret.get_secret_value() == "vma_test_create_secret"
+    assert rotated.secret.get_secret_value() == "vma_test_rotate_secret"
+    assert "vma_test_create_secret" not in repr(created.secret)
+    assert "vma_test_rotate_secret" not in repr(rotated.secret)
     for safe in [*page.data, retrieved, revoked]:
         assert "secret" not in safe.model_dump()
     assert calls == [

@@ -69,8 +69,10 @@ async def test_api_key_lifecycle_returns_plaintext_once_and_is_organization_scop
         created_body = created.json()
         child_id = created_body["id"]
         child_token = created_body["secret"]
-        assert child_token.startswith("vma_")
-        assert created_body["prefix"] == child_token[:12]
+        assert child_token.startswith(api_keys_q.TEST_API_KEY_PREFIX)
+        assert created_body["prefix"] == child_token[
+            : api_keys_q.DISPLAYED_API_KEY_PREFIX_LENGTH
+        ]
         assert created_body["created_by"] == admin_a.id
 
         listed = await client.get("/v1/api_keys", headers=_headers(admin_token_a))

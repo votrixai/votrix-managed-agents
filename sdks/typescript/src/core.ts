@@ -105,20 +105,22 @@ export class APIClient {
       );
     }
 
-    const apiKey = options.apiKey ?? readEnvironment("VOTRIX_API_KEY");
+    const apiKey =
+      options.apiKey ??
+      readEnvironmentAlias("VMA_API_KEY", "VOTRIX_VMA_API_KEY");
     if (!apiKey) {
       throw new VotrixErrorForConfiguration(
-        "apiKey is required; pass it explicitly or set VOTRIX_API_KEY",
+        "apiKey is required; pass it explicitly or set VMA_API_KEY or VOTRIX_VMA_API_KEY",
       );
     }
     const baseURL = (
       options.baseURL ??
-      readEnvironment("VOTRIX_BASE_URL") ??
+      readEnvironmentAlias("VMA_BASE_URL", "VOTRIX_VMA_BASE_URL") ??
       ""
     ).trim();
     if (!baseURL) {
       throw new VotrixErrorForConfiguration(
-        "baseURL is required; pass it explicitly or set VOTRIX_BASE_URL",
+        "baseURL is required; pass it explicitly or set VMA_BASE_URL or VOTRIX_VMA_BASE_URL",
       );
     }
 
@@ -151,7 +153,7 @@ export class APIClient {
     setHeaderIfMissing(
       this.defaultHeaders,
       "user-agent",
-      `votrix-typescript/${VERSION}`,
+      `votrix-managed-agents-typescript/${VERSION}`,
     );
     setHeaderIfMissing(this.defaultHeaders, "x-votrix-sdk-version", VERSION);
     setHeaderIfMissing(
@@ -729,6 +731,24 @@ function takeRetry(state: RetryState): number | null {
 
 function readEnvironment(name: string): string | undefined {
   return typeof process !== "undefined" ? process.env[name] : undefined;
+}
+
+function readEnvironmentAlias(
+  primaryName: string,
+  aliasName: string,
+): string | undefined {
+  const primaryValue = readEnvironment(primaryName)?.trim() || undefined;
+  const aliasValue = readEnvironment(aliasName)?.trim() || undefined;
+  if (
+    primaryValue !== undefined &&
+    aliasValue !== undefined &&
+    primaryValue !== aliasValue
+  ) {
+    throw new VotrixErrorForConfiguration(
+      `${primaryName} and ${aliasName} are both set but have different values; unset one or make them match`,
+    );
+  }
+  return primaryValue ?? aliasValue;
 }
 
 function isBrowser(): boolean {

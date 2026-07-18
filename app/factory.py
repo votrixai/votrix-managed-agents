@@ -139,7 +139,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     settings = get_settings()
     is_worker_service = settings.vma_service_role == "worker"
     app = FastAPI(
-        title="Votrix Managed Agents",
+        title="Votrix Managed Agents (VMA)",
         description=(
             "Self-hosted, multi-tenant control plane for long-running agents."
         ),

@@ -16,7 +16,7 @@ def make_client(body: str):
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_sse",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,
@@ -74,7 +74,7 @@ async def test_stream_reconnects_with_last_event_id_and_deduplicates():
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_sse",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,
@@ -112,7 +112,7 @@ async def test_stream_cancellation_closes_the_http_response():
         )
     )
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_sse",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,

@@ -1,4 +1,4 @@
-# Votrix Managed Agents
+# Votrix Managed Agents (VMA)
 
 Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control plane for long-running agents. It targets the public resource, lifecycle, and SDK shape of [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) while running agents with [Deep Agents 0.6.12](https://github.com/langchain-ai/deepagents) and LangGraph.
 
@@ -139,25 +139,28 @@ uv run python -m scripts.bootstrap_api_key \
 
 The command writes one JSON object containing the plaintext secret exactly
 once; send it directly to the intended secret manager. Local and development
-clients may supply that Organization secret as `VOTRIX_API_KEY`, while the VMA
-service itself reads authentication keys only from the database. Subsequent key
-creation, rotation, and revocation should use the authenticated `/v1/api_keys`
-lifecycle.
+clients may supply that Organization secret as `VMA_API_KEY` (or the namespaced
+alias `VOTRIX_VMA_API_KEY`), while the VMA service itself reads authentication
+keys only from the database. Subsequent key creation, rotation, and revocation
+should use the authenticated `/v1/api_keys` lifecycle.
+
+New production credentials use the `vma_live_` prefix. Staging, development,
+local, and test credentials use `vma_test_`.
 
 For the local SDK or pilot script, place the returned plaintext in the client
-environment as `VOTRIX_API_KEY` (not in the VMA service `.env`). In the API
+environment as `VMA_API_KEY` (not in the VMA service `.env`). In the API
 Playground, enter the same value in the `x-api-key` authentication field. Raw
 HTTP clients may use either supported header:
 
 ```bash
-export VOTRIX_API_KEY='<secret from bootstrap output>'
+export VMA_API_KEY='<secret from bootstrap output>'
 curl http://127.0.0.1:8080/v1/capabilities \
-  --header "x-api-key: $VOTRIX_API_KEY" \
+  --header "x-api-key: $VMA_API_KEY" \
   --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
 
 # Equivalent authentication header:
 curl http://127.0.0.1:8080/v1/capabilities \
-  --header "Authorization: Bearer $VOTRIX_API_KEY" \
+  --header "Authorization: Bearer $VMA_API_KEY" \
   --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
 ```
 
@@ -425,8 +428,8 @@ Until then, install the project directly from `sdks/python`.
 from votrix import AsyncVotrix
 
 client = AsyncVotrix(
-    api_key="vma_...",
-    base_url="https://api.votrixai.com",
+    api_key="vma_live_...",
+    base_url="https://vma.votrixai.com",
 )
 
 providers = [provider async for provider in client.model_providers.list()]
@@ -457,11 +460,11 @@ npm install /absolute/path/to/votrix-managed-agents/sdks/typescript
 ```
 
 ```ts
-import Votrix from "@votrix/sdk";
+import Votrix from "@votrix/managed-agents";
 
 const client = new Votrix({
-  apiKey: process.env.VOTRIX_API_KEY,
-  baseURL: "https://api.votrixai.com",
+  apiKey: process.env.VMA_API_KEY,
+  baseURL: "https://vma.votrixai.com",
 });
 
 const providers = await client.modelProviders.list();
