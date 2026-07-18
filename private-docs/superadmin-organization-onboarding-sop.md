@@ -102,7 +102,7 @@ For the initial deployment bootstrap, or if hosted superadmin authentication is 
 
 ## 4. Verify owner access
 
-Ask the owner to sign into VMA Builder. Expected behavior:
+Ask the owner to sign into the VMA Developer Console. Expected behavior:
 
 - No organization creation option is shown.
 - The new Organization appears in the switcher.
