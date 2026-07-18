@@ -52,6 +52,7 @@ from app.models.sessions import (
 )
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.runtime.agent_resolution import effective_agent_version, resolve_session_agent_config
+from app.runtime.dispatch import dispatch_work
 from app.runtime.funding import SessionFundingUnavailableError
 from app.runtime.model_credentials import ModelCredentialRequiredError
 from app.runtime.sandbox_lifecycle import (
@@ -490,7 +491,9 @@ async def resume_session(
         raise HTTPException(status_code=409, detail="Session already has active work")
     work = await enqueue_session_run(db, session, trigger="session.resume")
     await db.commit()
-    if should_execute_inline(environment.config):
+    if get_settings().vma_work_dispatch_mode == "hybrid":
+        background_tasks.add_task(dispatch_work, work.id, attempt=0)
+    elif should_execute_inline(environment.config):
         background_tasks.add_task(execute_work_item, work.id)
     return await _session_response(db, session)
 
@@ -608,8 +611,11 @@ async def send_events(
         )
     await db.commit()
 
-    if work is not None and should_execute_inline(environment.config):
-        background_tasks.add_task(execute_work_item, work.id)
+    if work is not None:
+        if get_settings().vma_work_dispatch_mode == "hybrid":
+            background_tasks.add_task(dispatch_work, work.id, attempt=0)
+        elif should_execute_inline(environment.config):
+            background_tasks.add_task(execute_work_item, work.id)
 
     return response
 

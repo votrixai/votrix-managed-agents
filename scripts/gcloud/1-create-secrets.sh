@@ -53,9 +53,19 @@ read_required_value() {
       ;;
   esac
   case "$variable_name:$value" in
-    DATABASE_URL:postgresql+asyncpg://*) ;;
+    DATABASE_URL:postgresql+asyncpg://*:6543/*) ;;
     DATABASE_URL:*)
-      echo "DATABASE_URL must use postgresql+asyncpg and cannot use SQLite." >&2
+      echo "DATABASE_URL must use the postgresql+asyncpg transaction-pooler URL on port 6543." >&2
+      exit 1
+      ;;
+    VMA_LISTEN_DATABASE_URL:postgresql+asyncpg://*:5432/*) ;;
+    VMA_LISTEN_DATABASE_URL:*)
+      echo "VMA_LISTEN_DATABASE_URL must use the postgresql+asyncpg session-mode URL on port 5432." >&2
+      exit 1
+      ;;
+    DATABASE_URL_DIRECT:postgresql+asyncpg://*:5432/*) ;;
+    DATABASE_URL_DIRECT:*)
+      echo "DATABASE_URL_DIRECT must use a postgresql+asyncpg session/direct URL on port 5432." >&2
       exit 1
       ;;
   esac
@@ -91,6 +101,8 @@ while IFS='|' read -r variable_name base_secret_name; do
     --quiet >/dev/null
 done <<'SECRETS'
 DATABASE_URL|vma-database-url
+VMA_LISTEN_DATABASE_URL|vma-listen-database-url
+DATABASE_URL_DIRECT|vma-database-url-direct
 VMA_SUPABASE_URL|vma-supabase-url
 VMA_SUPABASE_PUBLISHABLE_KEY|vma-supabase-publishable-key
 VMA_ENCRYPTION_KEY|vma-encryption-key

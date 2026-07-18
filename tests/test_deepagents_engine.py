@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from deepagents.backends import StateBackend
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolCall, ToolMessage
@@ -15,7 +16,16 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, PrivateAttr
 
 from app.runtime.contracts import EffectiveAgentVersion
-from app.runtime.deepagents_engine import _completed_tool_calls, _graph_input, _stream_graph, execute_deep_agent
+from app.runtime.deepagents_engine import (
+    DeepAgentsRuntimeError,
+    _completed_tool_calls,
+    _graph_input,
+    _message_event_id,
+    _merge_turn_evidence,
+    _stream_graph,
+    _tool_event_id,
+    execute_deep_agent,
+)
 from app.runtime.providers import RuntimeProviderCapabilities, RuntimeProviderConfig
 from app.runtime.sandbox import BackendHandle, SandboxRuntimePlan
 from app.runtime.sandbox_inputs import sandbox_input_bundle
@@ -46,6 +56,10 @@ class _ScriptedModel(BaseChatModel):
         return self
 
 
+class _SimulatedModelCrash(BaseException):
+    pass
+
+
 class _StreamGraph:
     def __init__(self, messages):
         self.messages = messages
@@ -55,7 +69,7 @@ class _StreamGraph:
             yield (), "messages", (message, {})
 
 
-def _version(*, tools=None) -> EffectiveAgentVersion:
+def _version(*, tools=None, multiagent=None) -> EffectiveAgentVersion:
     return EffectiveAgentVersion(
         id="agtv_test",
         agent_id="agt_test",
@@ -67,7 +81,7 @@ def _version(*, tools=None) -> EffectiveAgentVersion:
         tools=tools or [],
         mcp_servers=[],
         skills=[],
-        multiagent=None,
+        multiagent=multiagent,
         metadata_={},
         runtime={},
     )
@@ -120,6 +134,51 @@ def test_streamed_tool_calls_wait_for_complete_args_and_reset_reused_index():
             "args": {"command": "cat marker"},
         }
     ]
+
+
+def test_runtime_event_ids_are_stable_for_logical_event_identity():
+    assert _message_event_id("thread_a", 7) == _message_event_id("thread_a", 7)
+    assert _message_event_id("thread_a", 7) != _message_event_id("thread_a", 8)
+    assert _tool_event_id("thread_a", "call_a", "agent.tool_use") == _tool_event_id(
+        "thread_a", "call_a", "agent.tool_use"
+    )
+    assert _tool_event_id("thread_a", "call_a", "agent.tool_use") != _tool_event_id(
+        "thread_a", "call_a", "agent.tool_result"
+    )
+
+
+def test_turn_evidence_merge_only_accepts_callback_placeholder_enrichment():
+    placeholder = {
+        "scope": "root",
+        "source": "agent",
+        "text": "",
+        "tool_calls": [],
+        "usage": {"total_tokens": 5},
+    }
+    enriched = {
+        "scope": "subagent",
+        "source": "agent",
+        "text": "",
+        "tool_calls": [{"id": "call_a", "name": "write_todos", "args": {}}],
+        "usage": {"total_tokens": 5},
+    }
+
+    def envelope(record):
+        return {"version": 1, "work_id": "work_parallel", "records": {"response_a": record}}
+
+    assert _merge_turn_evidence(envelope(placeholder), envelope(enriched))["records"][
+        "response_a"
+    ] == enriched
+    assert _merge_turn_evidence(envelope(enriched), envelope(placeholder))["records"][
+        "response_a"
+    ] == enriched
+
+    conflicting = {
+        **enriched,
+        "tool_calls": [{"id": "call_a", "name": "write_todos", "args": {"changed": True}}],
+    }
+    with pytest.raises(DeepAgentsRuntimeError, match="reused with different content"):
+        _merge_turn_evidence(envelope(enriched), envelope(conflicting))
 
 
 async def test_stream_graph_keeps_tool_names_inputs_and_ids_aligned():
@@ -295,6 +354,594 @@ async def test_deepagents_engine_streams_and_persists_exact_message_id(monkeypat
     assert result.run_state["last_input_event_seq"] == 1
 
 
+async def test_completed_checkpoint_recovers_without_second_model_call(monkeypatch):
+    model = _ScriptedModel(responses=[AIMessage(content="checkpointed answer")])
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    admissions = 0
+    recoveries = 0
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def begin_recovery():
+        nonlocal recoveries
+        recoveries += 1
+
+    async def crash_before_control_plane_journal(payload):
+        if payload["type"] == "agent.message":
+            raise RuntimeError("simulated crash after completed graph checkpoint")
+        return payload["_event_id"]
+
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_test",
+        "checkpoint_thread_id": "thread_completed_recovery",
+        "work_id": "work_stable_turn",
+    }
+    try:
+        await execute_deep_agent(
+            _version(),
+            [_event(1, "user.message", content="hello")],
+            {"type": "cloud"},
+            runtime_context=runtime_context,
+            emit_event=crash_before_control_plane_journal,
+            admit_execution=admit_execution,
+            begin_recovery=begin_recovery,
+        )
+    except RuntimeError as exc:
+        assert "simulated crash" in str(exc)
+    else:
+        raise AssertionError("the simulated crash did not fire")
+
+    durable = []
+
+    async def emit_event(payload):
+        durable.append(dict(payload))
+        return payload["_event_id"]
+
+    recovered = await execute_deep_agent(
+        _version(),
+        [_event(1, "user.message", content="hello")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_event,
+        admit_execution=admit_execution,
+        begin_recovery=begin_recovery,
+    )
+
+    assert model._index == 1
+    assert admissions == 1
+    assert recoveries == 1
+    assert recovered.final_text == "checkpointed answer"
+    assert recovered.run_state["last_input_event_seq"] == 1
+    assert [event["type"] for event in durable] == ["agent.message"]
+
+
+async def test_multi_call_usage_matches_completed_checkpoint_recovery(monkeypatch):
+    model = _ScriptedModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_todos",
+                        name="write_todos",
+                        args={"todos": [{"content": "Verify recovery", "status": "in_progress"}]},
+                    )
+                ],
+                usage_metadata={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            ),
+            AIMessage(
+                content="usage-stable answer",
+                usage_metadata={"input_tokens": 4, "output_tokens": 5, "total_tokens": 9},
+            ),
+        ]
+    )
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    admissions = 0
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def crash_after_checkpoint(payload):
+        if payload["type"] == "agent.message":
+            raise RuntimeError("crash after multi-call completion")
+        return payload["_event_id"]
+
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_test",
+        "checkpoint_thread_id": "thread_multi_call_usage",
+        "work_id": "work_multi_call_usage",
+    }
+    try:
+        await execute_deep_agent(
+            _version(),
+            [_event(1, "user.message", content="track two calls")],
+            {"type": "cloud"},
+            runtime_context=runtime_context,
+            emit_event=crash_after_checkpoint,
+            admit_execution=admit_execution,
+        )
+    except RuntimeError as exc:
+        assert "multi-call completion" in str(exc)
+    else:
+        raise AssertionError("the simulated multi-call crash did not fire")
+
+    async def emit_recovered(payload):
+        return payload["_event_id"]
+
+    recovered = await execute_deep_agent(
+        _version(),
+        [_event(1, "user.message", content="track two calls")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_recovered,
+        admit_execution=admit_execution,
+    )
+
+    assert model._index == 2
+    assert admissions == 1
+    assert recovered.final_text == "usage-stable answer"
+    assert recovered.usage == {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12}
+
+
+async def test_subagent_usage_matches_completed_checkpoint_recovery(monkeypatch):
+    model = _ScriptedModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_task",
+                        name="task",
+                        args={
+                            "description": "Return the delegated answer.",
+                            "subagent_type": "general-purpose",
+                        },
+                    )
+                ],
+                usage_metadata={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            ),
+            AIMessage(
+                content="delegated answer",
+                usage_metadata={"input_tokens": 6, "output_tokens": 7, "total_tokens": 13},
+            ),
+            AIMessage(
+                content="coordinator answer",
+                usage_metadata={"input_tokens": 4, "output_tokens": 5, "total_tokens": 9},
+            ),
+        ]
+    )
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    version = _version(multiagent={"type": "coordinator", "agents": []})
+    admissions = 0
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def crash_after_checkpoint(payload):
+        if payload["type"] == "agent.message":
+            raise RuntimeError("crash after subagent completion")
+        return payload["_event_id"]
+
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_test",
+        "checkpoint_thread_id": "thread_subagent_usage",
+        "work_id": "work_subagent_usage",
+    }
+    try:
+        await execute_deep_agent(
+            version,
+            [_event(1, "user.message", content="delegate once")],
+            {"type": "cloud"},
+            runtime_context=runtime_context,
+            emit_event=crash_after_checkpoint,
+            admit_execution=admit_execution,
+        )
+    except RuntimeError as exc:
+        assert "subagent completion" in str(exc)
+    else:
+        raise AssertionError("the simulated subagent crash did not fire")
+
+    async def emit_recovered(payload):
+        return payload["_event_id"]
+
+    recovered = await execute_deep_agent(
+        version,
+        [_event(1, "user.message", content="delegate once")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_recovered,
+        admit_execution=admit_execution,
+    )
+
+    assert model._index == 3
+    assert admissions == 1
+    assert recovered.final_text == "coordinator answer"
+    assert recovered.usage == {"input_tokens": 11, "output_tokens": 14, "total_tokens": 25}
+
+
+async def test_subagent_usage_is_checkpointed_before_next_root_model(monkeypatch):
+    import app.runtime.deepagent_tools as deepagent_tools
+
+    model = _ScriptedModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_task_midturn",
+                        name="task",
+                        args={
+                            "description": "Return the delegated answer.",
+                            "subagent_type": "general-purpose",
+                        },
+                    )
+                ],
+                usage_metadata={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            ),
+            AIMessage(
+                content="delegated answer",
+                usage_metadata={"input_tokens": 6, "output_tokens": 7, "total_tokens": 13},
+            ),
+            AIMessage(
+                content="coordinator recovered",
+                usage_metadata={"input_tokens": 4, "output_tokens": 5, "total_tokens": 9},
+            ),
+        ],
+    )
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    version = _version(multiagent={"type": "coordinator", "agents": []})
+    admissions = 0
+    crashed = False
+    original_wrap_model_call = deepagent_tools.ToolFilterMiddleware.awrap_model_call
+
+    async def crash_before_root_followup(self, request, handler):
+        nonlocal crashed
+        if not crashed and any(
+            isinstance(message, ToolMessage) and message.name == "task"
+            for message in request.messages
+        ):
+            crashed = True
+            raise _SimulatedModelCrash("simulated worker loss before root follow-up")
+        return await original_wrap_model_call(self, request, handler)
+
+    monkeypatch.setattr(
+        deepagent_tools.ToolFilterMiddleware,
+        "awrap_model_call",
+        crash_before_root_followup,
+    )
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def emit_event(payload):
+        return payload["_event_id"]
+
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_midturn_subagent",
+        "checkpoint_thread_id": "thread_midturn_subagent",
+        "work_id": "work_midturn_subagent",
+    }
+    try:
+        await execute_deep_agent(
+            version,
+            [_event(1, "user.message", content="delegate and recover")],
+            {"type": "cloud"},
+            runtime_context=runtime_context,
+            emit_event=emit_event,
+            admit_execution=admit_execution,
+        )
+    except _SimulatedModelCrash:
+        pass
+    else:
+        raise AssertionError("the simulated mid-turn crash did not fire")
+
+    checkpoint = await saver.aget_tuple(
+        {"configurable": {"thread_id": "thread_midturn_subagent"}}
+    )
+    assert checkpoint is not None
+    evidence = checkpoint.checkpoint["channel_values"]["vma_turn_evidence"]
+    assert sum(record["usage"].get("total_tokens", 0) for record in evidence["records"].values()) == 16
+
+    recovered = await execute_deep_agent(
+        version,
+        [_event(1, "user.message", content="delegate and recover")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_event,
+        admit_execution=admit_execution,
+    )
+
+    assert model._index == 3
+    assert admissions == 2
+    assert recovered.final_text == "coordinator recovered"
+    assert recovered.usage == {"input_tokens": 11, "output_tokens": 14, "total_tokens": 25}
+
+
+async def test_parallel_subagents_merge_enriched_model_evidence(monkeypatch):
+    model = _ScriptedModel(
+        responses=[
+            AIMessage(
+                id="response_parallel_dispatch",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_task_a",
+                        name="task",
+                        args={
+                            "description": "Complete delegated task A.",
+                            "subagent_type": "general-purpose",
+                        },
+                    ),
+                    ToolCall(
+                        id="call_task_b",
+                        name="task",
+                        args={
+                            "description": "Complete delegated task B.",
+                            "subagent_type": "general-purpose",
+                        },
+                    ),
+                ],
+                usage_metadata={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            ),
+            AIMessage(
+                id="response_subagent_action_a",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_todos_a",
+                        name="write_todos",
+                        args={
+                            "todos": [
+                                {"content": "Complete task A", "status": "in_progress"}
+                            ]
+                        },
+                    )
+                ],
+                usage_metadata={"input_tokens": 2, "output_tokens": 3, "total_tokens": 5},
+            ),
+            AIMessage(
+                id="response_subagent_action_b",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_todos_b",
+                        name="write_todos",
+                        args={
+                            "todos": [
+                                {"content": "Complete task B", "status": "in_progress"}
+                            ]
+                        },
+                    )
+                ],
+                usage_metadata={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+            ),
+            AIMessage(
+                id="response_subagent_final_a",
+                content="delegated result A",
+                usage_metadata={"input_tokens": 5, "output_tokens": 6, "total_tokens": 11},
+            ),
+            AIMessage(
+                id="response_subagent_final_b",
+                content="delegated result B",
+                usage_metadata={"input_tokens": 6, "output_tokens": 7, "total_tokens": 13},
+            ),
+            AIMessage(
+                id="response_parallel_final",
+                content="parallel coordinator answer",
+                usage_metadata={"input_tokens": 8, "output_tokens": 9, "total_tokens": 17},
+            ),
+        ]
+    )
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_parallel_subagents",
+        "checkpoint_thread_id": "thread_parallel_subagents",
+        "work_id": "work_parallel_subagents",
+    }
+
+    async def emit_event(payload):
+        return payload["_event_id"]
+
+    result = await execute_deep_agent(
+        _version(multiagent={"type": "coordinator", "agents": []}),
+        [_event(1, "user.message", content="delegate two tasks in parallel")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_event,
+    )
+
+    checkpoint = await saver.aget_tuple(
+        {"configurable": {"thread_id": "thread_parallel_subagents"}}
+    )
+    assert checkpoint is not None
+    evidence = checkpoint.checkpoint["channel_values"]["vma_turn_evidence"]
+    records = evidence["records"]
+    assert records["response_subagent_action_a"]["tool_calls"] == [
+        {
+            "id": "call_todos_a",
+            "name": "write_todos",
+            "args": {"todos": [{"content": "Complete task A", "status": "in_progress"}]},
+        }
+    ]
+    assert records["response_subagent_action_b"]["tool_calls"] == [
+        {
+            "id": "call_todos_b",
+            "name": "write_todos",
+            "args": {"todos": [{"content": "Complete task B", "status": "in_progress"}]},
+        }
+    ]
+    assert result.final_text == "parallel coordinator answer"
+    assert result.usage == {"input_tokens": 25, "output_tokens": 31, "total_tokens": 56}
+
+
+async def test_final_completion_node_resumes_without_second_model_call(monkeypatch):
+    import app.runtime.deepagents_engine as engine
+
+    model = _ScriptedModel(responses=[AIMessage(content="final node answer")])
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    admissions = 0
+    recoveries = 0
+    completion_calls = 0
+    original_after_agent = engine.VmaTurnCompletionMiddleware.aafter_agent
+
+    async def fail_first_completion(self, state, runtime):
+        nonlocal completion_calls
+        completion_calls += 1
+        if completion_calls == 1:
+            raise RuntimeError("simulated crash before completion marker")
+        return await original_after_agent(self, state, runtime)
+
+    monkeypatch.setattr(
+        engine.VmaTurnCompletionMiddleware,
+        "aafter_agent",
+        fail_first_completion,
+    )
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def begin_recovery():
+        nonlocal recoveries
+        recoveries += 1
+
+    async def emit_event(payload):
+        return payload["_event_id"]
+
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_test",
+        "checkpoint_thread_id": "thread_final_node_recovery",
+        "work_id": "work_final_node",
+    }
+    try:
+        await execute_deep_agent(
+            _version(),
+            [_event(1, "user.message", content="hello")],
+            {"type": "cloud"},
+            runtime_context=runtime_context,
+            emit_event=emit_event,
+            admit_execution=admit_execution,
+            begin_recovery=begin_recovery,
+        )
+    except RuntimeError as exc:
+        assert "completion marker" in str(exc)
+    else:
+        raise AssertionError("the simulated final-node crash did not fire")
+
+    recovered = await execute_deep_agent(
+        _version(),
+        [_event(1, "user.message", content="hello")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_event,
+        admit_execution=admit_execution,
+        begin_recovery=begin_recovery,
+    )
+
+    assert model._index == 1
+    assert admissions == 1
+    assert recoveries == 1
+    assert completion_calls == 2
+    assert recovered.final_text == "final node answer"
+
+
+async def test_interrupted_checkpoint_recovers_pending_action_without_second_model_call(monkeypatch):
+    model = _ScriptedModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[ToolCall(id="call_lookup", name="lookup", args={"case_id": "42"})],
+            )
+        ]
+    )
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    admissions = 0
+    recoveries = 0
+    durable = []
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def begin_recovery():
+        nonlocal recoveries
+        recoveries += 1
+
+    async def emit_event(payload):
+        durable.append(dict(payload))
+        return payload["_event_id"]
+
+    version = _version(
+        tools=[
+            {
+                "type": "custom",
+                "name": "lookup",
+                "description": "Look up a case.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"case_id": {"type": "string"}},
+                    "required": ["case_id"],
+                },
+            }
+        ]
+    )
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_test",
+        "checkpoint_thread_id": "thread_interrupt_recovery",
+        "work_id": "work_interrupt_recovery",
+    }
+    first = await execute_deep_agent(
+        version,
+        [_event(1, "user.message", content="look up 42")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_event,
+        admit_execution=admit_execution,
+        begin_recovery=begin_recovery,
+    )
+    recovered = await execute_deep_agent(
+        version,
+        [_event(1, "user.message", content="look up 42")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_event,
+        admit_execution=admit_execution,
+        begin_recovery=begin_recovery,
+    )
+
+    assert model._index == 1
+    assert admissions == 1
+    assert recoveries == 1
+    assert recovered.requires_action is True
+    assert recovered.blocking_event_ids == first.blocking_event_ids
+    assert len({event["_event_id"] for event in durable if event["type"] == "agent.custom_tool_use"}) == 1
+
+
 async def test_custom_tool_interrupt_resumes_with_client_result(monkeypatch):
     model = _ScriptedModel(
         responses=[
@@ -368,6 +1015,92 @@ async def test_custom_tool_interrupt_resumes_with_client_result(monkeypatch):
     assert second.run_state["pending_actions"] == []
 
 
+async def test_interrupted_checkpoint_recovers_action_without_second_model_call(monkeypatch):
+    model = _ScriptedModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[ToolCall(id="call_recover", name="lookup", args={"case_id": "9"})],
+            )
+        ]
+    )
+    saver = InMemorySaver()
+    _patch_runtime(monkeypatch, model, saver)
+    version = _version(
+        tools=[
+            {
+                "type": "custom",
+                "name": "lookup",
+                "description": "Look up a case.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"case_id": {"type": "string"}},
+                    "required": ["case_id"],
+                },
+            }
+        ]
+    )
+    runtime_context = {
+        "organization_id": "org_test",
+        "session_id": "sess_test",
+        "checkpoint_thread_id": "thread_interrupt_recovery",
+        "work_id": "work_interrupt_recovery",
+    }
+    admissions = 0
+    recoveries = 0
+    first_events = []
+    recovered_events = []
+
+    async def admit_execution():
+        nonlocal admissions
+        admissions += 1
+        return admissions
+
+    async def begin_recovery():
+        nonlocal recoveries
+        recoveries += 1
+
+    async def emit_first(payload):
+        first_events.append(dict(payload))
+        return payload["_event_id"]
+
+    first = await execute_deep_agent(
+        version,
+        [_event(1, "user.message", content="look up 9")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_first,
+        admit_execution=admit_execution,
+        begin_recovery=begin_recovery,
+    )
+    assert first.requires_action is True
+
+    async def emit_recovered(payload):
+        recovered_events.append(dict(payload))
+        return payload["_event_id"]
+
+    recovered = await execute_deep_agent(
+        version,
+        [_event(1, "user.message", content="look up 9")],
+        {"type": "cloud"},
+        runtime_context=runtime_context,
+        emit_event=emit_recovered,
+        admit_execution=admit_execution,
+        begin_recovery=begin_recovery,
+    )
+
+    assert model._index == 1
+    assert admissions == 1
+    assert recoveries == 1
+    assert recovered.requires_action is True
+    assert recovered.blocking_event_ids == first.blocking_event_ids
+    first_use = next(event for event in first_events if event["type"] == "agent.custom_tool_use")
+    recovered_use = next(
+        event for event in recovered_events if event["type"] == "agent.custom_tool_use"
+    )
+    assert recovered_use["_event_id"] == first_use["_event_id"]
+
+
 def test_resume_input_waits_until_every_pending_action_is_present():
     previous = {
         "pending_actions": [
@@ -421,6 +1154,9 @@ async def test_runner_persists_engine_events_once_with_reserved_id(client, monke
         emit_preview,
         **kwargs,
     ):
+        admit_execution = kwargs.get("admit_execution")
+        if admit_execution is not None:
+            await admit_execution()
         await emit_preview(
             {"type": "event_start", "event": {"type": "agent.message", "id": "evt_reserved"}}
         )
@@ -434,7 +1170,7 @@ async def test_runner_persists_engine_events_once_with_reserved_id(client, monke
         return RuntimeResult(
             final_text="engine result",
             events_persisted=True,
-            run_state={"backend": "deepagents"},
+            run_state={"backend": "deepagents", "last_input_event_seq": history[-1].seq},
             blocking_event_ids=[],
             sandbox_outputs=[
                 DiscoveredSandboxOutput(

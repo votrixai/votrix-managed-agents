@@ -8,7 +8,12 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 
 REGION="${1:-$REGION}"
 
-for service in "$PRODUCTION_SERVICE" "$STAGING_SERVICE"; do
+for service in \
+  "$PRODUCTION_SERVICE" \
+  "$PRODUCTION_WORKER_SERVICE" \
+  "$STAGING_SERVICE" \
+  "$STAGING_WORKER_SERVICE"
+do
   image=$(gcloud run services describe "$service" \
     --project="$PROJECT_ID" \
     --region="$REGION" \
@@ -54,6 +59,32 @@ for job in "${PRODUCTION_SERVICE}-migrate" "${STAGING_SERVICE}-migrate"; do
     continue
   fi
   echo "  Image: $job_image"
+  echo ""
+done
+
+for queue in "$PRODUCTION_TASKS_QUEUE" "$STAGING_TASKS_QUEUE"; do
+  queue_state=$(gcloud tasks queues describe "$queue" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(state)' 2>/dev/null || true)
+  echo "[cloud-tasks/${TASKS_LOCATION}/${queue}]"
+  if [ -z "$queue_state" ]; then
+    echo "  Status: not configured"
+    echo ""
+    continue
+  fi
+
+  max_attempts=$(gcloud tasks queues describe "$queue" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(retryConfig.maxAttempts)' 2>/dev/null || true)
+  max_concurrent=$(gcloud tasks queues describe "$queue" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(rateLimits.maxConcurrentDispatches)' 2>/dev/null || true)
+  echo "  Status: $queue_state"
+  echo "  Max attempts: $max_attempts"
+  echo "  Max concurrent dispatches: $max_concurrent"
   echo ""
 done
 

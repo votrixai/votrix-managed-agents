@@ -8,14 +8,21 @@ and one run, then streamed into the Claude Managed Agents-shaped event protocol.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Annotated, Any, NotRequired
 
+import structlog
+from deepagents.graph import GENERAL_PURPOSE_SUBAGENT, DeepAgentState
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, PrivateStateAttr
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
@@ -50,6 +57,8 @@ from app.runtime.sandbox_outputs import (
 )
 from app.session_errors import session_error_payload
 
+logger = structlog.get_logger()
+
 
 class DeepAgentsRuntimeError(RuntimeError):
     """Raised when a revision cannot safely execute through Deep Agents."""
@@ -61,6 +70,278 @@ class TenantRunContext:
     session_id: str
     agent_id: str
     agent_version_id: str
+    turn_marker: dict[str, Any] | None = None
+
+
+def _merge_turn_evidence(left: Any, right: Any) -> dict[str, Any]:
+    """Merge checkpointed model evidence, resetting at a new logical work item."""
+
+    left_value = dict(left) if isinstance(left, dict) else {}
+    right_value = dict(right) if isinstance(right, dict) else {}
+    right_work_id = str(right_value.get("work_id") or "")
+    left_work_id = str(left_value.get("work_id") or "")
+    if not right_work_id:
+        return left_value
+    if right_work_id != left_work_id:
+        return {
+            "version": 1,
+            "work_id": right_work_id,
+            "records": dict(right_value.get("records") or {}),
+        }
+    records = dict(left_value.get("records") or {})
+    for evidence_id, record in dict(right_value.get("records") or {}).items():
+        existing = records.get(evidence_id)
+        if existing is not None and existing != record:
+            record = _merge_turn_evidence_record(existing, record)
+        records[evidence_id] = record
+    return {"version": 1, "work_id": right_work_id, "records": records}
+
+
+def _merge_turn_evidence_record(left: Any, right: Any) -> dict[str, Any]:
+    """Resolve the callback-placeholder race between parallel subagent branches."""
+
+    if _is_turn_evidence_enrichment(left, right):
+        return dict(right)
+    if _is_turn_evidence_enrichment(right, left):
+        return dict(left)
+    raise DeepAgentsRuntimeError(
+        "A checkpoint model evidence id was reused with different content"
+    )
+
+
+def _is_turn_evidence_enrichment(placeholder: Any, enriched: Any) -> bool:
+    """Return whether ``enriched`` only fills a callback-created placeholder."""
+
+    expected_keys = {"scope", "source", "text", "tool_calls", "usage"}
+    if not isinstance(placeholder, dict) or not isinstance(enriched, dict):
+        return False
+    if set(placeholder) != expected_keys or set(enriched) != expected_keys:
+        return False
+    if placeholder.get("text") != "" or placeholder.get("tool_calls") != []:
+        return False
+    placeholder_scope = placeholder.get("scope")
+    enriched_scope = enriched.get("scope")
+    scope_enriched = placeholder_scope == "root" and enriched_scope == "subagent"
+    if placeholder_scope != enriched_scope and not scope_enriched:
+        return False
+    if placeholder.get("source") != enriched.get("source"):
+        return False
+    if placeholder.get("usage") != enriched.get("usage"):
+        return False
+    text = enriched.get("text")
+    tool_calls = enriched.get("tool_calls")
+    if not isinstance(text, str) or not isinstance(tool_calls, list):
+        return False
+    return bool(text or tool_calls or scope_enriched)
+
+
+class VmaDeepAgentState(DeepAgentState):
+    """Deep Agents state extended with VMA's durable logical-turn identity."""
+
+    vma_turn_marker: NotRequired[Annotated[dict[str, Any], PrivateStateAttr]]
+    vma_turn_evidence: NotRequired[Annotated[dict[str, Any], _merge_turn_evidence]]
+
+
+class VmaModelEvidenceCollector(AsyncCallbackHandler):
+    """Collect nested model usage, including subagent and summarization calls."""
+
+    def __init__(self) -> None:
+        self.records: dict[str, dict[str, Any]] = {}
+
+    async def on_llm_end(self, response: Any, *, run_id: Any, **kwargs: Any) -> None:
+        metadata = kwargs.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        scope = "subagent" if metadata.get("ls_agent_type") == "subagent" else "root"
+        source = "summarization" if metadata.get("lc_source") == "summarization" else "agent"
+        found = False
+        for batch_index, generations in enumerate(getattr(response, "generations", None) or []):
+            for generation_index, generation in enumerate(generations or []):
+                message = getattr(generation, "message", None)
+                if message is None:
+                    continue
+                usage: dict[str, Any] = {}
+                _merge_usage(usage, getattr(message, "usage_metadata", None))
+                if not usage:
+                    continue
+                evidence_id = str(getattr(message, "id", "") or "")
+                if not evidence_id:
+                    evidence_id = f"llm_{run_id}_{batch_index}_{generation_index}"
+                    try:
+                        message.id = evidence_id
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+                self._record(
+                    evidence_id,
+                    scope=scope,
+                    source=source,
+                    usage=usage,
+                )
+                found = True
+        llm_output = getattr(response, "llm_output", None)
+        if found or not isinstance(llm_output, dict):
+            return
+        usage = {}
+        _merge_usage(usage, llm_output.get("token_usage"))
+        _merge_usage(usage, llm_output.get("usage"))
+        if usage:
+            self._record(
+                f"llm_{run_id}",
+                scope=scope,
+                source=source,
+                usage=usage,
+            )
+
+    def _record(
+        self,
+        evidence_id: str,
+        *,
+        scope: str,
+        source: str,
+        usage: dict[str, Any],
+    ) -> None:
+        record = {
+            "scope": scope,
+            "source": source,
+            "text": "",
+            "tool_calls": [],
+            "usage": usage,
+        }
+        existing = self.records.get(evidence_id)
+        if existing is not None and existing != record:
+            raise DeepAgentsRuntimeError(
+                "A model callback evidence id was reused with different content"
+            )
+        self.records[evidence_id] = record
+
+    def snapshot(self) -> dict[str, dict[str, Any]]:
+        return {
+            key: {
+                "scope": value["scope"],
+                "source": value["source"],
+                "text": value["text"],
+                "tool_calls": [dict(item) for item in value["tool_calls"]],
+                "usage": dict(value["usage"]),
+            }
+            for key, value in self.records.items()
+        }
+
+
+class VmaTurnEvidenceMiddleware(AgentMiddleware[VmaDeepAgentState, TenantRunContext, Any]):
+    """Checkpoint one deduplicated usage/text record per completed model call."""
+
+    state_schema = VmaDeepAgentState
+
+    def __init__(self, *, scope: str, collector: VmaModelEvidenceCollector) -> None:
+        self.scope = scope
+        self.collector = collector
+
+    async def aafter_model(
+        self,
+        state: VmaDeepAgentState,
+        runtime: Any,
+    ) -> dict[str, Any] | None:
+        evidence = state.get("vma_turn_evidence")
+        if not isinstance(evidence, dict) or evidence.get("version") != 1:
+            return None
+        work_id = str(evidence.get("work_id") or "")
+        if not work_id:
+            return None
+        messages = state.get("messages") or []
+        message = next((item for item in reversed(messages) if isinstance(item, AIMessage)), None)
+        if message is None:
+            return None
+        response_id = str(getattr(message, "id", "") or new_id("resp"))
+        existing = evidence.get("records")
+        records = dict(existing) if isinstance(existing, dict) else {}
+        collected_records = self.collector.snapshot()
+        for evidence_id, collected_record in collected_records.items():
+            if evidence_id not in records:
+                records[evidence_id] = collected_record
+        usage: dict[str, Any] = {}
+        collected = collected_records.get(response_id)
+        if isinstance(collected, dict):
+            _merge_usage(usage, collected.get("usage"))
+        else:
+            _merge_usage(usage, getattr(message, "usage_metadata", None))
+        tool_calls: list[dict[str, Any]] = []
+        for raw_call in getattr(message, "tool_calls", None) or []:
+            if not isinstance(raw_call, dict):
+                continue
+            call_id = str(raw_call.get("id") or "")
+            name = str(raw_call.get("name") or "")
+            args = raw_call.get("args")
+            if not call_id or not name or not isinstance(args, dict):
+                raise DeepAgentsRuntimeError("A checkpointed model tool call has no stable identity")
+            tool_calls.append({"id": call_id, "name": name, "args": dict(args)})
+        records[response_id] = {
+            "scope": self.scope,
+            "source": str((collected or {}).get("source") or "agent"),
+            "text": _message_text(message) if self.scope == "root" else "",
+            "tool_calls": tool_calls,
+            "usage": usage,
+        }
+        if isinstance(existing, dict) and existing == records:
+            return None
+        return {
+            "vma_turn_evidence": {
+                "version": 1,
+                "work_id": work_id,
+                "records": records,
+            }
+        }
+
+
+class VmaTurnCompletionMiddleware(AgentMiddleware[VmaDeepAgentState, TenantRunContext, Any]):
+    """Checkpoint logical turn completion in the graph's terminal middleware node."""
+
+    state_schema = VmaDeepAgentState
+
+    async def abefore_agent(
+        self,
+        state: VmaDeepAgentState,
+        runtime: Any,
+    ) -> dict[str, Any] | None:
+        marker = getattr(runtime.context, "turn_marker", None)
+        if not isinstance(marker, dict):
+            return None
+        current = state.get("vma_turn_marker")
+        if isinstance(current, dict) and _marker_matches(current, marker):
+            return None
+        return {
+            "vma_turn_marker": dict(marker),
+            "vma_turn_evidence": {
+                "version": 1,
+                "work_id": marker["work_id"],
+                "records": {},
+            },
+        }
+
+    async def aafter_agent(
+        self,
+        state: VmaDeepAgentState,
+        runtime: Any,
+    ) -> dict[str, Any] | None:
+        marker = state.get("vma_turn_marker")
+        if not isinstance(marker, dict) or marker.get("phase") != "started":
+            return None
+        evidence = _validated_turn_evidence(state.get("vma_turn_evidence"), marker)
+        usage: dict[str, Any] = {}
+        text_parts: list[str] = []
+        for record in evidence["records"].values():
+            _merge_usage(usage, record.get("usage"))
+            if record.get("scope") == "root" and isinstance(record.get("text"), str):
+                text_parts.append(record["text"])
+        return {
+            "vma_turn_marker": {
+                **marker,
+                "phase": "completed",
+                "completion": {
+                    "version": 1,
+                    "final_text": "".join(text_parts),
+                    "usage": usage,
+                },
+            }
+        }
 
 
 @dataclass
@@ -73,6 +354,112 @@ class _EmittedToolCall:
     args: dict[str, Any]
 
 
+async def recover_completed_deep_agent_turn(
+    version: EffectiveAgentVersion,
+    history: list[Any],
+    previous_state: dict[str, Any],
+    *,
+    thread_id: str,
+    work_id: str,
+    emit_event: RuntimeEventEmitter | None = None,
+    begin_recovery: Callable[[], Awaitable[None]] | None = None,
+) -> RuntimeResult | None:
+    """Finalize a completed checkpoint without reconnecting model, MCP, or sandbox services."""
+
+    if not thread_id or not work_id:
+        return None
+    processed_seq = _processed_input_seq(history, previous_state)
+    expected_marker = {
+        "version": 1,
+        "work_id": work_id,
+        "input_seq": processed_seq,
+        "agent_version_id": version.id,
+    }
+    async with checkpoint_saver() as saver:
+        checkpoint_tuple = await saver.aget_tuple({"configurable": {"thread_id": thread_id}})
+    if checkpoint_tuple is None:
+        return None
+    checkpoint = checkpoint_tuple.checkpoint
+    values = checkpoint.get("channel_values") if isinstance(checkpoint, dict) else None
+    marker = values.get("vma_turn_marker") if isinstance(values, dict) else None
+    marker = dict(marker) if isinstance(marker, dict) else None
+    if _marker_conflicts(marker, expected_marker):
+        raise DeepAgentsRuntimeError(
+            "The durable checkpoint turn marker conflicts with the current work item"
+        )
+    if not _marker_matches(marker, expected_marker):
+        return None
+    phase = _validated_turn_marker_phase(marker)
+    if phase != "completed":
+        return None
+    if checkpoint_tuple.pending_writes or any(
+        str(key).startswith("branch:to:") for key in values or {}
+    ):
+        raise DeepAgentsRuntimeError("A completed checkpoint turn marker still has pending graph work")
+    evidence = _validated_turn_evidence((values or {}).get("vma_turn_evidence"), marker)
+    completion = _validated_completion(marker)
+    usage: dict[str, Any] = {}
+    for record in evidence["records"].values():
+        _merge_usage(usage, record["usage"])
+    if completion["usage"] != usage:
+        raise DeepAgentsRuntimeError("The checkpoint turn completion usage does not match its evidence")
+    runtime = marker.get("runtime")
+    if not isinstance(runtime, dict):
+        raise DeepAgentsRuntimeError("The checkpoint turn runtime identity is invalid")
+    provider = runtime.get("provider")
+    model = runtime.get("model")
+    if not isinstance(provider, str) or not provider or not isinstance(model, str) or not model:
+        raise DeepAgentsRuntimeError("The checkpoint turn runtime identity is invalid")
+    sandbox_state = marker.get("sandbox_state")
+    if not isinstance(sandbox_state, dict):
+        raise DeepAgentsRuntimeError("The checkpoint turn sandbox state is invalid")
+    if begin_recovery is not None:
+        await begin_recovery()
+
+    tool_events: list[dict[str, Any]] = []
+    final_text = completion["final_text"]
+    if final_text:
+        await _emit(
+            {
+                "type": "agent.message",
+                "content": [{"type": "text", "text": final_text}],
+                "source": "deepagents",
+                "_event_id": _message_event_id(thread_id, processed_seq),
+            },
+            emit_event,
+            tool_events,
+        )
+
+    warnings: list[dict[str, Any]] = []
+    if sandbox_state.get("backend") == "e2b":
+        warning = {
+            "type": "sandbox_output_rediscovery_skipped",
+            "message": "Completed-turn recovery skipped bounded sandbox output rediscovery",
+        }
+        warnings.append(warning)
+        logger.warning(
+            "completed_turn_sandbox_output_rediscovery_skipped",
+            work_id=work_id,
+            thread_id=thread_id,
+        )
+    return RuntimeResult(
+        final_text=final_text,
+        tool_events=tool_events,
+        events_persisted=emit_event is not None,
+        run_state={
+            "backend": "deepagents",
+            "agent_version_id": version.id,
+            "provider": provider,
+            "model": model,
+            "last_input_event_seq": processed_seq,
+            "pending_actions": [],
+            "warnings": warnings,
+        },
+        sandbox_state=dict(sandbox_state),
+        usage=usage,
+    )
+
+
 async def execute_deep_agent(
     version: EffectiveAgentVersion,
     history: list[Any],
@@ -83,6 +470,8 @@ async def execute_deep_agent(
     session_id: str | None = None,
     emit_event: RuntimeEventEmitter | None = None,
     emit_preview: RuntimePreviewEmitter | None = None,
+    admit_execution: Callable[[], Awaitable[int]] | None = None,
+    begin_recovery: Callable[[], Awaitable[None]] | None = None,
 ) -> RuntimeResult:
     """Execute one durable session turn with a run-scoped Deep Agents graph."""
     runtime_context = dict(runtime_context or {})
@@ -94,8 +483,24 @@ async def execute_deep_agent(
     )
     session_id = session_id or str(runtime_context.get("session_id") or "")
     thread_id = str(runtime_context.get("checkpoint_thread_id") or "")
+    work_id = str(runtime_context.get("work_id") or "")
     if not session_id or not thread_id:
         raise DeepAgentsRuntimeError("Deep Agents execution requires tenant, session, and checkpoint thread ids")
+
+    previous_state = runtime_context.get("previous_run_state")
+    previous_state = dict(previous_state) if isinstance(previous_state, dict) else {}
+    if not runtime_context.get("_completed_checkpoint_recovery_checked"):
+        recovered = await recover_completed_deep_agent_turn(
+            version,
+            history,
+            previous_state,
+            thread_id=thread_id,
+            work_id=work_id,
+            emit_event=emit_event,
+            begin_recovery=begin_recovery,
+        )
+        if recovered is not None:
+            return recovered
 
     secrets = runtime_context.get("provider_secrets")
     provider = resolve_runtime_provider(
@@ -109,8 +514,6 @@ async def execute_deep_agent(
         )
     model = build_chat_model(provider)
 
-    previous_state = runtime_context.get("previous_run_state")
-    previous_state = dict(previous_state) if isinstance(previous_state, dict) else {}
     raw_session_files = runtime_context.get("session_files")
     session_files = (
         [item for item in raw_session_files if isinstance(item, dict)]
@@ -124,14 +527,21 @@ async def execute_deep_agent(
         multimodal_input=provider.capabilities.multimodal_input,
     )
     if graph_input is None:
-        return RuntimeResult(
-            events_persisted=emit_event is not None,
-            run_state=previous_state or {
+        run_state = dict(previous_state)
+        run_state.update(
+            {
                 "backend": "deepagents",
                 "agent_version_id": version.id,
                 "provider": provider.provider,
                 "model": provider.model_id,
-            },
+                "last_input_event_seq": processed_seq,
+            }
+        )
+        if work_id:
+            run_state["_vma_noop"] = True
+        return RuntimeResult(
+            events_persisted=emit_event is not None,
+            run_state=run_state,
         )
 
     tool_events: list[dict[str, Any]] = []
@@ -158,19 +568,6 @@ async def execute_deep_agent(
             runtime_context,
             warnings,
         )
-        for warning in warnings:
-            if warning.get("type") == "mcp_connection_error":
-                await _emit(
-                    session_error_payload(
-                        warning.get("message") or "MCP connection failed",
-                        error_type="mcp_connection_error",
-                        retry_status="exhausted",
-                        mcp_server_name=warning.get("server_name"),
-                        source="deepagents",
-                    ),
-                    emit_event,
-                    tool_events,
-                )
         tools, custom_names, custom_specs = _materialize_tools(version, mcp_tools)
         excluded, interrupt_on, _tool_config = deep_tool_policy(
             version.tools,
@@ -203,7 +600,40 @@ async def execute_deep_agent(
 
             permissions = [FilesystemPermission(operations=["write"], paths=read_only_paths, mode="deny")]
 
+        evidence_collector = VmaModelEvidenceCollector()
         subagents = _materialize_subagents(runtime_context, secrets if isinstance(secrets, dict) else {})
+        for subagent in subagents:
+            middleware = list(subagent.get("middleware") or [])
+            subagent_interrupts = subagent.pop("interrupt_on", None)
+            if subagent_interrupts:
+                middleware.append(HumanInTheLoopMiddleware(interrupt_on=subagent_interrupts))
+            middleware.append(
+                VmaTurnEvidenceMiddleware(scope="subagent", collector=evidence_collector)
+            )
+            subagent["middleware"] = middleware
+        if version.multiagent and not any(item.get("name") == "general-purpose" for item in subagents):
+            subagents.append(
+                {
+                    "name": "general-purpose",
+                    "description": GENERAL_PURPOSE_SUBAGENT["description"],
+                    "system_prompt": GENERAL_PURPOSE_SUBAGENT["system_prompt"],
+                    "model": model,
+                    "middleware": [
+                        HumanInTheLoopMiddleware(interrupt_on=interrupt_on),
+                        VmaTurnEvidenceMiddleware(
+                            scope="subagent",
+                            collector=evidence_collector,
+                        ),
+                    ]
+                    if interrupt_on
+                    else [
+                        VmaTurnEvidenceMiddleware(
+                            scope="subagent",
+                            collector=evidence_collector,
+                        )
+                    ],
+                }
+            )
 
         from deepagents import create_deep_agent
 
@@ -211,13 +641,25 @@ async def execute_deep_agent(
             model=model,
             tools=tools,
             system_prompt=version.system or "You are a helpful managed agent.",
-            middleware=[ToolFilterMiddleware(excluded=excluded)],
+            middleware=[
+                ToolFilterMiddleware(excluded=excluded),
+                HumanInTheLoopMiddleware(interrupt_on=interrupt_on),
+                VmaTurnEvidenceMiddleware(scope="root", collector=evidence_collector),
+                VmaTurnCompletionMiddleware(),
+            ]
+            if interrupt_on
+            else [
+                ToolFilterMiddleware(excluded=excluded),
+                VmaTurnEvidenceMiddleware(scope="root", collector=evidence_collector),
+                VmaTurnCompletionMiddleware(),
+            ],
             subagents=subagents or None,
             skills=skill_sources or None,
             memory=memory_sources or None,
             permissions=permissions or None,
             backend=backend_handle.backend,
-            interrupt_on=interrupt_on or None,
+            interrupt_on=None,
+            state_schema=VmaDeepAgentState,
             context_schema=TenantRunContext,
             checkpointer=saver,
             name=_graph_name(version.name, version.agent_id),
@@ -229,40 +671,170 @@ async def execute_deep_agent(
         config = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": max(10, int(get_settings().vma_max_graph_steps)),
+            "callbacks": [evidence_collector],
         }
+        checkpoint = await graph.aget_state(config) if work_id else None
+        marker = _checkpoint_turn_marker(checkpoint)
+        seed_messages: list[Any] = []
+        recover_without_graph = False
+        resume_finalize_only = False
+        recovery_interrupts: list[Any] = []
+        recovery_usage: dict[str, Any] | None = None
+        recovery_final_text: str | None = None
+        if work_id:
+            expected_marker = {
+                "version": 1,
+                "work_id": work_id,
+                "input_seq": processed_seq,
+                "agent_version_id": version.id,
+            }
+            marker_match = _marker_matches(marker, expected_marker)
+            if _marker_conflicts(marker, expected_marker):
+                raise DeepAgentsRuntimeError(
+                    "The durable checkpoint turn marker conflicts with the current work item"
+                )
+            if marker_match:
+                phase = _validated_turn_marker_phase(marker)
+                seed_messages = _checkpoint_turn_messages(checkpoint, marker)
+                recovery_usage = _checkpoint_turn_usage(checkpoint, marker)
+                recovery_interrupts = _checkpoint_interrupts(checkpoint)
+                pending_nodes = tuple(getattr(checkpoint, "next", ()) or ())
+                if phase == "completed":
+                    if pending_nodes or recovery_interrupts:
+                        raise DeepAgentsRuntimeError(
+                            "A completed checkpoint turn marker still has pending graph work"
+                        )
+                    completion = _validated_completion(marker)
+                    if completion["usage"] != recovery_usage:
+                        raise DeepAgentsRuntimeError(
+                            "The checkpoint turn completion usage does not match its evidence"
+                        )
+                    recovery_final_text = completion["final_text"]
+                    recover_without_graph = True
+                elif recovery_interrupts:
+                    recover_without_graph = True
+                else:
+                    if not pending_nodes:
+                        raise DeepAgentsRuntimeError(
+                            "A started checkpoint turn marker has no pending graph work"
+                        )
+                    graph_input = None
+                    resume_finalize_only = _checkpoint_only_completion_pending(checkpoint)
+            else:
+                marker = {
+                    **expected_marker,
+                    "phase": "started",
+                    "input_message_id": _turn_input_message_id(work_id, processed_seq),
+                    "runtime": {
+                        "provider": provider.provider,
+                        "model": provider.model_id,
+                    },
+                    "sandbox_state": {
+                        **backend_handle.plan.summary,
+                        "runtime_backend": "deepagents",
+                    },
+                }
+                graph_input = _graph_input_with_turn_marker(graph_input, marker)
+
         context = TenantRunContext(
             organization_id=organization_id,
             session_id=session_id,
             agent_id=version.agent_id,
             agent_version_id=version.id,
+            turn_marker=marker if work_id else None,
         )
+
         timeout_seconds = max(1, int(get_settings().vma_run_timeout_seconds))
-        async with asyncio.timeout(timeout_seconds):
-            streamed = await _stream_graph(
-                graph,
-                graph_input,
-                config=config,
-                context=context,
+        if recover_without_graph:
+            if begin_recovery is not None:
+                await begin_recovery()
+            streamed = await _recover_checkpoint_stream(
+                seed_messages,
+                interrupts=recovery_interrupts,
+                thread_id=thread_id,
+                processed_seq=processed_seq,
                 emit_event=emit_event,
-                emit_preview=emit_preview,
                 tool_events=tool_events,
                 custom_names=custom_names,
                 custom_specs=custom_specs,
                 mcp_tool_names=mcp_tool_names,
                 interrupt_on=interrupt_on,
+                usage_override=recovery_usage,
+                final_text_override=recovery_final_text,
             )
+        else:
+            if resume_finalize_only and begin_recovery is not None:
+                await begin_recovery()
+            else:
+                if admit_execution is not None:
+                    await admit_execution()
+                await _emit_mcp_connection_warnings(warnings, emit_event, tool_events)
+            async with asyncio.timeout(timeout_seconds):
+                streamed = await _stream_graph(
+                    graph,
+                    graph_input,
+                    config=config,
+                    context=context,
+                    emit_event=emit_event,
+                    emit_preview=emit_preview,
+                    tool_events=tool_events,
+                    custom_names=custom_names,
+                    custom_specs=custom_specs,
+                    mcp_tool_names=mcp_tool_names,
+                    interrupt_on=interrupt_on,
+                    thread_id=thread_id,
+                    processed_seq=processed_seq,
+                    seed_messages=seed_messages,
+                )
+            if work_id:
+                latest_checkpoint = await graph.aget_state(config)
+                latest_marker = _checkpoint_turn_marker(latest_checkpoint)
+                if not _marker_matches(latest_marker, expected_marker):
+                    raise DeepAgentsRuntimeError(
+                        "The durable checkpoint lost the current turn marker"
+                    )
+                latest_phase = _validated_turn_marker_phase(latest_marker)
+                checkpoint_usage = _checkpoint_turn_usage(latest_checkpoint, latest_marker)
+                streamed["usage"] = checkpoint_usage
+                if latest_phase == "completed":
+                    completion = _validated_completion(latest_marker)
+                    if completion["usage"] != checkpoint_usage:
+                        raise DeepAgentsRuntimeError(
+                            "The checkpoint turn completion usage does not match its evidence"
+                        )
+                    if completion["final_text"] != streamed["final_text"]:
+                        raise DeepAgentsRuntimeError(
+                            "The streamed completion text does not match its checkpoint evidence"
+                        )
         if backend_handle.plan.backend == "e2b":
-            if backend_handle.connection is None:
-                raise DeepAgentsRuntimeError("E2B output discovery requires the live sandbox connection")
-            from app.runtime.sandbox_lifecycle import build_e2b_provider
+            try:
+                if backend_handle.connection is None:
+                    raise DeepAgentsRuntimeError(
+                        "E2B output discovery requires the live sandbox connection"
+                    )
+                from app.runtime.sandbox_lifecycle import build_e2b_provider
 
-            sandbox_outputs = await build_e2b_provider().discover_outputs(
-                backend_handle.connection,
-                root=SANDBOX_OUTPUT_ROOT,
-                max_files=MAX_DISCOVERED_OUTPUT_FILES,
-                max_file_bytes=MAX_OUTPUT_FILE_BYTES,
-                max_total_bytes=MAX_OUTPUT_TOTAL_BYTES,
-            )
+                sandbox_outputs = await build_e2b_provider().discover_outputs(
+                    backend_handle.connection,
+                    root=SANDBOX_OUTPUT_ROOT,
+                    max_files=MAX_DISCOVERED_OUTPUT_FILES,
+                    max_file_bytes=MAX_OUTPUT_FILE_BYTES,
+                    max_total_bytes=MAX_OUTPUT_TOTAL_BYTES,
+                )
+            except Exception as exc:
+                if not (recover_without_graph or resume_finalize_only):
+                    raise
+                warning = {
+                    "type": "sandbox_output_rediscovery_skipped",
+                    "message": "Recovery skipped unavailable bounded sandbox output discovery",
+                }
+                warnings.append(warning)
+                logger.warning(
+                    "recovery_sandbox_output_rediscovery_skipped",
+                    work_id=work_id,
+                    thread_id=thread_id,
+                    error=str(exc),
+                )
 
     pending_actions = streamed["pending_actions"]
     run_state = {
@@ -287,6 +859,309 @@ async def execute_deep_agent(
     )
 
 
+def _message_event_id(thread_id: str, processed_seq: int) -> str:
+    material = f"{thread_id}:{processed_seq}:final"
+    return "evt_" + hashlib.sha1(material.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
+
+
+def _turn_input_message_id(work_id: str, processed_seq: int) -> str:
+    material = f"{work_id}:{processed_seq}:input"
+    return "msg_" + hashlib.sha1(material.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
+
+
+def _tool_event_id(thread_id: str, tool_use_id: str, event_type: str) -> str:
+    material = f"{thread_id}:{tool_use_id}:{event_type}"
+    return "evt_" + hashlib.sha1(material.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
+
+
+def _graph_input_with_turn_marker(
+    graph_input: dict[str, Any] | Command,
+    marker: dict[str, Any],
+) -> dict[str, Any] | Command:
+    evidence = {"version": 1, "work_id": marker["work_id"], "records": {}}
+    if isinstance(graph_input, dict):
+        messages = list(graph_input.get("messages") or [])
+        if messages and isinstance(messages[0], dict):
+            messages[0] = {**messages[0], "id": marker.get("input_message_id")}
+        return {**graph_input, "messages": messages, "vma_turn_evidence": evidence}
+    update = graph_input.update
+    if update is None:
+        update = {}
+    if not isinstance(update, dict):
+        raise DeepAgentsRuntimeError("The graph resume command has an unsupported state update")
+    return Command(
+        graph=graph_input.graph,
+        update={
+            **update,
+            "vma_turn_marker": marker,
+            "vma_turn_evidence": evidence,
+        },
+        resume=graph_input.resume,
+        goto=graph_input.goto,
+    )
+
+
+def _checkpoint_turn_marker(checkpoint: Any) -> dict[str, Any] | None:
+    values = getattr(checkpoint, "values", None)
+    if not isinstance(values, dict):
+        return None
+    marker = values.get("vma_turn_marker")
+    return dict(marker) if isinstance(marker, dict) else None
+
+
+def _validated_turn_marker_phase(marker: dict[str, Any]) -> str:
+    phase = marker.get("phase")
+    if phase not in {"started", "completed"}:
+        raise DeepAgentsRuntimeError("The checkpoint turn marker phase is invalid")
+    return str(phase)
+
+
+def _validated_completion(marker: dict[str, Any]) -> dict[str, Any]:
+    completion = marker.get("completion")
+    if not isinstance(completion, dict) or completion.get("version") != 1:
+        raise DeepAgentsRuntimeError("The checkpoint turn completion envelope is invalid")
+    if not isinstance(completion.get("final_text"), str):
+        raise DeepAgentsRuntimeError("The checkpoint turn completion text is invalid")
+    if not isinstance(completion.get("usage"), dict):
+        raise DeepAgentsRuntimeError("The checkpoint turn completion usage is invalid")
+    return dict(completion)
+
+
+def _validated_turn_evidence(value: Any, marker: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("version") != 1:
+        raise DeepAgentsRuntimeError("The checkpoint turn evidence is invalid")
+    if str(value.get("work_id") or "") != str(marker.get("work_id") or ""):
+        raise DeepAgentsRuntimeError("The checkpoint turn evidence belongs to another work item")
+    raw_records = value.get("records")
+    if not isinstance(raw_records, dict):
+        raise DeepAgentsRuntimeError("The checkpoint turn evidence records are invalid")
+    records: dict[str, dict[str, Any]] = {}
+    for raw_id, raw_record in raw_records.items():
+        response_id = str(raw_id or "")
+        if not response_id or not isinstance(raw_record, dict):
+            raise DeepAgentsRuntimeError("A checkpoint turn evidence record is invalid")
+        scope = raw_record.get("scope")
+        text = raw_record.get("text")
+        tool_calls = raw_record.get("tool_calls")
+        usage = raw_record.get("usage")
+        if scope not in {"root", "subagent"} or not isinstance(text, str):
+            raise DeepAgentsRuntimeError("A checkpoint turn evidence response is invalid")
+        if not isinstance(tool_calls, list) or any(not isinstance(item, dict) for item in tool_calls):
+            raise DeepAgentsRuntimeError("A checkpoint turn evidence tool call is invalid")
+        if not isinstance(usage, dict):
+            raise DeepAgentsRuntimeError("A checkpoint turn evidence usage record is invalid")
+        normalized_calls: list[dict[str, Any]] = []
+        for item in tool_calls:
+            call_id = str(item.get("id") or "")
+            name = str(item.get("name") or "")
+            args = item.get("args")
+            if not call_id or not name or not isinstance(args, dict):
+                raise DeepAgentsRuntimeError("A checkpoint turn evidence tool call has no stable identity")
+            normalized_calls.append({"id": call_id, "name": name, "args": dict(args)})
+        records[response_id] = {
+            "scope": scope,
+            "text": text,
+            "tool_calls": normalized_calls,
+            "usage": dict(usage),
+        }
+    return {"version": 1, "work_id": str(value["work_id"]), "records": records}
+
+
+def _marker_matches(marker: dict[str, Any] | None, expected: dict[str, Any]) -> bool:
+    return marker is not None and all(marker.get(key) == value for key, value in expected.items())
+
+
+def _marker_conflicts(marker: dict[str, Any] | None, expected: dict[str, Any]) -> bool:
+    if marker is None or marker.get("input_seq") != expected["input_seq"]:
+        return False
+    return not _marker_matches(marker, expected)
+
+
+def _checkpoint_turn_messages(checkpoint: Any, marker: dict[str, Any]) -> list[Any]:
+    values = getattr(checkpoint, "values", None)
+    if not isinstance(values, dict):
+        raise DeepAgentsRuntimeError("The checkpoint turn state is invalid")
+    evidence = _validated_turn_evidence(values.get("vma_turn_evidence"), marker)
+    messages: list[Any] = []
+    for response_id, record in evidence["records"].items():
+        if record["scope"] != "root":
+            continue
+        messages.append(
+            AIMessage(
+                content=record["text"],
+                id=response_id,
+                tool_calls=record["tool_calls"],
+            )
+        )
+    return messages
+
+
+def _checkpoint_turn_usage(checkpoint: Any, marker: dict[str, Any]) -> dict[str, Any]:
+    values = getattr(checkpoint, "values", None)
+    if not isinstance(values, dict):
+        raise DeepAgentsRuntimeError("The checkpoint turn state is invalid")
+    evidence = _validated_turn_evidence(values.get("vma_turn_evidence"), marker)
+    usage: dict[str, Any] = {}
+    for record in evidence["records"].values():
+        _merge_usage(usage, record["usage"])
+    return usage
+
+
+def _checkpoint_interrupts(checkpoint: Any) -> list[Any]:
+    found: list[Any] = []
+    seen: set[tuple[str, str]] = set()
+    sources = [getattr(checkpoint, "interrupts", ())]
+    for task in getattr(checkpoint, "tasks", ()) or ():
+        sources.append(getattr(task, "interrupts", ()))
+    for source in sources:
+        for interrupt in source or ():
+            key = (
+                str(getattr(interrupt, "id", "") or ""),
+                repr(getattr(interrupt, "value", None)),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(interrupt)
+    return found
+
+
+def _checkpoint_only_completion_pending(checkpoint: Any) -> bool:
+    pending = tuple(str(item) for item in (getattr(checkpoint, "next", ()) or ()))
+    return bool(pending) and set(pending) == {"VmaTurnCompletionMiddleware.after_agent"}
+
+
+async def _emit_mcp_connection_warnings(
+    warnings: list[dict[str, Any]],
+    emit_event: RuntimeEventEmitter | None,
+    tool_events: list[dict[str, Any]],
+) -> None:
+    for warning in warnings:
+        if warning.get("type") != "mcp_connection_error":
+            continue
+        await _emit(
+            session_error_payload(
+                warning.get("message") or "MCP connection failed",
+                error_type="mcp_connection_error",
+                retry_status="exhausted",
+                mcp_server_name=warning.get("server_name"),
+                source="deepagents",
+            ),
+            emit_event,
+            tool_events,
+        )
+
+
+async def _seed_stream_state(
+    messages: list[Any],
+    *,
+    thread_id: str,
+    emit_event: RuntimeEventEmitter | None,
+    tool_events: list[dict[str, Any]],
+    custom_names: set[str],
+    custom_specs: dict[str, dict[str, Any]],
+    mcp_tool_names: set[str],
+    interrupt_on: dict[str, Any],
+) -> tuple[list[str], dict[str, _EmittedToolCall], dict[str, Any]]:
+    text_parts: list[str] = []
+    emitted_calls: dict[str, _EmittedToolCall] = {}
+    usage: dict[str, Any] = defaultdict(int)
+    for message in messages:
+        _merge_usage(usage, getattr(message, "usage_metadata", None))
+        if isinstance(message, (AIMessage, AIMessageChunk)):
+            for raw_call in getattr(message, "tool_calls", None) or []:
+                if not isinstance(raw_call, dict):
+                    continue
+                internal_id = str(raw_call.get("id") or "")
+                name = str(raw_call.get("name") or "")
+                args = raw_call.get("args")
+                if not internal_id or not name or internal_id in emitted_calls:
+                    continue
+                call = {
+                    "id": internal_id,
+                    "name": name,
+                    "args": args if isinstance(args, dict) else {},
+                }
+                emitted_calls[internal_id] = await _emit_tool_use(
+                    call,
+                    emit_event=emit_event,
+                    tool_events=tool_events,
+                    custom_names=custom_names,
+                    custom_specs=custom_specs,
+                    mcp_tool_names=mcp_tool_names,
+                    requires_confirmation=name in interrupt_on,
+                    thread_id=thread_id,
+                )
+            text = _message_text(message)
+            if text:
+                text_parts.append(text)
+        elif isinstance(message, ToolMessage):
+            await _emit_tool_result(
+                message,
+                emitted_calls,
+                emit_event=emit_event,
+                tool_events=tool_events,
+                custom_names=custom_names,
+                mcp_tool_names=mcp_tool_names,
+                thread_id=thread_id,
+            )
+    return text_parts, emitted_calls, usage
+
+
+async def _recover_checkpoint_stream(
+    messages: list[Any],
+    *,
+    interrupts: list[Any],
+    thread_id: str,
+    processed_seq: int,
+    emit_event: RuntimeEventEmitter | None,
+    tool_events: list[dict[str, Any]],
+    custom_names: set[str],
+    custom_specs: dict[str, dict[str, Any]],
+    mcp_tool_names: set[str],
+    interrupt_on: dict[str, Any],
+    usage_override: dict[str, Any] | None = None,
+    final_text_override: str | None = None,
+) -> dict[str, Any]:
+    text_parts, emitted_calls, usage = await _seed_stream_state(
+        messages,
+        thread_id=thread_id,
+        emit_event=emit_event,
+        tool_events=tool_events,
+        custom_names=custom_names,
+        custom_specs=custom_specs,
+        mcp_tool_names=mcp_tool_names,
+        interrupt_on=interrupt_on,
+    )
+    pending_actions = await _persist_interrupt_actions(
+        interrupts,
+        emitted_calls,
+        emit_event=emit_event,
+        tool_events=tool_events,
+        custom_names=custom_names,
+        custom_specs=custom_specs,
+        mcp_tool_names=mcp_tool_names,
+        thread_id=thread_id,
+    )
+    final_text = final_text_override if final_text_override is not None else "".join(text_parts)
+    if final_text:
+        await _emit(
+            {
+                "type": "agent.message",
+                "content": [{"type": "text", "text": final_text}],
+                "source": "deepagents",
+                "_event_id": _message_event_id(thread_id, processed_seq),
+            },
+            emit_event,
+            tool_events,
+        )
+    return {
+        "final_text": final_text,
+        "pending_actions": pending_actions,
+        "usage": dict(usage_override) if usage_override is not None else dict(usage),
+    }
+
+
 async def _stream_graph(
     graph,
     graph_input,
@@ -300,13 +1175,26 @@ async def _stream_graph(
     custom_specs: dict[str, dict[str, Any]],
     mcp_tool_names: set[str],
     interrupt_on: dict[str, Any],
+    thread_id: str = "",
+    processed_seq: int = 0,
+    seed_messages: list[Any] | None = None,
 ) -> dict[str, Any]:
-    text_parts: list[str] = []
-    message_event_id: str | None = None
+    text_parts, emitted_calls, usage = await _seed_stream_state(
+        list(seed_messages or []),
+        thread_id=thread_id,
+        emit_event=emit_event,
+        tool_events=tool_events,
+        custom_names=custom_names,
+        custom_specs=custom_specs,
+        mcp_tool_names=mcp_tool_names,
+        interrupt_on=interrupt_on,
+    )
+    message_event_id: str | None = (
+        _message_event_id(thread_id, processed_seq) if text_parts else None
+    )
+    preview_started = False
     tool_accumulator: dict[tuple[tuple[str, ...], str, int], dict[str, Any]] = {}
-    emitted_calls: dict[str, _EmittedToolCall] = {}
     pending_interrupts: list[Any] = []
-    usage: dict[str, Any] = defaultdict(int)
 
     async for item in graph.astream(
         graph_input,
@@ -314,6 +1202,7 @@ async def _stream_graph(
         context=context,
         stream_mode=["messages", "updates"],
         subgraphs=True,
+        durability="sync",
     ):
         if not isinstance(item, tuple) or len(item) != 3:
             continue
@@ -341,6 +1230,7 @@ async def _stream_graph(
                 custom_specs=custom_specs,
                 mcp_tool_names=mcp_tool_names,
                 requires_confirmation=call["name"] in interrupt_on,
+                thread_id=thread_id,
             )
             emitted_calls[internal_id] = emitted
 
@@ -354,6 +1244,7 @@ async def _stream_graph(
                 tool_events=tool_events,
                 custom_names=custom_names,
                 mcp_tool_names=mcp_tool_names,
+                thread_id=thread_id,
             )
             continue
 
@@ -363,11 +1254,12 @@ async def _stream_graph(
         if not text:
             continue
         if message_event_id is None:
-            message_event_id = new_id("evt")
-            if emit_preview is not None:
-                await emit_preview(
-                    {"type": "event_start", "event": {"type": "agent.message", "id": message_event_id}}
-                )
+            message_event_id = _message_event_id(thread_id, processed_seq)
+        if not preview_started and emit_preview is not None:
+            await emit_preview(
+                {"type": "event_start", "event": {"type": "agent.message", "id": message_event_id}}
+            )
+            preview_started = True
         text_parts.append(text)
         if emit_preview is not None:
             await emit_preview(
@@ -390,6 +1282,7 @@ async def _stream_graph(
         custom_names=custom_names,
         custom_specs=custom_specs,
         mcp_tool_names=mcp_tool_names,
+        thread_id=thread_id,
     )
     final_text = "".join(text_parts)
     if final_text:
@@ -397,7 +1290,7 @@ async def _stream_graph(
             "type": "agent.message",
             "content": [{"type": "text", "text": final_text}],
             "source": "deepagents",
-            "_event_id": message_event_id or new_id("evt"),
+            "_event_id": message_event_id or _message_event_id(thread_id, processed_seq),
         }
         await _emit(payload, emit_event, tool_events)
     return {
@@ -416,6 +1309,7 @@ async def _emit_tool_use(
     custom_specs: dict[str, dict[str, Any]],
     mcp_tool_names: set[str],
     requires_confirmation: bool,
+    thread_id: str = "",
 ) -> _EmittedToolCall:
     internal_name = call["name"]
     public_name = DEEP_TO_CLAUDE_TOOL.get(internal_name, internal_name)
@@ -431,7 +1325,7 @@ async def _emit_tool_use(
         "input": call["args"],
         "tool_use_id": call["id"],
         "source": "deepagents",
-        "_event_id": new_id("evt"),
+        "_event_id": _tool_event_id(thread_id, str(call["id"]), event_type),
     }
     if internal_name in custom_specs:
         payload["tool"] = custom_specs[internal_name]
@@ -456,8 +1350,11 @@ async def _emit_tool_result(
     tool_events: list[dict[str, Any]],
     custom_names: set[str],
     mcp_tool_names: set[str],
+    thread_id: str = "",
 ) -> None:
     internal_id = str(message.tool_call_id or "")
+    if not internal_id:
+        raise DeepAgentsRuntimeError("A tool result has no stable tool call identity")
     emitted = emitted_calls.get(internal_id)
     name = str(getattr(message, "name", "") or (emitted.internal_name if emitted else "tool"))
     if name in custom_names or name in {"write_todos", "task"}:
@@ -470,6 +1367,7 @@ async def _emit_tool_result(
             "tool_use_id": internal_id or None,
             "content": [{"type": "text", "text": _content_text(message.content)}],
             "source": "deepagents",
+            "_event_id": _tool_event_id(thread_id, internal_id, event_type),
         },
         emit_event,
         tool_events,
@@ -485,6 +1383,7 @@ async def _persist_interrupt_actions(
     custom_names: set[str],
     custom_specs: dict[str, dict[str, Any]],
     mcp_tool_names: set[str],
+    thread_id: str = "",
 ) -> list[dict[str, Any]]:
     pending: list[dict[str, Any]] = []
     used_calls: set[str] = set()
@@ -502,14 +1401,8 @@ async def _persist_interrupt_actions(
             args = action.get("args") if isinstance(action.get("args"), dict) else {}
             emitted = _match_emitted_call(emitted_calls, used_calls, name, args)
             if emitted is None:
-                emitted = await _emit_tool_use(
-                    {"id": new_id("tool"), "name": name, "args": args},
-                    emit_event=emit_event,
-                    tool_events=tool_events,
-                    custom_names=custom_names,
-                    custom_specs=custom_specs,
-                    mcp_tool_names=mcp_tool_names,
-                    requires_confirmation=True,
+                raise DeepAgentsRuntimeError(
+                    "A checkpointed interrupt has no matching stable tool call"
                 )
             used_calls.add(emitted.internal_id)
             allowed = []
@@ -767,19 +1660,13 @@ def _graph_input(
     session_files: list[dict[str, Any]] | None = None,
     multimodal_input: bool = False,
 ) -> tuple[dict[str, Any] | Command | None, int]:
-    pending = previous_state.get("pending_actions")
-    if isinstance(pending, list) and pending:
-        command, seq = _resume_command(history, pending)
-        if command is not None:
-            return command, seq
-
-    last_seq = int(previous_state.get("last_input_event_seq") or 0)
-    candidate = None
-    for event in history:
-        if event.seq > last_seq and event.type in {"user.message", "user.define_outcome"}:
-            candidate = event
+    command, candidate, processed_seq = _next_graph_input(history, previous_state)
+    if command is not None:
+        return command, processed_seq
     if candidate is None:
-        return None, last_seq
+        return None, processed_seq
+
+
     content: Any
     if candidate.type == "user.define_outcome":
         objective = candidate.payload.get("description") or candidate.payload.get("objective") or "Complete the outcome."
@@ -807,7 +1694,32 @@ def _graph_input(
         )
     except ModelInputValidationError as exc:
         raise DeepAgentsRuntimeError(str(exc)) from exc
-    return {"messages": [{"role": "user", "content": content}]}, candidate.seq
+    return {"messages": [{"role": "user", "content": content}]}, processed_seq
+
+
+def _processed_input_seq(history: list[Any], previous_state: dict[str, Any]) -> int:
+    _command, _candidate, processed_seq = _next_graph_input(history, previous_state)
+    return processed_seq
+
+
+def _next_graph_input(
+    history: list[Any],
+    previous_state: dict[str, Any],
+) -> tuple[Command | None, Any | None, int]:
+    pending = previous_state.get("pending_actions")
+    if isinstance(pending, list) and pending:
+        command, seq = _resume_command(history, pending)
+        if command is not None:
+            return command, None, seq
+
+    last_seq = int(previous_state.get("last_input_event_seq") or 0)
+    candidate = None
+    for event in history:
+        if event.seq > last_seq and event.type in {"user.message", "user.define_outcome"}:
+            candidate = event
+    if candidate is None:
+        return None, None, last_seq
+    return None, candidate, int(candidate.seq)
 
 
 def _resume_command(history: list[Any], pending: list[dict[str, Any]]) -> tuple[Command | None, int]:
@@ -860,7 +1772,9 @@ def _completed_tool_calls(
         for call in getattr(message, "tool_calls", None) or []:
             if not isinstance(call, dict) or not call.get("name"):
                 continue
-            call_id = str(call.get("id") or new_id("tool"))
+            call_id = str(call.get("id") or "")
+            if not call_id:
+                raise DeepAgentsRuntimeError("A model tool call has no stable identity")
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
             completed[call_id] = {"id": call_id, "name": str(call["name"]), "args": args}
 

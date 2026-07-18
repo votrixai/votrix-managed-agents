@@ -30,16 +30,36 @@ slow reconciler (existing poller, demoted) → recovers expired leases + missed 
 `_run_session_turn` (runner.py) flow: execute graph (events are persisted incrementally via `emit_event` during streaming, including the final `agent.message`) → `_record_model_usage_after_result` → finalize transaction (session run_state/status/stop_reason, discovered outputs). Crash windows:
 
 - **W1 — mid-graph**: LangGraph checkpoint recovers completed supersteps; the interrupted superstep replays → possible duplicate side effects/events. Bounded by the attempt cap; cannot be fully eliminated.
-- **W2 — graph completed, finalize not committed** (the critical gap): `run_state.last_input_event_seq` was never persisted, so a retry re-derives the same candidate input, **appends the same user message to the thread again, and re-invokes the model** → duplicate model execution, duplicate `agent.message`. Stage A eliminates W2 entirely.
+- **W2 — graph completed, finalize not committed** (the critical gap): `run_state.last_input_event_seq` was never persisted, so a retry re-derives the same candidate input, **appends the same user message to the thread again, and re-invokes the model** → duplicate model execution, duplicate `agent.message`. A database journal written only after `_execute(...)` returns is not sufficient: there is still a graph-complete/pre-journal crash window. Stage A eliminates W2 with a completion marker written by the graph itself into the terminal LangGraph checkpoint, followed by the database journal.
 - **W3 — after finalize, before work status update**: already safe — `_graph_input` sees the updated seq, returns `None`, no model call.
 
-### A.1 Turn journal (crash-safe finalize) — `app/runtime/runner.py`
+### A.1 Checkpoint-backed completion marker + turn journal (crash-safe finalize)
 
-- Immediately after `_execute(...)` returns, in a small dedicated transaction (lease-fenced with `_lease_matches`): write `work.data["turn_journal"] = {"input_seq": run_state["last_input_event_seq"], "run_state": result.run_state, "requires_action": result.requires_action, "blocking_event_ids": [...], "usage": result.usage, "sandbox_state": result.sandbox_state}` and persist discovered outputs in this same transaction (mark `"outputs_persisted": true`). Then proceed to usage + finalize as today.
-- At turn start (only when `work_lease` is present): if `work.data["turn_journal"]` exists AND its `input_seq` is greater than the session's persisted `run_state.last_input_event_seq` → **skip `_execute` entirely**, synthesize the `RuntimeResult` from the journal, and run the normal usage + finalize path. If the journal's seq is ≤ the persisted seq (finalize already landed), clear the journal and proceed normally.
+- Add a VMA extension of the Deep Agents state schema with a JSON `vma_turn_marker`, and a final `after_agent` middleware node that runs immediately before graph `END`. The admitted graph input records `{ "version": 1, "work_id": ..., "input_seq": ..., "agent_version_id": ..., "phase": "started" }`; the final node changes the same marker to `phase="completed"`. This is a real graph node, so LangGraph checkpoints it before the graph reports completion. If the process dies after the last model/tool node but before this final node, the durable checkpoint still points at the final node and recovery resumes it with no new user input and no model call.
+- Before deriving/submitting a new graph input, inspect the latest checkpoint for the exact `(thread_id, work_id, input_seq, agent_version_id)` marker. A matching completed marker proves the graph already finished. A matching started marker whose checkpoint has pending graph work resumes that checkpoint with `None`/the LangGraph continuation mechanism; it must never submit the same user message again. An older marker for a different input is simply not proof for the new turn; a conflicting marker for the same input seq but another work item or Agent version fails closed rather than silently suppressing or replaying execution.
+- Immediately after `_execute(...)` returns, in a small dedicated transaction (lease-fenced with `_lease_matches`), write a versioned, JSON-only journal that can faithfully reconstruct the `RuntimeResult`:
+
+  ```json
+  {
+    "version": 1,
+    "input_seq": 123,
+    "agent_version_id": "aver_...",
+    "run_state": {},
+    "final_text": "...",
+    "events_persisted": true,
+    "requires_action": false,
+    "blocking_event_ids": [],
+    "usage": {},
+    "sandbox_state": {},
+    "outputs_persisted": true
+  }
+  ```
+
+  Persist discovered outputs in this same transaction before setting `outputs_persisted=true`. `version` is the journal schema version; unknown versions fail closed.
+- At turn start (only when `work_lease` is present), prefer a matching `work.data["turn_journal"]`. If its `input_seq` is greater than the Session's persisted `run_state.last_input_event_seq`, **skip `_execute` entirely**, synthesize the complete `RuntimeResult` including `final_text` and `events_persisted`, and run the normal usage + finalize path. If the journal is absent but the checkpoint has the matching completed marker, rebuild the result from the checkpointed state, re-discover only bounded sandbox outputs as needed, write the same journal, and then finalize without invoking the model. If the journal's seq is already persisted, clear it and complete the work row without starting another execution.
 - Usage on recovery is naturally deduped by the existing `model_tokens:{work_id}` idempotency key — add a test proving a double-record attempt counts once.
 - No journal when `work_lease is None` (direct test invocations): behavior unchanged.
-- Journal holds JSON only — never file bytes. If recovery cannot re-discover sandbox outputs, skip with a logged warning (bounded, documented gap).
+- Journal and marker hold JSON only — never file bytes. If recovery cannot re-discover sandbox outputs, skip them with a logged warning (bounded, documented gap); this does not permit re-running a graph whose completed marker exists.
 
 ### A.2 Deterministic event IDs + idempotent append
 
@@ -47,16 +67,26 @@ slow reconciler (existing poller, demoted) → recovers expired leases + missed 
 - `deepagents_engine.py` (only these lines): derive the final message event id deterministically — `"evt_" + sha1(f"{thread_id}:{processed_seq}:final").hexdigest()[:24]` instead of `new_id("evt")` (both the preview `message_event_id` and the final payload `_event_id`). Derive tool event ids as `"evt_" + sha1(f"{thread_id}:{tool_use_id}:{event_type}").hexdigest()[:24]`. This dedupes replays of the *same* streamed response (W1 partial-persist, W2); a fresh model call generates new `tool_use_id`s — that residual duplication is accepted and bounded by the attempt cap.
 - Retry visibility: the `session.status_running` event runner appends at turn start gains `attempt` and `work_id` payload fields, so takeovers are observable by operators and clients.
 
-### A.3 Attempt-semantics amendment (interlocks with Stage B — do not skip)
+### A.3 Attempt-admission semantics (interlocks with Stage B — do not skip)
 
-P1.1 as originally specced increments `attempt` in `lease_work`. That burns the `VMA_WORK_MAX_ATTEMPTS` cap on **deferred** outcomes (leased, but `run_session_turn` returned False without executing) — under push dispatch, Cloud Tasks retries of a busy session would exhaust an innocent session's attempts. Amend: increment `attempt` at the transition to `running` in `execute_work_item` (just before `data["started_at"]` is set), not in `lease_work`. The cap check stays where P1.1 put it. Only actual executions consume attempts. Update P1.1's tests accordingly.
+P1.1 as originally specced increments `attempt` in `lease_work`. Moving the increment mechanically to the current `status="running"` assignment is still wrong: `run_session_turn` can subsequently return `False`, producing `deferred` after the counter was already burned. Implement an explicit admission boundary instead:
+
+- `lease_work` advances only the lease generation; acquiring or recovering a lease never changes `attempt`.
+- Pass an async admission hook from `execute_work_item` through `runner.py` into `execute_deep_agent`. Invoke it only after the process-local Session guard and database Session checks pass, `_graph_input` has found real graph work, and checkpoint/journal recovery has determined that execution rather than finalize-only recovery is required — immediately before `graph.astream(...)` starts or resumes.
+- The admission hook locks Session then work in the established order, revalidates the lease, computes `next_attempt = attempt + 1`, applies the max-attempt check, and atomically writes the increment, `started_at`/`started_by`, work `status="running"`, Session `status="running"`, and the observable `session.status_running` event. Only after that transaction commits may model/tool execution begin.
+- Busy-process, stale-lease, non-runnable Session, no-new-input, already-finalized journal, and completed-checkpoint paths never call the hook. They therefore return `deferred`/terminal recovery without consuming an attempt. A failure after successful admission does consume one attempt, even if it occurs before the first provider response.
+- Preserve the existing contract exactly: `VMA_WORK_MAX_ATTEMPTS=0` disables the cap; a positive value `N` permits `N` admitted executions, and the next admission finalizes the work as exhausted without invoking the graph.
+
+The lease heartbeat may start while work is merely leased, but the attempt counter and `running` timestamps belong exclusively to the successful admission transaction. Update P1.1's tests accordingly.
 
 ### Stage A tests
 
-- W2 recovery (Postgres): run a turn, simulate crash after the journal transaction but before finalize (monkeypatch to abort); re-run `execute_work_item` → model runner is NOT invoked again (spy), session finalizes from the journal, exactly one `agent.message` exists for that input seq, usage counted once.
+- W2 checkpoint recovery (Postgres): crash after the terminal graph checkpoint but before the database journal; re-run `execute_work_item` → the matching checkpoint marker rebuilds the journal, the model runner is NOT invoked again (spy), and the Session finalizes with exactly one `agent.message` and one usage charge for that input seq.
+- Final-node recovery (Postgres): crash after the last model/tool node checkpoint but before the completion-marker node; retry resumes only that node with no new user message and no model call.
+- Journal round trip: recovered data preserves `version`, `final_text`, `events_persisted`, `run_state`, action fields, usage, and sandbox state; an unknown journal version fails closed.
 - Idempotent append: same `event_id` twice → one row, second call returns the existing event.
 - Deterministic ids: replaying `_emit` for the same `(thread_id, seq)` produces the same id; different seq → different id.
-- Attempt semantics: repeated lease + deferred outcomes do not consume attempts; three real executions then exhaustion behaves per P1.1.
+- Attempt admission: repeated lease + busy/no-input/deferred outcomes do not consume attempts; an admitted failure consumes one; three admitted executions then exhaustion behaves per P1.1; cap `0` remains unlimited.
 
 ---
 
@@ -113,7 +143,7 @@ In `hybrid` mode the embedded worker loop keeps running with `VMA_WORKER_CONCURR
 
 - Worker manifests: `VMA_WORK_DISPATCH_MODE=hybrid`, `containerConcurrency: 5` (was 10 — it now carries turn requests and must equal `vma_worker_turn_limit`), `minScale: 1`, `maxScale: 8` production (verify `8×12 + API 3×16 ≈ 144` connections fit the Supabase plan per `private-docs/scaling-runbook.md` before raising; staging `1/2`), worker concurrency/poll pins per B.5, queue/location/SA/worker-URL envs.
 - API manifests: `VMA_WORK_DISPATCH_MODE=hybrid` (it only dispatches).
-- New `scripts/gcloud/6-setup-cloud-tasks.sh`: create queue (`vma-turns`, `vma-turns-staging`; `dispatchDeadline=1800s` — fits the 900s turn budget with init/finalize margin; `maxAttempts=8`, `minBackoff=5s`, `maxBackoff=300s`, modest `maxConcurrentDispatches≈100`); grant `roles/cloudtasks.enqueuer` to the runtime SA and `roles/run.invoker` on the worker service to the same SA. Update `preflight.sh`, `status.sh`, README, and `tests/test_cloud_run_config.py` pins in the same commit.
+- New `scripts/gcloud/8-setup-cloud-tasks.sh` (numbers 6 and 7 already exist): create queues (`vma-turns`, `vma-turns-staging`) with `maxAttempts=8`, `minBackoff=5s`, `maxBackoff=300s`, and `maxConcurrentDispatches=100`; grant `roles/cloudtasks.enqueuer`, both required `iam.serviceAccounts.actAs` bindings, the primary `roles/cloudtasks.serviceAgent`, and worker-scoped `roles/run.invoker`. The 1,800-second dispatch deadline belongs to each Task in the runtime dispatcher, not to the queue. First deploy creates a missing worker in poll mode, discovers its real Cloud Run URL, grants Invoker, then renders final hybrid worker/API revisions; no URL is guessed or stored as a secret. `preflight.sh`, `status.sh`, the deployment README, and static config tests pin the contract. Production deploy paths fail closed while the connection ceiling remains `UNMEASURED`.
 
 ### Stage B tests
 
@@ -139,12 +169,15 @@ First production deploy happens only after all four pass.
 
 ## Acceptance checklist
 
-- [ ] W2 crash window closed: a completed graph is never re-invoked; exactly one `agent.message` per input seq under forced crashes at every boundary (post-journal, post-usage, pre-finalize).
-- [ ] Duplicate emissions dedupe via deterministic ids + idempotent append; seq gaps tolerated.
-- [ ] Attempts count executions, not leases; `deferred` never burns the cap.
-- [ ] Outcome→HTTP mapping exactly per table; terminal outcomes never retried by Cloud Tasks.
-- [ ] Push handler and poller share one turn limiter; instance-level concurrency can never exceed `vma_worker_turn_limit`.
-- [ ] Reconciler alone (dispatch disabled) still executes all work correctly.
-- [ ] `poll` mode byte-identical to pre-Stage-B behavior; local dev/test untouched.
-- [ ] Postgres remains sole source of truth: deleting the Cloud Tasks queue loses no work.
+- [x] W2 crash window closed: a completed graph is never re-invoked; exactly one `agent.message` per input seq under forced crashes at every boundary (last graph node/pre-marker, completed marker/pre-journal, post-journal, post-usage, pre-finalize).
+- [x] Version-1 journals round-trip `final_text`, `events_persisted`, and every other field required to reconstruct `RuntimeResult`; unknown versions fail closed.
+- [x] Duplicate emissions dedupe via deterministic ids + idempotent append; seq gaps tolerated.
+- [x] Attempts count admitted graph executions, not leases or pre-admission status changes; `deferred` never burns the cap and `VMA_WORK_MAX_ATTEMPTS=0` remains unlimited.
+- [x] Outcome→HTTP mapping exactly per table; terminal outcomes never retried by Cloud Tasks.
+- [x] Push handler and poller share one turn limiter; instance-level concurrency can never exceed `vma_worker_turn_limit`.
+- [x] Reconciler alone (dispatch disabled) still executes all work correctly.
+- [x] `poll` mode byte-identical to pre-Stage-B behavior; local dev/test untouched.
+- [x] Postgres remains sole source of truth: deleting the Cloud Tasks queue loses no work.
+- [x] Hosted API/worker manifests pin hybrid dispatch, queue identity, OIDC service account, a discovered worker URL, worker `containerConcurrency=5`, and the 1/8 production plus 1/2 staging bounds.
+- [x] Idempotent queue/IAM setup, first-deploy URL bootstrap, read-only preflight checks, status reporting, and static deployment tests are implemented; the production maxScale=8 connection gate remains explicitly unmeasured.
 - [ ] Load-test gate (all four scenarios) passed before first production deploy; final `maxScale` recorded in the runbook.

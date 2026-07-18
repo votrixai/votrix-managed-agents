@@ -1,7 +1,7 @@
 import json
 from decimal import Decimal
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
+    vma_service_role: Literal["combined", "api", "worker"] = "combined"
     vma_db_pool_size: int = Field(default=10, ge=0)
     vma_db_max_overflow: int = Field(default=5, ge=0)
     vma_db_pool_timeout_seconds: float = Field(default=10.0, gt=0)
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     vma_default_deepseek_model: str = "deepseek-chat"
     vma_model_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)
     vma_checkpoint_database_url: str = ""
+    vma_listen_database_url: str = ""
     vma_sandbox_provider: str = "state"
     vma_sandbox_factory: str = ""
     vma_allow_unsafe_local_sandbox: bool = False
@@ -66,6 +68,15 @@ class Settings(BaseSettings):
     vma_worker_concurrency: int = 1
     vma_worker_poll_interval_seconds: float = 0.5
     vma_worker_lease_seconds: int = 120
+    vma_work_max_attempts: int = Field(default=3, ge=0)
+    vma_work_dispatch_mode: Literal["poll", "hybrid"] = "poll"
+    vma_tasks_queue: str = ""
+    vma_tasks_location: str = ""
+    vma_tasks_service_account: str = ""
+    vma_worker_url: str = ""
+    vma_worker_turn_limit: int = Field(default=5, ge=1)
+    vma_checkpoint_pool_max_size: int = Field(default=5, ge=1)
+    vma_preview_broker: Literal["process_local", "pg_notify"] = "process_local"
     vma_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     vma_public_ga_only: bool = False
     vma_governance_enabled: bool = True

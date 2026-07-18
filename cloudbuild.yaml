@@ -23,8 +23,16 @@ steps:
 
         IMAGE="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
         MIGRATION_JOB="${_SERVICE_NAME}-migrate"
+        WORKER_SERVICE="${_SERVICE_NAME}-worker"
+        WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"
         RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
-        DATABASE_SECRET="vma-database-url${_SECRET_SUFFIX}"
+        DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"
+
+        if [ "${_APP_ENV}" = "production" ] && \
+          grep -q 'Status: UNMEASURED' private-docs/scaling-runbook.md; then
+          echo "Production deploy is blocked: the Supabase connection budget is UNMEASURED." >&2
+          exit 1
+        fi
 
         echo "Waiting for $$IMAGE to become available..."
         for attempt in $$(seq 1 10); do
@@ -63,8 +71,59 @@ steps:
           --wait \
           --quiet
 
-        echo "Deploying ${_SERVICE_NAME}..."
-        sed "s|IMAGE_URL|$$IMAGE|" "${_SERVICE_CONFIG}" | \
+        WORKER_URL=$$(gcloud run services describe "$$WORKER_SERVICE" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --format='value(status.url)' 2>/dev/null || true)
+
+        if [ -z "$$WORKER_URL" ]; then
+          echo "Creating $$WORKER_SERVICE in bootstrap poll mode..."
+          sed \
+            -e "s|IMAGE_URL|$$IMAGE|" \
+            -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
+            -e 's|value: "hybrid"|value: "poll"|' \
+            "$$WORKER_SERVICE_CONFIG" | \
+            gcloud run services replace \
+              --project="${PROJECT_ID}" \
+              --region="${_REGION}" \
+              /dev/stdin \
+              --quiet
+
+          WORKER_URL=$$(gcloud run services describe "$$WORKER_SERVICE" \
+            --project="${PROJECT_ID}" \
+            --region="${_REGION}" \
+            --format='value(status.url)')
+        fi
+
+        if [ -z "$$WORKER_URL" ]; then
+          echo "Cloud Run did not report a worker service URL." >&2
+          exit 1
+        fi
+
+        echo "Allowing Cloud Tasks to invoke $$WORKER_SERVICE..."
+        gcloud run services add-iam-policy-binding "$$WORKER_SERVICE" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --member="serviceAccount:$$RUNTIME_SERVICE_ACCOUNT" \
+          --role="roles/run.invoker" \
+          --quiet
+
+        echo "Deploying $$WORKER_SERVICE in hybrid mode..."
+        sed \
+          -e "s|IMAGE_URL|$$IMAGE|" \
+          -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
+          "$$WORKER_SERVICE_CONFIG" | \
+          gcloud run services replace \
+            --project="${PROJECT_ID}" \
+            --region="${_REGION}" \
+            /dev/stdin \
+            --quiet
+
+        echo "Deploying ${_SERVICE_NAME} API service in hybrid mode..."
+        sed \
+          -e "s|IMAGE_URL|$$IMAGE|" \
+          -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
+          "${_SERVICE_CONFIG}" | \
           gcloud run services replace \
             --project="${PROJECT_ID}" \
             --region="${_REGION}" \

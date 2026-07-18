@@ -151,6 +151,9 @@ async def test_database(tmp_path, monkeypatch):
         runtime_context=None,
         **_kwargs,
     ):
+        admit_execution = _kwargs.get("admit_execution")
+        if admit_execution is not None:
+            await admit_execution()
         return await _execute_local(
             version,
             history,

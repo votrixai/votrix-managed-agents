@@ -17,8 +17,11 @@ the controlled beta; the repository also contains deferred routes.
 
 Start with the [compatibility matrix](./compatibility-matrix.md) and
 [known incompatibilities](./known-incompatibilities.md) before using it for
-real workloads. The checked-in Cloud Run shape remains single-instance and is
-not a high-availability or enterprise claim.
+real workloads. The checked-in Cloud Run shape separates horizontally scalable
+API instances from a private Cloud Tasks-driven worker service, keeps a
+PostgreSQL reconciler as the durable fallback, and preserves best-effort
+cross-instance previews through PostgreSQL. It is not an exactly-once,
+enterprise, or unrestricted high-availability claim.
 
 </Callout>
 

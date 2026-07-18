@@ -82,6 +82,23 @@ check_manifest() {
   fi
 }
 
+check_worker_manifest_is_private() {
+  MANIFEST=$1
+  if grep -q "run.googleapis.com/invoker-iam-disabled" "${REPO_ROOT}/${MANIFEST}"; then
+    fail "worker manifest disables the Invoker IAM check: ${MANIFEST}"
+  else
+    ok "worker manifest keeps the Invoker IAM check enabled: ${MANIFEST}"
+  fi
+}
+
+check_production_connection_gate() {
+  if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; then
+    fail "production Supabase connection budget is UNMEASURED"
+  else
+    ok "production Supabase connection budget is recorded"
+  fi
+}
+
 if ! command -v gcloud >/dev/null 2>&1; then
   fail "gcloud CLI is not installed"
   echo "Preflight failed: ${FAILURES} failure(s), ${WARNINGS} warning(s)." >&2
@@ -105,6 +122,7 @@ for api in \
   run.googleapis.com \
   secretmanager.googleapis.com \
   cloudbuild.googleapis.com \
+  cloudtasks.googleapis.com \
   artifactregistry.googleapis.com \
   iam.googleapis.com
 do
@@ -185,6 +203,114 @@ else
   fail "could not determine the Cloud Build service account"
 fi
 
+RUNTIME_PROJECT_ROLES=$(gcloud projects get-iam-policy "$PROJECT_ID" \
+  --flatten='bindings[].members' \
+  --filter="bindings.members=serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+  --format='value(bindings.role)' 2>/dev/null || true)
+if has_line "$RUNTIME_PROJECT_ROLES" roles/cloudtasks.enqueuer; then
+  ok "runtime may enqueue Cloud Tasks"
+else
+  fail "runtime lacks roles/cloudtasks.enqueuer"
+fi
+
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" \
+  --format='value(projectNumber)' 2>/dev/null || true)
+CLOUD_TASKS_SERVICE_AGENT="service-${PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+CLOUD_TASKS_AGENT_ROLES=$(gcloud projects get-iam-policy "$PROJECT_ID" \
+  --flatten='bindings[].members' \
+  --filter="bindings.members=serviceAccount:${CLOUD_TASKS_SERVICE_AGENT}" \
+  --format='value(bindings.role)' 2>/dev/null || true)
+if has_line "$CLOUD_TASKS_AGENT_ROLES" roles/cloudtasks.serviceAgent; then
+  ok "Cloud Tasks primary service agent has roles/cloudtasks.serviceAgent"
+else
+  fail "Cloud Tasks primary service agent lacks roles/cloudtasks.serviceAgent"
+fi
+
+RUNTIME_ACT_AS=$(gcloud iam service-accounts get-iam-policy "$RUNTIME_SERVICE_ACCOUNT" \
+  --project="$PROJECT_ID" \
+  --flatten='bindings[].members' \
+  --filter="bindings.role=roles/iam.serviceAccountUser AND bindings.members=serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+  --format='value(bindings.members)' 2>/dev/null || true)
+if [ "$RUNTIME_ACT_AS" = "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" ]; then
+  ok "runtime may attach its OIDC identity to Cloud Tasks"
+else
+  fail "runtime lacks iam.serviceAccounts.actAs on ${RUNTIME_SERVICE_ACCOUNT}"
+fi
+
+
+CLOUD_TASKS_ACT_AS=$(gcloud iam service-accounts get-iam-policy "$RUNTIME_SERVICE_ACCOUNT" \
+  --project="$PROJECT_ID" \
+  --flatten='bindings[].members' \
+  --filter="bindings.role=roles/iam.serviceAccountUser AND bindings.members=serviceAccount:${CLOUD_TASKS_SERVICE_AGENT}" \
+  --format='value(bindings.members)' 2>/dev/null || true)
+if [ "$CLOUD_TASKS_ACT_AS" = "serviceAccount:${CLOUD_TASKS_SERVICE_AGENT}" ]; then
+  ok "Cloud Tasks primary service agent may mint OIDC tokens as the runtime identity"
+else
+  fail "Cloud Tasks primary service agent cannot act as ${RUNTIME_SERVICE_ACCOUNT}"
+fi
+
+check_tasks_environment() {
+  QUEUE=$1
+  WORKER_SERVICE=$2
+
+  if ! gcloud tasks queues describe "$QUEUE" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" >/dev/null 2>&1; then
+    fail "Cloud Tasks queue is missing: ${TASKS_LOCATION}/${QUEUE}"
+    return
+  fi
+
+  QUEUE_STATE=$(gcloud tasks queues describe "$QUEUE" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(state)' 2>/dev/null || true)
+  QUEUE_MAX_ATTEMPTS=$(gcloud tasks queues describe "$QUEUE" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(retryConfig.maxAttempts)' 2>/dev/null || true)
+  QUEUE_MIN_BACKOFF=$(gcloud tasks queues describe "$QUEUE" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(retryConfig.minBackoff)' 2>/dev/null || true)
+  QUEUE_MAX_BACKOFF=$(gcloud tasks queues describe "$QUEUE" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(retryConfig.maxBackoff)' 2>/dev/null || true)
+  QUEUE_MAX_CONCURRENT=$(gcloud tasks queues describe "$QUEUE" \
+    --project="$PROJECT_ID" \
+    --location="$TASKS_LOCATION" \
+    --format='value(rateLimits.maxConcurrentDispatches)' 2>/dev/null || true)
+
+  if [ "$QUEUE_STATE" = RUNNING ] && \
+    [ "$QUEUE_MAX_ATTEMPTS" = 8 ] && \
+    [ "$QUEUE_MIN_BACKOFF" = 5s ] && \
+    [ "$QUEUE_MAX_BACKOFF" = 300s ] && \
+    [ "$QUEUE_MAX_CONCURRENT" = 25 ]; then
+    ok "Cloud Tasks queue policy is pinned: ${TASKS_LOCATION}/${QUEUE}"
+  else
+    fail "Cloud Tasks queue policy drifted: ${TASKS_LOCATION}/${QUEUE}"
+  fi
+
+  if ! gcloud run services describe "$WORKER_SERVICE" \
+    --project="$PROJECT_ID" \
+    --region="$REGION" >/dev/null 2>&1; then
+    warn "worker is not deployed yet; rerun 8-setup-cloud-tasks.sh after bootstrap: ${WORKER_SERVICE}"
+    return
+  fi
+
+  WORKER_INVOKER=$(gcloud run services get-iam-policy "$WORKER_SERVICE" \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    --flatten='bindings[].members' \
+    --filter="bindings.role=roles/run.invoker AND bindings.members=serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+    --format='value(bindings.members)' 2>/dev/null || true)
+  if [ "$WORKER_INVOKER" = "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" ]; then
+    ok "Cloud Tasks OIDC identity may invoke worker: ${WORKER_SERVICE}"
+  else
+    fail "runtime lacks roles/run.invoker on worker: ${WORKER_SERVICE}"
+  fi
+}
+
 check_secret() {
   SECRET_NAME=$1
   if ! gcloud secrets describe "$SECRET_NAME" \
@@ -220,6 +346,8 @@ check_environment_secrets() {
   SECRET_SUFFIX=$1
   for base in \
     database-url \
+    database-url-direct \
+    listen-database-url \
     encryption-key \
     e2b-api-key \
     supabase-url \
@@ -235,18 +363,32 @@ check_environment_secrets() {
 
 case "$TARGET" in
   production)
+    check_production_connection_gate
+    check_tasks_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
     check_environment_secrets ""
     check_manifest service.production.yaml
+    check_manifest service.worker.production.yaml
+    check_worker_manifest_is_private service.worker.production.yaml
     ;;
   staging)
+    check_tasks_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
     check_environment_secrets "-staging"
     check_manifest service.staging.yaml
+    check_manifest service.worker.staging.yaml
+    check_worker_manifest_is_private service.worker.staging.yaml
     ;;
   all)
+    check_production_connection_gate
+    check_tasks_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
+    check_tasks_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
     check_environment_secrets ""
     check_environment_secrets "-staging"
     check_manifest service.production.yaml
+    check_manifest service.worker.production.yaml
     check_manifest service.staging.yaml
+    check_manifest service.worker.staging.yaml
+    check_worker_manifest_is_private service.worker.production.yaml
+    check_worker_manifest_is_private service.worker.staging.yaml
     ;;
 esac
 
