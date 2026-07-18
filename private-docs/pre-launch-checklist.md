@@ -70,6 +70,11 @@ a one-way door in practice.
 - [ ] **Deletion semantics**: the schema soft-deletes (`deleted_at`); define
       the hard-delete path (DB rows + R2 objects + E2B teardown) for customer
       data-deletion requests before there is real customer data.
+- [ ] **Supabase compute tier + connection-mode split**: production compute
+      tier recorded in `scaling-runbook.md`; Amendment A1 (transaction pooler
+      for runtime/checkpoints, session DSN for LISTEN/janitor/migrations)
+      deployed; backend usage under ~60% of the tier's direct-connection
+      limit at target `maxScale`.
 
 ## Explicitly NOT launch blockers
 

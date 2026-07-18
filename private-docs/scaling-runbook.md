@@ -72,24 +72,42 @@ memory (4 GiB) under peak concurrent turns.
 
 ## Connection budget (check BEFORE scaling up)
 
-Every instance holds Postgres connections against the Supabase Supavisor
-session-mode pooler (port 5432), which has a hard per-plan client-connection
-cap. Per-instance worst case:
+Two DIFFERENT Supabase limits matter, and they scale with the compute tier:
 
-| Component | API instance | Worker instance |
-|---|---|---|
-| SQLAlchemy pool (`VMA_DB_POOL_SIZE` + `VMA_DB_MAX_OVERFLOW`) | 10 + 5 | 5 + 2 |
-| LangGraph checkpoint pool (`VMA_CHECKPOINT_POOL_MAX_SIZE`) | 0 (API never runs turns) | 5 |
-| Preview broker LISTEN connection (P2.5, API/combined only) | 1 | 0 (worker runs no listener) |
-| **Total ceiling** | **16** | **12** |
+- **Postgres backend (direct) connections** — the scarce one. Micro 60,
+  Small 90, Medium 120, Large 160, XL 240.
+- **Supavisor pooler client connections** — the cheap one. Micro 200 … XL 1,000.
+
+Supavisor **session mode pins one backend per client** for the client's
+lifetime; transaction mode multiplexes many clients over few backends. That is
+why Amendment A1 (`PLAN-horizontal-scaling.md`) routes runtime traffic and
+checkpoints through the transaction pooler (`:6543`) and reserves session mode
+(`:5432`) for LISTEN/NOTIFY, the janitor advisory lock, and migrations.
+
+Per-instance connections after A1:
+
+| Component | Mode | API instance | Worker instance |
+|---|---|---|---|
+| SQLAlchemy pool (`VMA_DB_POOL_SIZE` + `VMA_DB_MAX_OVERFLOW`) | transaction | 4 + 2 | 4 + 1 |
+| LangGraph checkpoint pool (`VMA_CHECKPOINT_POOL_MAX_SIZE`) | transaction | 0 | 3 |
+| Preview broker LISTEN (P2.5) | **session** | 1 | 0 |
+| Janitor advisory lock (P1.3) | **session** | 0 | ≤1 transient |
+| **Pooler clients** | | **7** | **8** |
+| **Backend-pinned** | | **1** | **≤1 transient** |
 
 ```
-total ≈ 16 × (API instances) + 12 × (worker instances) + migrations/ops slack
+backend-pinned  ≈ 1 × API instances (+1 during a janitor tick) + migration slack
+pooler clients  ≈ 7 × API instances + 8 × worker instances
 ```
 
-Example: 3 API + 3 worker ≈ 84 + slack. Verify the target Supabase plan's
-connection limit covers the total before raising either fleet; raise the plan
-first if not.
+Example: 3 API + 4 workers ≈ 53 pooler clients but only ~4 pinned backends —
+the transaction pooler multiplexes the rest over a handful of shared backends.
+
+Rules: record the production compute tier here: ______ ; keep combined backend
+usage (pinned + the pooler's own backend pool) under ~60% of the tier's direct
+limit; derive worker `maxScale` from this budget, never by feel. The staging
+load test must watch SQLAlchemy pool-wait metrics — worker 4+1 against 5
+concurrent turns is deliberately tight and is the first knob to raise.
 
 ## Signals that say "scale" (and the one that says "build P3")
 

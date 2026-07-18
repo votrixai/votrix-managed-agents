@@ -113,7 +113,7 @@ In `hybrid` mode the embedded worker loop keeps running with `VMA_WORKER_CONCURR
 
 - Worker manifests: `VMA_WORK_DISPATCH_MODE=hybrid`, `containerConcurrency: 5` (was 10 — it now carries turn requests and must equal `vma_worker_turn_limit`), `minScale: 1`, `maxScale: 8` production (verify `8×12 + API 3×16 ≈ 144` connections fit the Supabase plan per `private-docs/scaling-runbook.md` before raising; staging `1/2`), worker concurrency/poll pins per B.5, queue/location/SA/worker-URL envs.
 - API manifests: `VMA_WORK_DISPATCH_MODE=hybrid` (it only dispatches).
-- New `scripts/gcloud/6-setup-cloud-tasks.sh`: create queue (`vma-turns`, `vma-turns-staging`; `dispatchDeadline=1800s` — fits the 900s turn budget with init/finalize margin; `maxAttempts=8`, `minBackoff=5s`, `maxBackoff=300s`, modest `maxConcurrentDispatches≈100`); grant `roles/cloudtasks.enqueuer` to the runtime SA and `roles/run.invoker` on the worker service to the same SA. Update `preflight.sh`, `status.sh`, README, and `tests/test_cloud_run_config.py` pins in the same commit.
+- New `scripts/gcloud/6-setup-cloud-tasks.sh`: create queue (`vma-turns`, `vma-turns-staging`; `dispatchDeadline=1800s` — fits the 900s turn budget with init/finalize margin; `maxAttempts=8`, `minBackoff=5s`, `maxBackoff=300s`, `maxConcurrentDispatches≈25` initially — it is the third backpressure layer alongside `maxScale` and the turn limiter, and rises only with the connection budget in `private-docs/scaling-runbook.md`); grant `roles/cloudtasks.enqueuer` to the runtime SA and `roles/run.invoker` on the worker service to the same SA. Update `preflight.sh`, `status.sh`, README, and `tests/test_cloud_run_config.py` pins in the same commit.
 
 ### Stage B tests
 
