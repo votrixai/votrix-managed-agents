@@ -80,9 +80,10 @@ Two DIFFERENT Supabase limits matter, and they scale with the compute tier:
 
 Supavisor **session mode pins one backend per client** for the client's
 lifetime; transaction mode multiplexes many clients over few backends. That is
-why Amendment A1 (`PLAN-horizontal-scaling.md`) routes runtime traffic and
-checkpoints through the transaction pooler (`:6543`) and reserves session mode
-(`:5432`) for LISTEN/NOTIFY, the janitor advisory lock, and migrations.
+why Amendment A1 (`PLAN-amendment-A1-connection-modes.md`) routes runtime
+traffic and checkpoints through the transaction pooler (`:6543`) and reserves
+session mode (`:5432`) for LISTEN/NOTIFY, the janitor advisory lock, and
+migrations.
 
 Per-instance connections after A1:
 

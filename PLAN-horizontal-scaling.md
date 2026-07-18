@@ -160,7 +160,7 @@ async def _shared_postgres_saver(dsn: str):
             min_size=0,
             max_size=int(get_settings().vma_checkpoint_pool_max_size),
             open=False,
-            kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
         )
         await pool.open()
         saver = AsyncPostgresSaver(pool)
@@ -175,7 +175,7 @@ async def close_checkpoint_saver() -> None:
         await pool.close()
 ```
 
-Critical detail: `autocommit=True` and `dict_row` replicate what `AsyncPostgresSaver.from_conn_string` configures internally; omitting them breaks the saver subtly. `prepare_threshold=None` deliberately diverges from `from_conn_string` (which uses `0` = prepare immediately): the checkpoint DSN runs through the Supavisor **transaction pooler** per Amendment A1, where server-side prepared statements are unsafe. Passing the **pool** (not a single connection) is what makes concurrent turns in one process safe.
+Critical detail: the connection kwargs (`autocommit=True`, `prepare_threshold=0`, `dict_row`) replicate what `AsyncPostgresSaver.from_conn_string` configures internally; omitting them breaks the saver subtly. Passing the **pool** (not a single connection) is what makes concurrent turns in one process safe.
 
 Note: the module already has a function named `_postgres_dsn(value)`; keep it and avoid naming collisions with the new globals.
 
@@ -209,7 +209,7 @@ async def cleanup_expired_session_sandboxes(*, limit: int = 25) -> int:
             await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _JANITOR_LOCK_KEY})
 ```
 
-Advisory locks are **connection-scoped**: lock and unlock must run on the same held connection, not through the pooled session helpers. Per Amendment A1, that connection MUST come from the session-mode DSN (`vma_listen_database_url`, falling back to `database_url`) — a session-scoped advisory lock acquired through the transaction pooler lands on an arbitrary shared backend and the mutual exclusion silently stops working.
+Advisory locks are **connection-scoped**: lock and unlock must run on the same held connection (`engine.connect()` block), not through the pooled session helpers. `get_engine` is in `app/db/engine`.
 
 ### P1.4 — Harden the worker polling loop (small)
 
@@ -250,7 +250,7 @@ Create `service.worker.production.yaml` and `service.worker.staging.yaml` by cop
 | `VMA_EMBEDDED_WORKER_ENABLED` | **`false`** | `false` | `true` | `true` |
 | `VMA_WORKER_CONCURRENCY` / `VMA_WORKER_POLL_INTERVAL_SECONDS` / `VMA_WORKER_LEASE_SECONDS` | remove | remove | `5` / `0.5` / `120` | same |
 | `VMA_WORK_MAX_ATTEMPTS` | — | — | `3` | `3` |
-| `VMA_DB_POOL_SIZE` / `VMA_DB_MAX_OVERFLOW` | `4` / `2` (A1) | `4` / `2` | **`4` / `1`** (A1) | `4` / `1` |
+| `VMA_DB_POOL_SIZE` / `VMA_DB_MAX_OVERFLOW` | keep current | keep | **`5` / `2`** | `5` / `2` |
 | Everything else (image, SA, secrets `vma-*`, probes, resources, `WEB_CONCURRENCY=1`, timeout) | unchanged | unchanged | copy from API | copy from staging API |
 
 The worker service must never receive a public invoker binding: `scripts/gcloud/5-allow-public.sh` stays API-only — add a guard that exits with an error if pointed at a `*worker*` service.
@@ -298,7 +298,7 @@ Constants: `_CHANNEL = "vma_preview"`; `PREVIEW_INSTANCE_ID = uuid4().hex` (proc
 - Each flushed frame: `SELECT pg_notify(:channel, :payload)` on a connection from the existing SQLAlchemy engine (`app/db/engine`); payload JSON `{"i": PREVIEW_INSTANCE_ID, "o": org, "s": session, "f": frame}`. Drop oversized payloads whole (log at debug) — never truncate mid-JSON. Flush all pending buffers on shutdown.
 
 **Listener** — runs only when broker is `pg_notify` AND `vma_service_role in {"combined", "api"}` (workers never serve SSE):
-- Lifespan background task holding ONE dedicated `asyncpg` connection per process, connected to `vma_listen_database_url` (session-mode DSN per Amendment A1; strip the `+asyncpg` suffix). `conn.add_listener(_CHANNEL, cb)`; the callback schedules an async task that parses the payload, **drops frames where `payload["i"] == PREVIEW_INSTANCE_ID`** (loopback suppression — local publish already delivered those), and otherwise republishes into the local `vma_preview_bus` for that org/session topic.
+- Lifespan background task holding ONE dedicated `asyncpg` connection per process (asyncpg is already the production driver; strip the `+asyncpg` suffix from the SQLAlchemy URL). `conn.add_listener(_CHANNEL, cb)`; the callback schedules an async task that parses the payload, **drops frames where `payload["i"] == PREVIEW_INSTANCE_ID`** (loopback suppression — local publish already delivered those), and otherwise republishes into the local `vma_preview_bus` for that org/session topic.
 - Reconnect forever with capped backoff (1s → 30s) on connection loss, logging each reconnect. Factory lifespan cancels the task and closes the connection on shutdown.
 - Supavisor note: the production DSN is the **session-mode** pooler (port 5432), which supports LISTEN/NOTIFY; do not point the listener at a transaction-mode endpoint.
 
@@ -342,45 +342,3 @@ Constants: `_CHANNEL = "vma_preview"`; `PREVIEW_INSTANCE_ID = uuid4().hex` (proc
 - [ ] README runbook documents manual scaling; no new external infrastructure introduced anywhere.
 - [ ] With `pg_notify`, an SSE client on instance X receives preview frames for a turn executed on instance Y; same-instance delivery is never duplicated (loopback suppression); worker role runs no listener; NOTIFY rate is bounded by coalescing.
 - [ ] Public OpenAPI byte-identical; no changes under `app/runtime/deepagents_engine.py` or `vma_preview_bus.py`; `runner.py` changes limited to the P2.5 `emit_preview` import swap; lease logic untouched.
-- [ ] Amendment A1 applied: runtime + checkpoint traffic on the transaction pooler; LISTEN and the janitor lock on the session DSN; migration job on its own direct secret; pool pins match A1's numbers.
-
----
-
-## Amendment A1 — Supavisor connection-mode split (authoritative; supersedes conflicting values above)
-
-**Why:** Supavisor **session mode pins one Postgres backend connection per client** for the client's lifetime, and backend connections — not pooler clients — are the scarce Supabase resource (Micro 60, Small 90, Medium 120, Large 160, XL 240 direct vs 200–1,000 pooler clients). An autoscaling fleet must not consume backends linearly. Runtime traffic therefore moves to the **transaction pooler**, and only session-scoped Postgres features keep session-mode connections. `app/db/engine.py` already sets `statement_cache_size=0` / `prepared_statement_cache_size=0` (verified), so the main asyncpg engine is transaction-mode compatible as-is.
-
-### DSN topology (hosted manifests + secrets)
-
-| Purpose | Mode | Setting |
-|---|---|---|
-| Main engine (API, work queue, sessions/events CRUD, `pg_notify` publish) | transaction `:6543` | `DATABASE_URL` |
-| LangGraph checkpoint pool | transaction `:6543` | `VMA_CHECKPOINT_DATABASE_URL` (now set explicitly) |
-| Preview LISTEN + janitor advisory lock | session `:5432` | new `vma_listen_database_url` (empty → falls back to `database_url`; local/test unchanged) |
-| Alembic migration Job | session/direct `:5432` | new secret `vma-database-url-direct(-staging)` injected as the Job's `DATABASE_URL` — pipeline change in `1-create-secrets.sh`, deploy scripts, `cloudbuild.yaml`; no code change |
-
-`pg_notify` publishing through the transaction pooler is safe (NOTIFY fires on commit, and delivery is server-global regardless of which backend issued it). LISTEN and session-scoped advisory locks are NOT safe there — hence the dedicated session DSN.
-
-Also update the "session mode (:5432)" guidance in `.env.production.example`, `.env.staging.example`, and `scripts/gcloud/README.md` to reflect this split — they currently instruct putting ALL traffic on 5432.
-
-### Code deltas (small)
-
-- `app/config.py`: add `vma_listen_database_url: str = ""`.
-- P1.2 checkpoint pool kwargs use `prepare_threshold=None` (never prepare — required on the transaction pooler; psycopg3's `0` means "prepare immediately").
-- P1.3 janitor lock acquires its connection from the `vma_listen_database_url` engine — session-scoped advisory locks break silently through transaction pooling. Add a small shared helper (e.g. `session_scoped_connection()`) used by both the janitor and the P2.5 listener.
-- P2.5 listener connects to `vma_listen_database_url` (not the main DSN).
-
-### Pool pins (supersede the P2.2 matrix values)
-
-| | API | Worker |
-|---|---|---|
-| `VMA_DB_POOL_SIZE` / `VMA_DB_MAX_OVERFLOW` | 4 / 2 | 4 / 1 |
-| `VMA_CHECKPOINT_POOL_MAX_SIZE` | — | 3 |
-| Session-mode connections | 1 (LISTEN) | ≤1 transient (janitor tick) |
-
-Worker 4+1 against 5 concurrent turns is deliberately tight: transaction-mode checkouts are per-statement-burst, but the staging load test MUST watch pool-wait metrics and this is the first knob to raise if they show contention.
-
-### Tests
-
-- `tests/test_cloud_run_config.py`: pins for the new pool values, `VMA_LISTEN_DATABASE_URL` presence on hosted manifests, the migration Job's direct secret, and the `vma-database-url-direct` secret naming.
-- Unit: janitor and listener resolve the session DSN with correct fallback to `database_url` when unset.

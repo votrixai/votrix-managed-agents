@@ -462,7 +462,8 @@ Decision: runtime traffic and LangGraph checkpoints move to the transaction
 pooler (`:6543`); LISTEN/NOTIFY, the janitor advisory lock, and Alembic
 migrations keep session/direct connections (`:5432`); per-instance pools
 shrink (API 4+2, worker 4+1, checkpoint 3). Authoritative spec:
-`PLAN-horizontal-scaling.md` "Amendment A1"; budget math:
+`PLAN-amendment-A1-connection-modes.md` (standalone amendment — the base PLAN
+documents are intentionally unmodified); budget math:
 `private-docs/scaling-runbook.md`. Caught during the Codex connection review;
 `app/db/engine.py` already sets `statement_cache_size=0`, so the main engine
 is transaction-mode compatible as-is. Key trap encoded in the specs:
