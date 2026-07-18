@@ -93,9 +93,9 @@ check_worker_manifest_is_private() {
 
 check_production_connection_gate() {
   if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; then
-    fail "production Supabase connection ceiling is UNMEASURED"
+    fail "production Supabase connection budget is UNMEASURED"
   else
-    ok "production Supabase connection ceiling is recorded"
+    ok "production Supabase connection budget is recorded"
   fi
 }
 
@@ -285,7 +285,7 @@ check_tasks_environment() {
     [ "$QUEUE_MAX_ATTEMPTS" = 8 ] && \
     [ "$QUEUE_MIN_BACKOFF" = 5s ] && \
     [ "$QUEUE_MAX_BACKOFF" = 300s ] && \
-    [ "$QUEUE_MAX_CONCURRENT" = 100 ]; then
+    [ "$QUEUE_MAX_CONCURRENT" = 25 ]; then
     ok "Cloud Tasks queue policy is pinned: ${TASKS_LOCATION}/${QUEUE}"
   else
     fail "Cloud Tasks queue policy drifted: ${TASKS_LOCATION}/${QUEUE}"
@@ -346,6 +346,8 @@ check_environment_secrets() {
   SECRET_SUFFIX=$1
   for base in \
     database-url \
+    database-url-direct \
+    listen-database-url \
     encryption-key \
     e2b-api-key \
     supabase-url \

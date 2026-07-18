@@ -14,6 +14,7 @@ SECRET_BASES = {
     "database-url",
     "e2b-api-key",
     "encryption-key",
+    "listen-database-url",
     "s3-access-key-id",
     "s3-bucket-name",
     "s3-endpoint-url",
@@ -118,7 +119,12 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
             ),
             "VMA_WORKER_URL": "__VMA_WORKER_URL__",
         }
-        for name, value in expected_dispatch_values.items():
+        expected_api_values = {
+            **expected_dispatch_values,
+            "VMA_DB_POOL_SIZE": "4",
+            "VMA_DB_MAX_OVERFLOW": "2",
+        }
+        for name, value in expected_api_values.items():
             assert re.search(
                 rf'name:\s*{name}\s+value:\s*["\']?{re.escape(value)}["\']?',
                 flat,
@@ -180,9 +186,9 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
             "VMA_WORKER_POLL_INTERVAL_SECONDS": "20",
             "VMA_WORKER_LEASE_SECONDS": "120",
             "VMA_WORK_MAX_ATTEMPTS": "3",
-            "VMA_CHECKPOINT_POOL_MAX_SIZE": "5",
-            "VMA_DB_POOL_SIZE": "5",
-            "VMA_DB_MAX_OVERFLOW": "2",
+            "VMA_CHECKPOINT_POOL_MAX_SIZE": "3",
+            "VMA_DB_POOL_SIZE": "4",
+            "VMA_DB_MAX_OVERFLOW": "1",
         }
         for name, value in expected_worker_values.items():
             assert re.search(
@@ -395,6 +401,7 @@ def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
     )
     assert cloudbuild.count("__VMA_WORKER_URL__") == 3
     assert 'WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"' in cloudbuild
+    assert 'DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"' in cloudbuild
 
 
 def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() -> None:
@@ -430,6 +437,9 @@ def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() 
         assert script.find("worker service in hybrid mode") < script.find(
             "API service in hybrid mode"
         )
+
+    assert 'DATABASE_SECRET="vma-database-url-direct"' in production
+    assert 'DATABASE_SECRET="vma-database-url-direct-staging"' in staging
 
 
 def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_changes() -> None:
@@ -497,11 +507,14 @@ def test_preflight_is_read_only_and_checks_both_environment_secret_sets() -> Non
     assert 'check_tasks_environment "$STAGING_TASKS_QUEUE"' in script
     assert "retryConfig.maxAttempts" in script
     assert "rateLimits.maxConcurrentDispatches" in script
+    assert '[ "$QUEUE_MAX_CONCURRENT" = 25 ]' in script
     assert "value(format)" in script
     assert "value(disabled)" in script
     assert "--dry-run" in script
     assert 'check_environment_secrets ""' in script
     assert 'check_environment_secrets "-staging"' in script
+    assert "database-url-direct" in script
+    assert "listen-database-url" in script
     for manifest in (
         "service.production.yaml",
         "service.worker.production.yaml",
@@ -545,7 +558,7 @@ def test_cloud_tasks_setup_is_idempotent_and_keeps_task_deadline_in_runtime() ->
     assert "--max-attempts=8" in setup
     assert "--min-backoff=5s" in setup
     assert "--max-backoff=300s" in setup
-    assert "--max-concurrent-dispatches=100" in setup
+    assert "--max-concurrent-dispatches=25" in setup
     assert "dispatch-deadline" not in setup.lower()
     assert "dispatchDeadline" not in setup
     assert "roles/cloudtasks.enqueuer" in setup
@@ -565,11 +578,11 @@ def test_production_worker_max_scale_is_explicitly_gated_by_connection_budget() 
     cloudbuild = _read("cloudbuild.yaml")
     preflight = _read("scripts/gcloud/preflight.sh")
 
-    assert "3×16 + 8×12 = 144" in runbook
+    assert "3×7 + 8×8 = 85" in runbook
     assert "Production maxScale=8 release gate" in runbook
     assert "Status: UNMEASURED" in runbook
     assert "first production deploy is blocked" in runbook
-    assert "at least 160 connections" in runbook
+    assert "below 60% of the direct/backend" in runbook
     assert "maxScale=8` is a checked-in target, not evidence" in runbook
     assert "Status: UNMEASURED" in production_deploy
     assert "Status: UNMEASURED" in cloudbuild
@@ -596,25 +609,44 @@ def test_deploy_paths_grant_worker_invoker_before_enabling_hybrid() -> None:
         assert 0 <= invoker < hybrid_worker < hybrid_api
 
 
-def test_checkpoint_database_url_is_an_optional_application_override() -> None:
-    deployment_files = (
-        "cloudbuild.yaml",
-        "service.production.yaml",
-        "service.staging.yaml",
-        "service.worker.production.yaml",
-        "service.worker.staging.yaml",
-        "scripts/gcloud/1-create-secrets.sh",
-        "scripts/gcloud/2-deploy-production.sh",
-        "scripts/gcloud/3-deploy-staging.sh",
-    )
-    for relative_path in deployment_files:
-        content = _read(relative_path)
-        assert "VMA_CHECKPOINT_DATABASE_URL" not in content
-        assert "vma-checkpoint-database-url" not in content
+def test_hosted_database_urls_use_the_required_connection_modes() -> None:
+    for environment in ("production", "staging"):
+        suffix = "-staging" if environment == "staging" else ""
+        transaction_secret = f"vma-database-url{suffix}"
+        listen_secret = f"vma-listen-database-url{suffix}"
+        for path in (
+            f"service.{environment}.yaml",
+            f"service.worker.{environment}.yaml",
+        ):
+            manifest = _read(path)
+            assert re.search(
+                rf"- name: VMA_CHECKPOINT_DATABASE_URL\s+valueFrom:\s+"
+                rf"secretKeyRef:\s+key: latest\s+name: {transaction_secret}",
+                manifest,
+            )
+            assert re.search(
+                rf"- name: VMA_LISTEN_DATABASE_URL\s+valueFrom:\s+"
+                rf"secretKeyRef:\s+key: latest\s+name: {listen_secret}",
+                manifest,
+            )
+            assert "vma-checkpoint-database-url" not in manifest
 
-    example = _read(".env.example")
-    assert "VMA_CHECKPOINT_DATABASE_URL=" in example
-    assert "derive" in example.lower()
+        example = _read(f".env.{environment}.example")
+        assert re.search(r"^DATABASE_URL=.*:6543/postgres$", example, re.MULTILINE)
+        assert re.search(
+            r"^VMA_LISTEN_DATABASE_URL=.*:5432/postgres$", example, re.MULTILINE
+        )
+        assert re.search(
+            r"^DATABASE_URL_DIRECT=.*:5432/postgres$", example, re.MULTILINE
+        )
+
+    importer = _read("scripts/gcloud/1-create-secrets.sh")
+    assert "DATABASE_URL|vma-database-url" in importer
+    assert "VMA_LISTEN_DATABASE_URL|vma-listen-database-url" in importer
+    assert "DATABASE_URL_DIRECT|vma-database-url-direct" in importer
+    assert "DATABASE_URL:postgresql+asyncpg://*:6543/*" in importer
+    assert "VMA_LISTEN_DATABASE_URL:postgresql+asyncpg://*:5432/*" in importer
+    assert "DATABASE_URL_DIRECT:postgresql+asyncpg://*:5432/*" in importer
 
 
 def test_object_storage_has_no_public_bucket_url_configuration() -> None:
@@ -650,6 +682,9 @@ def test_env_examples_separate_required_values_from_optional_overrides() -> None
         required_at = example.index(f"REQUIRED FOR THE STANDARD {environment.upper()} CLOUD RUN PROFILE")
         optional_at = example.index("# OPTIONAL")
         assert required_at < optional_at
+        assert example.index("DATABASE_URL=") < optional_at
+        assert example.index("VMA_LISTEN_DATABASE_URL=") < optional_at
+        assert example.index("DATABASE_URL_DIRECT=") < optional_at
         assert "\nVMA_CHECKPOINT_DATABASE_URL=" not in example
 
 

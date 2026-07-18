@@ -79,7 +79,7 @@ ensure_queue() {
       --max-attempts=8 \
       --min-backoff=5s \
       --max-backoff=300s \
-      --max-concurrent-dispatches=100 \
+      --max-concurrent-dispatches=25 \
       --quiet
   else
     echo "Creating Cloud Tasks queue: ${TASKS_LOCATION}/${QUEUE}"
@@ -89,7 +89,7 @@ ensure_queue() {
       --max-attempts=8 \
       --min-backoff=5s \
       --max-backoff=300s \
-      --max-concurrent-dispatches=100 \
+      --max-concurrent-dispatches=25 \
       --quiet
   fi
 

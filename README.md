@@ -256,10 +256,12 @@ Use `deepseek-chat` with the current runtime. VMA marks `deepseek-reasoner` as n
 
 ## Run with Postgres and object storage
 
-For a durable deployment, configure at least:
+For a durable hosted Supavisor deployment, configure at least:
 
 ```dotenv
-DATABASE_URL=postgresql+asyncpg://user:password@host:5432/votrix_managed_agents
+DATABASE_URL=postgresql+asyncpg://user:password@pooler-host:6543/votrix_managed_agents
+VMA_CHECKPOINT_DATABASE_URL=postgresql+asyncpg://user:password@pooler-host:6543/votrix_managed_agents
+VMA_LISTEN_DATABASE_URL=postgresql+asyncpg://user:password@pooler-host:5432/votrix_managed_agents
 S3_ENDPOINT_URL=https://...
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
@@ -272,9 +274,12 @@ serves downloads through the authenticated Files API; neither
 presign/complete upload routes remain outside the public GA surface, so public
 beta clients use the bounded authenticated upload route.
 
-VMA derives the LangGraph checkpoint connection from `DATABASE_URL`. Set the
-optional `VMA_CHECKPOINT_DATABASE_URL` only when checkpoints intentionally use
-a different database.
+For hosted Supavisor deployments, main and LangGraph checkpoint traffic use the
+transaction pooler on port `6543`; the dedicated preview listener and janitor
+advisory lock use `VMA_LISTEN_DATABASE_URL` on session-mode port `5432`. The
+migration Job receives a separate session/direct URL through the deployment
+pipeline. Local or direct-Postgres installations may omit both VMA-specific
+URLs and let them fall back to `DATABASE_URL`.
 
 Run migrations once per release. Production must use a VMA-owned Postgres database or schema rather than sharing the `votrix-backend` schema. Google Cloud Run is the only maintained hosted deployment target; follow the [Cloud Run deployment guide](scripts/gcloud/README.md) and the [deployment topology notes](docs/deployment-platforms.md).
 
@@ -308,21 +313,29 @@ priced billing ledger.
 The checked-in hosted configuration targets GCP Cloud Run exclusively. It provides production and staging service manifests, a Cloud Build pipeline, Artifact Registry setup, Secret Manager integration, and release scripts under [`scripts/gcloud`](scripts/gcloud/README.md). Other hosted platforms are not maintained.
 
 The checked-in Cloud Run topology separates HTTP/SSE API instances from a
-private worker fleet. Production allows one to three API instances and keeps
-two to three worker instances, with five durable turn consumers per worker.
-Staging allows one to two API instances and keeps one worker. API instances
-scale from request load; the worker fleet is deliberately scaled manually, so
-Cloud Run is not expected to infer Agent queue depth.
+private worker fleet. Production allows one to three API instances and one to
+eight workers; staging allows one to two of each. API instances scale from
+request load. Cloud Tasks sends private per-turn push requests so the worker
+service scales independently from queued Agent work. A single-consumer
+PostgreSQL reconciler remains active in every worker as the durable fallback
+when task dispatch fails.
 
 Each process uses one Uvicorn worker, bounded PostgreSQL pools, one-second
-durable-event polling, and a 64 MiB aggregate Session-input cap. Hosted services
-set `VMA_PREVIEW_BROKER=pg_notify`: workers publish coalesced preview frames and
-each API process holds one dedicated PostgreSQL `LISTEN` connection. Delivery
-remains best-effort, and complete durable events are the source of truth after
-reconnect or frame loss. Local development keeps the `process_local` default.
+durable-event polling, and a 64 MiB aggregate Session-input cap. API instances
+use a 4+2 application pool; workers use `containerConcurrency=5`, a five-turn
+limiter, a 4+1 application pool, and a three-connection checkpoint pool. The
+fallback reconciler polls every 20 seconds with concurrency one. Hosted
+services set `VMA_PREVIEW_BROKER=pg_notify`: workers publish coalesced preview
+frames and each API process holds one dedicated PostgreSQL `LISTEN` connection.
+Main and checkpoint traffic uses the Supavisor transaction pooler on port
+`6543`; only the listener and janitor advisory lock use the session-mode URL on
+port `5432`. Delivery remains best-effort, and complete durable events are the
+source of truth after reconnect or frame loss. Local development keeps the
+`process_local` default.
 Run the ten-Session performance smoke documented in the Cloud Run guide before
 promoting staging. Hosted Organization defaults admit 20 queued/running turns;
-production starts with ten warm execution slots and queues the remainder.
+production starts with one warm worker and five warm turn slots, then can scale
+to eight worker instances while excess work remains durable in the queue.
 
 Each release runs Alembic once through a dedicated Cloud Run migration Job
 before replacing either service with the same immutable image. API and worker

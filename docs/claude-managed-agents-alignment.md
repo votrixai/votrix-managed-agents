@@ -156,8 +156,11 @@ Organization/Session-scoped frames and API processes `LISTEN` and forward them
 to SSE subscribers. This preserves cross-instance typewriter delivery without
 changing public frame shapes. Preview frames remain best-effort and
 non-replayable, so clients reconcile with durable database events after a drop
-or reconnect. Hosted Supavisor must use session mode and budget one dedicated
-`LISTEN` connection per API process. See
+or reconnect. Hosted main and checkpoint traffic use the Supavisor transaction
+pooler on port `6543`; `VMA_LISTEN_DATABASE_URL` alone uses session mode on port
+`5432` for the dedicated listener and janitor lock. Budget one lifetime
+`LISTEN` connection per API process in addition to the bounded application
+pool. See
 [known incompatibilities](./known-incompatibilities.md#live-streaming-and-process-topology).
 
 ## Tool and approval alignment

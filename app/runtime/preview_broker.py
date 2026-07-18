@@ -21,7 +21,7 @@ import structlog
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.db.engine import get_engine
+from app.db.engine import get_engine, session_scoped_database_url
 from app.organization import resolve_organization_id
 from app.runtime.vma_preview_bus import VmaProcessLocalPreviewBus, vma_preview_bus
 
@@ -79,6 +79,7 @@ class PreviewBroker:
         self._mode_override = mode
         self._database_url_override = database_url
         self._service_role_override = service_role
+        self._uses_engine_notify = notify_sink is None
         self._notify_sink = notify_sink or self._notify_via_engine
         self._flush_after_seconds = flush_after_seconds
         self._flush_tick_seconds = flush_tick_seconds
@@ -107,8 +108,18 @@ class PreviewBroker:
 
     def validate_configuration(self) -> None:
         """Fail fast when a Postgres-only broker is paired with another database."""
-        if self._mode() == "pg_notify" and not _is_postgres_url(self._database_url()):
-            raise RuntimeError("VMA_PREVIEW_BROKER=pg_notify requires a PostgreSQL DATABASE_URL")
+        if self._mode() != "pg_notify":
+            return
+        if not _is_postgres_url(self._database_url()):
+            raise RuntimeError(
+                "VMA_PREVIEW_BROKER=pg_notify requires a PostgreSQL DATABASE_URL "
+                "or VMA_LISTEN_DATABASE_URL for LISTEN"
+            )
+        if self._uses_engine_notify and not _is_postgres_url(get_settings().database_url):
+            raise RuntimeError(
+                "VMA_PREVIEW_BROKER=pg_notify requires a PostgreSQL DATABASE_URL "
+                "for publishing"
+            )
 
     async def start(self) -> asyncio.Task[None] | None:
         """Start coalescing and, for API roles, the dedicated LISTEN connection."""
@@ -454,7 +465,7 @@ class PreviewBroker:
         return self._mode_override or get_settings().vma_preview_broker
 
     def _database_url(self) -> str:
-        return self._database_url_override or get_settings().database_url
+        return self._database_url_override or session_scoped_database_url()
 
     def _service_role(self) -> PreviewServiceRole:
         return self._service_role_override or get_settings().vma_service_role

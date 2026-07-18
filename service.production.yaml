@@ -63,9 +63,9 @@ spec:
             - name: VMA_MAX_SESSION_INPUT_BYTES
               value: "67108864"
             - name: VMA_DB_POOL_SIZE
-              value: "10"
+              value: "4"
             - name: VMA_DB_MAX_OVERFLOW
-              value: "5"
+              value: "2"
             - name: VMA_DB_POOL_TIMEOUT_SECONDS
               value: "10"
             - name: VMA_DB_POOL_RECYCLE_SECONDS
@@ -129,6 +129,16 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url
+            - name: VMA_CHECKPOINT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-database-url
+            - name: VMA_LISTEN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-listen-database-url
             - name: VMA_SUPABASE_URL
               valueFrom:
                 secretKeyRef:

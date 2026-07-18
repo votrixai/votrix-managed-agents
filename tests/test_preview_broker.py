@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app.config import get_settings
 from app.runtime.preview_broker import PreviewBroker
 from app.runtime.vma_preview_bus import VmaProcessLocalPreviewBus
 
@@ -44,7 +45,11 @@ def _remote_frames(notifications: list[str]) -> list[dict[str, Any]]:
 async def broker_factory():
     brokers: list[PreviewBroker] = []
 
+    async def notify_noop(_payload: str) -> None:
+        return None
+
     def create(**kwargs: Any) -> PreviewBroker:
+        kwargs.setdefault("notify_sink", notify_noop)
         broker = PreviewBroker(
             mode="pg_notify",
             database_url="postgresql+asyncpg://preview.invalid/vma_test",
@@ -288,7 +293,22 @@ async def test_pg_notify_with_non_postgres_database_fails_fast():
         database_url="sqlite+aiosqlite:///preview.db",
         service_role="api",
     )
-    with pytest.raises(RuntimeError, match="requires a PostgreSQL DATABASE_URL"):
+    with pytest.raises(RuntimeError, match="requires a PostgreSQL DATABASE_URL") as exc_info:
+        await broker.start()
+    assert "VMA_LISTEN_DATABASE_URL" in str(exc_info.value)
+    await broker.close()
+
+
+async def test_pg_notify_requires_postgres_publisher_with_split_dsns(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///preview.db")
+    monkeypatch.setenv(
+        "VMA_LISTEN_DATABASE_URL",
+        "postgresql+asyncpg://session.example:5432/vma",
+    )
+    get_settings.cache_clear()
+    broker = PreviewBroker(mode="pg_notify", service_role="worker")
+
+    with pytest.raises(RuntimeError, match="PostgreSQL DATABASE_URL for publishing"):
         await broker.start()
     await broker.close()
 
@@ -332,12 +352,16 @@ async def test_listener_reconnects_and_closes_dedicated_connection(
             raise ConnectionError("temporary listener outage")
         return connection
 
+    async def notify_noop(_payload: str) -> None:
+        return None
+
     monkeypatch.setattr(asyncpg, "connect", fake_connect)
     broker = PreviewBroker(
         instance_id="listener",
         mode="pg_notify",
         database_url="postgresql+asyncpg://preview.invalid/vma_test",
         service_role="api",
+        notify_sink=notify_noop,
         reconnect_initial_seconds=0.001,
         reconnect_max_seconds=0.002,
         connection_check_seconds=0.005,
@@ -352,3 +376,63 @@ async def test_listener_reconnects_and_closes_dedicated_connection(
     assert task.done()
     assert connection.listener_removed is True
     assert connection.closed is True
+
+
+@pytest.mark.parametrize(
+    ("listen_url", "expected_dsn"),
+    [
+        (
+            "postgresql+asyncpg://session.example:5432/vma",
+            "postgresql://session.example:5432/vma",
+        ),
+        ("", "postgresql://transaction.example:6543/vma"),
+    ],
+)
+async def test_listener_uses_session_scoped_dsn_with_fallback(
+    monkeypatch,
+    listen_url,
+    expected_dsn,
+):
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def add_listener(self, _channel, _callback) -> None:
+            return None
+
+        async def remove_listener(self, _channel, _callback) -> None:
+            return None
+
+        def is_closed(self) -> bool:
+            return self.closed
+
+        async def close(self) -> None:
+            self.closed = True
+
+    connected_dsns: list[str] = []
+    connection = FakeConnection()
+
+    async def fake_connect(dsn, **_kwargs):
+        connected_dsns.append(dsn)
+        return connection
+
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://transaction.example:6543/vma",
+    )
+    monkeypatch.setenv("VMA_LISTEN_DATABASE_URL", listen_url)
+    get_settings.cache_clear()
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+    broker = PreviewBroker(
+        instance_id="session-listener",
+        mode="pg_notify",
+        service_role="api",
+        connection_check_seconds=0.005,
+    )
+
+    task = await broker.start()
+    assert task is not None
+    assert await broker.wait_until_listener_ready(timeout=0.25)
+    await broker.close()
+
+    assert connected_dsns == [expected_dsn]

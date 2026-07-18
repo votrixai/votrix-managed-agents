@@ -26,11 +26,11 @@ steps:
         WORKER_SERVICE="${_SERVICE_NAME}-worker"
         WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"
         RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
-        DATABASE_SECRET="vma-database-url${_SECRET_SUFFIX}"
+        DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"
 
         if [ "${_APP_ENV}" = "production" ] && \
           grep -q 'Status: UNMEASURED' private-docs/scaling-runbook.md; then
-          echo "Production deploy is blocked: the Supabase connection ceiling is UNMEASURED." >&2
+          echo "Production deploy is blocked: the Supabase connection budget is UNMEASURED." >&2
           exit 1
         fi
 

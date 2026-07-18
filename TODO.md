@@ -464,12 +464,30 @@ longer gates): queue waits regularly reaching tens of seconds; monthly manual
 fleet adjustments; ≥5 mostly idle instances held for burst headroom; a
 committed spiky workload.
 
+### Decided — Supavisor connection-mode split (2026-07-17)
+
+Supavisor session mode pins one Postgres backend connection per client, and
+backend connections (Micro 60 … XL 240) — not pooler clients — are the scarce
+Supabase resource, so an autoscaling fleet must not consume them linearly.
+Decision: runtime traffic and LangGraph checkpoints move to the transaction
+pooler (`:6543`); LISTEN/NOTIFY, the janitor advisory lock, and Alembic
+migrations keep session/direct connections (`:5432`); per-instance pools
+shrink (API 4+2, worker 4+1, checkpoint 3). Authoritative spec:
+`PLAN-amendment-A1-connection-modes.md` (standalone amendment — the base PLAN
+documents are intentionally unmodified); budget math:
+`private-docs/scaling-runbook.md`. Caught during the connection review;
+`app/db/engine.py` already sets `statement_cache_size=0`, so the main engine
+is transaction-mode compatible as-is. Key trap encoded in the specs:
+session-scoped advisory locks and psycopg `prepare_threshold=0` both break
+silently through transaction pooling.
+
 ### Pre-launch gate
 
 The first production deploy is gated by `private-docs/pre-launch-checklist.md`:
-the three engineering plans (`PLAN-horizontal-scaling.md`,
-`PLAN-p3-autoscale.md`, `PLAN-pre-launch-hardening.md` — the last adds the
-tenant-isolation denial matrix and encryption key rotation), the four
+the engineering plans (`PLAN-horizontal-scaling.md`,
+`PLAN-p3-autoscale.md`, `PLAN-amendment-A1-connection-modes.md`, and
+`PLAN-pre-launch-hardening.md` — the last adds the tenant-isolation denial
+matrix and encryption key rotation), the four
 load-test scenarios, and the checklist's Tier 1 operator items (PITR restore
 drill, API versioning/event-retention decisions, region/residency decision).
 

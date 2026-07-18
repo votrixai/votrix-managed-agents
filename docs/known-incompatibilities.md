@@ -120,12 +120,16 @@ can therefore drop an ephemeral preview. Preview frames are not replayed.
 Clients must reconcile with the complete durable event carrying the same event
 identity; durable events remain the source of truth.
 
-Hosted PostgreSQL must use a Supavisor **session-mode** endpoint (port `5432`),
-not transaction mode, because each API process holds one dedicated `LISTEN`
-connection for its lifetime. Budget that one extra connection per API (or
-combined-role) process in addition to the SQLAlchemy pool. Preview publishers
-use the existing application pool. Redis, NATS, Cloud Tasks, and Pub/Sub are not
-required by the maintained topology.
+Hosted PostgreSQL uses separate connection modes. `DATABASE_URL` and
+`VMA_CHECKPOINT_DATABASE_URL` use the Supavisor transaction-mode endpoint on
+port `6543`; preview publishers therefore use the ordinary transaction-mode
+application pool. `VMA_LISTEN_DATABASE_URL` uses the session-mode endpoint on
+port `5432` for each API process's lifetime `LISTEN` connection and for the
+janitor's session-scoped advisory lock. Budget one additional connection per
+API (or combined-role) process, plus the transient janitor lock connection.
+The migration Job receives a separate session/direct URL rather than either
+runtime URL. Redis, NATS, and Pub/Sub are not required by the maintained
+preview topology.
 
 ### Turn execution is database-fenced, not exactly-once
 

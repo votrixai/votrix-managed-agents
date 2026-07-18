@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.engine import get_engine, session_scope
+from app.db.engine import get_engine, session_scope, session_scoped_connection
 from app.db.queries import environments as environments_q
 from app.db.queries import session_sandboxes as sandboxes_q
 from app.db.queries import sessions as sessions_q
@@ -847,7 +847,7 @@ async def cleanup_expired_session_sandboxes(*, limit: int = 25) -> int:
     engine = get_engine()
     if engine.dialect.name != "postgresql":
         return await _cleanup_expired_session_sandboxes(limit=limit)
-    async with engine.connect() as conn:
+    async with session_scoped_connection() as conn:
         acquired = (
             await conn.execute(
                 text("SELECT pg_try_advisory_lock(:key)"),

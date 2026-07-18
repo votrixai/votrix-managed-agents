@@ -49,7 +49,7 @@ REGION="${REGION_OVERRIDE:-$REGION}"
 API_MANIFEST="${REPO_ROOT}/service.production.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.production.yaml"
 MIGRATION_JOB="${PRODUCTION_SERVICE}-migrate"
-DATABASE_SECRET="vma-database-url"
+DATABASE_SECRET="vma-database-url-direct"
 
 if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   echo "Production deploys must run from a git checkout with a commit." >&2
@@ -65,8 +65,8 @@ if [ -n "$WORKTREE_STATUS" ]; then
 fi
 
 if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; then
-  echo "Production deploy is blocked: the Supabase connection ceiling is UNMEASURED." >&2
-  echo "Record the measured ceiling and clear the release gate in private-docs/scaling-runbook.md." >&2
+  echo "Production deploy is blocked: the Supabase connection budget is UNMEASURED." >&2
+  echo "Record the measured limits and clear the release gate in private-docs/scaling-runbook.md." >&2
   exit 1
 fi
 

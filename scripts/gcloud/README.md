@@ -44,14 +44,14 @@ is unavailable. API request autoscaling and Agent-turn capacity are independent.
 - Use managed PostgreSQL. SQLite is not durable or multi-instance safe on Cloud
   Run.
 - Keep development, staging, and production in three separate Supabase projects;
-  these environments must never share a database. Start with the Supavisor
-  session-mode endpoint on port `5432` and use its SQLAlchemy `asyncpg` URL for
-  `DATABASE_URL`. VMA derives LangGraph's `postgresql://` checkpoint DSN from
-  that value, so the standard deployment does not duplicate the connection
-  string or password. Session mode is mandatory for the hosted
-  `VMA_PREVIEW_BROKER=pg_notify` listener; a transaction-mode pooler cannot hold
-  the lifetime `LISTEN` connection. The local `.env` uses the development
-  project; the two Secret Manager files below use staging and production.
+  these environments must never share a database. Runtime SQLAlchemy and
+  LangGraph checkpoint traffic use the Supavisor transaction pooler on port
+  `6543`. The preview listener and janitor advisory lock use a separate
+  session-mode URL on port `5432`, while the migration Job receives its own
+  session/direct secret. A transaction-mode pooler cannot hold a lifetime
+  `LISTEN` connection or a session-scoped advisory lock. The local `.env` uses
+  the development project; the two Secret Manager files below use staging and
+  production.
 - Build the operator-owned `vma-hardened` template in the E2B account before
   creating an E2B-backed session.
 
@@ -96,6 +96,8 @@ Each unquoted `KEY=value` file contains exactly these required values:
 
 ```env
 DATABASE_URL=
+VMA_LISTEN_DATABASE_URL=
+DATABASE_URL_DIRECT=
 VMA_SUPABASE_URL=
 VMA_SUPABASE_PUBLISHABLE_KEY=
 VMA_ENCRYPTION_KEY=
@@ -119,6 +121,8 @@ only these names:
 | Environment variable | Production secret | Staging secret |
 |---|---|---|
 | `DATABASE_URL` | `vma-database-url` | `vma-database-url-staging` |
+| `VMA_LISTEN_DATABASE_URL` | `vma-listen-database-url` | `vma-listen-database-url-staging` |
+| `DATABASE_URL_DIRECT` | `vma-database-url-direct` | `vma-database-url-direct-staging` |
 | `VMA_SUPABASE_URL` | `vma-supabase-url` | `vma-supabase-url-staging` |
 | `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
@@ -128,9 +132,10 @@ only these names:
 | `S3_SECRET_ACCESS_KEY` | `vma-s3-secret-access-key` | `vma-s3-secret-access-key-staging` |
 | `S3_BUCKET_NAME` | `vma-s3-bucket-name` | `vma-s3-bucket-name-staging` |
 
-`VMA_CHECKPOINT_DATABASE_URL` remains an optional application setting for the
-unusual case where checkpoint tables intentionally live in another database.
-It is not part of the standard Cloud Run Secret Manager contract.
+The API and worker manifests set `VMA_CHECKPOINT_DATABASE_URL` explicitly from
+the same transaction-pooler secret as `DATABASE_URL`. They set
+`VMA_LISTEN_DATABASE_URL` from the session-mode secret. The migration Job alone
+maps `vma-database-url-direct[-staging]` to its `DATABASE_URL`.
 
 The Supabase URL and publishable key enable hosted owner and superadmin JWT
 authentication. They must match the Votrix web application in each environment;
@@ -160,8 +165,8 @@ model, E2B, and storage settings. API-specific settings are:
 ```env
 VMA_SERVICE_ROLE=api
 VMA_EMBEDDED_WORKER_ENABLED=false
-VMA_DB_POOL_SIZE=10
-VMA_DB_MAX_OVERFLOW=5
+VMA_DB_POOL_SIZE=4
+VMA_DB_MAX_OVERFLOW=2
 ```
 
 Worker-specific settings are:
@@ -174,8 +179,9 @@ VMA_WORKER_CONCURRENCY=1
 VMA_WORKER_POLL_INTERVAL_SECONDS=20
 VMA_WORKER_LEASE_SECONDS=120
 VMA_WORK_MAX_ATTEMPTS=3
-VMA_DB_POOL_SIZE=5
-VMA_DB_MAX_OVERFLOW=2
+VMA_CHECKPOINT_POOL_MAX_SIZE=3
+VMA_DB_POOL_SIZE=4
+VMA_DB_MAX_OVERFLOW=1
 ```
 
 Shared hosted settings include:
@@ -200,15 +206,16 @@ VMA_CORS_ORIGINS=https://<matching-votrix-web-app>,https://docs.votrixai.com
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and
 one-time E2B injection. E2B turns resume from the sealed filesystem and do not
-rehydrate all inputs from R2. Each process reuses its PostgreSQL connections;
-keep the sum of all API and worker pool ceilings within the selected Supabase
-plan's connection limit, plus one dedicated `LISTEN` connection for every API
-process. Worker publishers use their existing SQLAlchemy pool and do not add a
-dedicated listener connection. PostgreSQL preview delivery is best-effort; SSE
+rehydrate all inputs from R2. Runtime and checkpoint pools use transaction mode,
+so their client connections do not each pin a scarce Postgres backend. Every API
+process keeps one session-mode `LISTEN` connection, and a janitor leader holds a
+transient session-mode advisory-lock connection. Worker publishers use their
+existing SQLAlchemy pool and do not add a dedicated listener connection.
+PostgreSQL preview delivery is best-effort; SSE
 clients reconcile dropped or missed frames against durable Session events. The
 hosted Organization defaults admit bursts of up to 20 queued/running turns.
 Each worker admits five turns. Production starts with five warm execution slots
-and may scale to forty only after the production Supabase connection ceiling is
+and may scale to forty only after the production Supabase connection budget is
 measured and the release gate in the scaling runbook is satisfied.
 
 ## Manual deploys
@@ -291,14 +298,14 @@ The checked-in manifests use `VMA_WORKER_TURN_LIMIT=5`, `containerConcurrency=5`
 and one slow reconciler coroutine per instance. Production keeps one warm worker
 and permits at most eight instances, for 5–40 turns. Staging permits one or two,
 for 5–10 turns. The production maximum is not permission to deploy blindly:
-the first production release remains blocked until the measured Supabase
-session-mode connection ceiling is recorded in the scaling runbook and covers
-the 144-connection computed peak plus explicit operational headroom.
+the first production release remains blocked until the Supabase compute tier,
+pooler client ceiling, transaction-pool backend budget, and operational
+headroom are recorded in the scaling runbook.
 
 Cloud Tasks is never the work ledger. Task creation failure is logged and the
 20-second PostgreSQL reconciler eventually claims the queued item. Pausing or
 deleting a queue therefore slows dispatch but does not lose work. Queue retry
-policy is `maxAttempts=8`, 5–300 second backoff, and at most 100 concurrent
+policy is `maxAttempts=8`, 5–300 second backoff, and at most 25 concurrent
 dispatches. Each task sets its own 1,800-second dispatch deadline in application
 code; there is deliberately no queue-level deadline setting.
 

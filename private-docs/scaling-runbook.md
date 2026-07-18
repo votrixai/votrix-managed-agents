@@ -85,24 +85,94 @@ that also adds memory headroom and blast-radius isolation.
 
 ## Connection budget (check BEFORE scaling up)
 
-Every instance holds Postgres connections against the Supabase Supavisor
-session-mode pooler (port 5432), which has a hard per-plan client-connection
-cap. Per-instance worst case:
+Two different Supabase limits matter, and they scale with the compute tier:
 
-| Component | API instance | Worker instance |
-|---|---|---|
-| SQLAlchemy pool (`VMA_DB_POOL_SIZE` + `VMA_DB_MAX_OVERFLOW`) | 10 + 5 | 5 + 2 |
-| LangGraph checkpoint pool (`VMA_CHECKPOINT_POOL_MAX_SIZE`) | 0 (API never runs turns) | 5 |
-| Preview broker LISTEN connection (P2.5, API/combined only) | 1 | 0 (worker runs no listener) |
-| **Total ceiling** | **16** | **12** |
+- **Postgres backend (direct) connections** are scarce. Supavisor session mode
+  pins one backend per client for the client's lifetime.
+- **Supavisor pooler client connections** are cheaper. Transaction mode
+  multiplexes many clients over a smaller shared backend pool.
+
+Amendment A1 (`PLAN-amendment-A1-connection-modes.md`) therefore sends runtime
+and checkpoint traffic through the transaction pooler (`:6543`). It reserves
+session mode (`:5432`) for the preview LISTEN connection, the janitor advisory
+lock, and migrations.
+
+Per-instance connections after A1:
+
+| Component | Mode | API instance | Worker instance |
+|---|---|---|---|
+| SQLAlchemy pool (`VMA_DB_POOL_SIZE` + `VMA_DB_MAX_OVERFLOW`) | transaction | 4 + 2 | 4 + 1 |
+| LangGraph checkpoint pool (`VMA_CHECKPOINT_POOL_MAX_SIZE`) | transaction | 0 | 3 |
+| Preview broker LISTEN connection (P2.5) | **session** | 1 | 0 |
+| Janitor advisory-lock contender (P1.3) | **session** | 0 | up to +1 transient per active instance |
+| **Steady Supavisor clients (excluding janitor)** | | **7** | **8** |
+| **Steady backend-pinned clients** | | **1** | **0** |
 
 ```
-total ≈ 16 × (API instances) + 12 × (worker instances) + migrations/ops slack
+steady Supavisor clients ≈ 7 × (active API instances) + 8 × (active worker instances)
+janitor-pass client burst ≤ steady clients + active worker instances
+steady backend pins ≈ active API instances
+janitor-pass backend-pin burst ≤ active API instances + active worker instances
 ```
 
-Production manifest peak: 3 API + 8 workers = `3×16 + 8×12 = 144`
-connections before migrations, operator SQL, incident tooling, or transient
-pool overlap during revisions.
+Production steady-state manifest peak: 3 API + 8 workers =
+`3×7 + 8×8 = 85` Supavisor clients and three dedicated backend pins. If all
+eight workers contend in the same janitor pass, the brief peak is 93 clients
+and 11 backend pins. Only one contender becomes the advisory-lock leader, but
+every contender must first pin its own session-mode connection to try the lock.
+During a revision overlap, count active old- and new-revision instances in both
+terms; do not budget only for one leader or one revision. These figures exclude
+migrations, the transaction pooler's own backend pool, and operator sessions.
+Cloud Tasks starts at 25 concurrent dispatches and rises only when this complete
+connection budget permits it. The staging load test must watch SQLAlchemy
+slow-checkout warnings: worker 4+1 against five concurrent turns is
+deliberately tight and is the first knob to raise on measured contention.
+
+### Staging SQLAlchemy checkout-latency gate
+
+The main SQLAlchemy engine uses `ObservedAsyncAdaptedQueuePool`. It emits no
+per-checkout telemetry. It emits one structured warning only when an acquisition
+takes at least **250 ms**, including queue wait, connection establishment, and
+checkout work such as pre-ping:
+
+- `event="database_pool_checkout_slow"`
+- `checkout_latency_ms`, `threshold_ms`, and `outcome` (`acquired` or `error`)
+- `pool_size`, `checked_out`, and `overflow_connections`
+- `error_type` when acquisition failed
+
+The interval is intentionally end-to-end checkout latency, not a claim of pure
+queue duration. It measures the delay experienced by the caller while keeping
+the normal fast path free of logging and external metrics dependencies.
+
+For each staging load scenario, warm the services for 60 seconds, record that
+post-warm-up timestamp, and run this exact Logs Explorer filter with the
+timestamp substituted:
+
+```text
+resource.type="cloud_run_revision"
+(resource.labels.service_name="votrix-managed-agents-staging" OR
+ resource.labels.service_name="votrix-managed-agents-staging-worker")
+jsonPayload.event="database_pool_checkout_slow"
+severity>=WARNING
+timestamp>="2026-01-01T00:00:00Z"
+```
+
+The CLI equivalent uses the same substituted post-warm-up timestamp:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND (resource.labels.service_name="votrix-managed-agents-staging" OR resource.labels.service_name="votrix-managed-agents-staging-worker") AND jsonPayload.event="database_pool_checkout_slow" AND severity>=WARNING AND timestamp>="2026-01-01T00:00:00Z"' \
+  --project=votrixai-480422 --order=asc --limit=1000 \
+  --format='table(timestamp,resource.labels.service_name,jsonPayload.checkout_latency_ms,jsonPayload.outcome,jsonPayload.checked_out,jsonPayload.pool_size,jsonPayload.overflow_connections,jsonPayload.error_type)'
+```
+
+The post-warm-up staging gate passes only when this query returns no rows. Any
+`outcome="error"` is a failure; any `outcome="acquired"` row means the caller
+waited at least 250 ms and requires investigation. A connection-establishment
+warning confined to the excluded warm-up minute should still be recorded, but
+does not fail the post-warm-up gate. Recurring `acquired` warnings mean the 4+1
+worker pool is contended and must be raised or the turn limit reduced before
+production.
 
 ### Production maxScale=8 release gate
 
@@ -114,19 +184,22 @@ is not the release gate.
 
 Before deploying the production worker manifest, the release owner must:
 
-1. Measure or obtain the production Supavisor session-mode client-connection
-   ceiling from the actual Supabase project and record the numeric value here.
-2. Reserve explicit headroom for migrations, operations, and revision overlap;
-   the accepted ceiling must be at least 160 connections, and a higher margin
-   is preferred.
+1. Record the production Supabase compute tier, Postgres direct/backend limit,
+   Supavisor transaction-pooler client limit, and configured transaction-pool
+   backend size here.
+2. Verify that the 85-client steady-state peak plus migration, operations, and
+   revision-overlap headroom fits the pooler client limit. Keep dedicated pins
+   plus the transaction pooler's backend pool below 60% of the direct/backend
+   limit.
 3. Run the 3× fleet-capacity staging burst and the scale-out/scale-in scenarios
    from `PLAN-p3-autoscale.md` without pool timeouts.
-4. Replace `UNMEASURED` above with the measured ceiling, date, plan, and release
-   owner in the same change that clears the production launch checklist.
+4. Replace `UNMEASURED` above with the measured limits, date, compute tier, and
+   release owner in the same change that clears the production launch
+   checklist.
 
-`maxScale=8` is a checked-in target, not evidence that this gate passed. If the
-measured ceiling is below 160, lower production `maxScale` using the formula
-above or upgrade the database plan before deployment.
+`maxScale=8` is a checked-in target, not evidence that this gate passed. If
+either connection budget is too small, lower production `maxScale` using the
+formulas above or upgrade the database plan before deployment.
 
 ## Signals that say "change the bounds"
 

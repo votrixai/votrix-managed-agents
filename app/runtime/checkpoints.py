@@ -73,7 +73,7 @@ async def _shared_postgres_saver(dsn: str) -> Any:
             open=False,
             kwargs={
                 "autocommit": True,
-                "prepare_threshold": 0,
+                "prepare_threshold": None,
                 "row_factory": dict_row,
             },
         )

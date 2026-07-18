@@ -209,9 +209,12 @@ Hosted manifests use `VMA_PREVIEW_BROKER=pg_notify`; workers publish and API
 processes hold one dedicated PostgreSQL `LISTEN` connection each. Local and
 simple self-hosted deployments retain `process_local` as the zero-infrastructure
 default. Both transports are best-effort: clients reconcile against durable
-events after reconnect or frame loss. Supabase deployments must use a Supavisor
-session-mode endpoint for `LISTEN/NOTIFY` and reserve one connection per API (or
-combined-role) process beyond the ordinary application pool.
+events after reconnect or frame loss. Supabase deployments use the transaction
+pooler on port `6543` for control-plane, checkpoint, and `NOTIFY` publishing
+traffic. A separate session-mode URL on port `5432` carries the lifetime
+`LISTEN` connection and janitor advisory lock. Reserve one connection per API
+(or combined-role) process beyond the ordinary application pool; migrations
+use their own session/direct URL.
 
 This topology is horizontally operable but not an exactly-once side-effect
 engine. Provider calls, MCP tools, and sandbox commands still need their own

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     vma_default_deepseek_model: str = "deepseek-chat"
     vma_model_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)
     vma_checkpoint_database_url: str = ""
+    vma_listen_database_url: str = ""
     vma_sandbox_provider: str = "state"
     vma_sandbox_factory: str = ""
     vma_allow_unsafe_local_sandbox: bool = False
