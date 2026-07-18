@@ -250,7 +250,7 @@ async def run_smoke(
                         metadata={
                             "created_by": "scripts/performance_smoke.py",
                             "smoke_run_id": run_id,
-                            "smoke_index": result.index,
+                            "smoke_index": str(result.index),
                         },
                         vault_ids=list(config.vault_ids),
                         idempotency_key=f"{run_id}-session-{result.index}",

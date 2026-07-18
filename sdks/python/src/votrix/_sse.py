@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 class SSEEvent(VotrixModel):
     type: str
     seq: int | None = None
-    event: str | None = None
+    event: str | dict[str, Any] | None = None
+    sse_event: str | None = None
     id: str | None = None
     sse_id: str | None = None
     data: Any = None
@@ -207,6 +208,7 @@ def _event_from_frame(
     payload_type = payload.get("type")
     payload["type"] = payload_type if isinstance(payload_type, str) else event_name or "message"
     payload.setdefault("event", event_name)
+    payload.setdefault("sse_event", event_name)
     payload.setdefault("sse_id", event_id)
     payload.setdefault("data", decoded)
     payload.setdefault("raw_data", raw_data)
