@@ -77,9 +77,9 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
 
 
 def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
-    api_max_scale = {"production": "3", "staging": "2"}
+    api_max_scale = {"production": "2", "staging": "2"}
     worker_scale = {
-        "production": ("1", "8"),
+        "production": ("1", "2"),
         "staging": ("1", "2"),
     }
 
@@ -586,18 +586,19 @@ def test_cloud_tasks_setup_is_idempotent_and_keeps_task_deadline_in_runtime() ->
     assert "deploy flow grants Invoker after bootstrap" in setup
 
 
-def test_production_worker_max_scale_is_explicitly_gated_by_connection_budget() -> None:
+def test_production_worker_max_scale_is_conservatively_bounded_by_connection_budget() -> None:
     runbook = _read("private-docs/scaling-runbook.md")
     production_deploy = _read("scripts/gcloud/2-deploy-production.sh")
     cloudbuild = _read("cloudbuild.yaml")
     preflight = _read("scripts/gcloud/preflight.sh")
 
-    assert "3×7 + 8×8 = 85" in runbook
-    assert "Production maxScale=8 release gate" in runbook
-    assert "Status: UNMEASURED" in runbook
-    assert "first production deploy is blocked" in runbook
+    assert "2×7 + 2×8 = 30" in runbook
+    assert "Production maxScale=2 release record" in runbook
+    assert "Status: MEASURED" in runbook
+    assert "conservative maxScale=2" in runbook
     assert "below 60% of the direct/backend" in runbook
-    assert "maxScale=8` is a checked-in target, not evidence" in runbook
+    assert "Any increase above `maxScale=2`" in runbook
+    assert "Status: UNMEASURED" not in runbook
     assert "Status: UNMEASURED" in production_deploy
     assert "Status: UNMEASURED" in cloudbuild
     assert "check_production_connection_gate" in preflight

@@ -133,9 +133,10 @@ the current production caller and target SDK both pass the consumer suite.
 Hosted boundary: API instances autoscale independently. Private workers use
 OIDC-authenticated Cloud Tasks turn requests with `minScale=1`; the permanent
 PostgreSQL reconciler remains the correctness fallback. The checked-in staging
-bound is `maxScale=2`. Production targets `maxScale=8`, but its first deployment
-is blocked until the Supabase connection ceiling and load-test gates in the
-scaling runbook are recorded.
+bound is `maxScale=2`. Production also starts at `maxScale=2`, backed by the
+conservative measured connection record in the scaling runbook. Raising it
+above two remains blocked until the exact Supabase pool size and the larger
+fleet load-test gates are recorded.
 
 ### P0-2 — Dynamic files and generated artifacts
 
@@ -454,8 +455,9 @@ exactly-once (issued E2B commands cannot be rolled back):
 - [x] Queue + IAM setup script; autoscaling manifest pins with
   `containerConcurrency` as the per-instance turn bound; `maxScale` derived
   from the connection/E2B/spend budgets in the scaling runbook (never from
-  intuition); `minScale ≥ 1`. The checked-in production `maxScale=8` remains
-  blocked by the runbook's unmeasured Supabase connection-ceiling gate.
+  intuition); `minScale ≥ 1`. The checked-in production `maxScale=2` is the
+  measured conservative bound; a larger fleet remains blocked by the
+  runbook's Supabase connection and load-test gates.
 - [x] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
   retry storms, reconciler pickup of undispatched work.
 

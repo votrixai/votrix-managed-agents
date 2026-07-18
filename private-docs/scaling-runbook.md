@@ -16,8 +16,8 @@ the correctness fallback. The connection-budget section below governs every
 
 | Service | Role | Scaling | Manifest |
 |---|---|---|---|
-| `votrix-managed-agents` | Public API + SSE | `minScale=1 / maxScale=3`, request-driven | `service.production.yaml` |
-| `votrix-managed-agents-worker` | Private OIDC turn execution + slow PostgreSQL reconciler + E2B janitor | Cloud Tasks request-driven, `minScale=1 / maxScale=8` | `service.worker.production.yaml` |
+| `votrix-managed-agents` | Public API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.production.yaml` |
+| `votrix-managed-agents-worker` | Private OIDC turn execution + slow PostgreSQL reconciler + E2B janitor | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.production.yaml` |
 | `votrix-managed-agents-staging` | Staging API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.staging.yaml` |
 | `votrix-managed-agents-staging-worker` | Staging turn execution | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.staging.yaml` |
 
@@ -32,8 +32,8 @@ concurrent turn capacity = worker instances × VMA_WORKER_TURN_LIMIT
 - `VMA_WORKER_TURN_LIMIT` and Cloud Run `containerConcurrency` are both pinned
   to `5` in the worker manifests.
 - Production starts with 1 warm instance → **5 guaranteed concurrent turns**
-  and may autoscale to 8 instances → **40 concurrent turns** only after the
-  connection gate below is satisfied.
+  and may autoscale to 2 instances → **10 concurrent turns** under the
+  conservative measured connection budget below.
 - Staging starts at 5 and may autoscale to 10 concurrent turns.
 - Turns are IO-bound coordinators (model streaming, E2B, Postgres); heavy
   compute happens inside E2B sandboxes, not on the worker. A 1 vCPU / 4 GiB
@@ -75,7 +75,7 @@ never carries correctness.
 ```bash
 gcloud run services update votrix-managed-agents-worker \
   --project=votrixai-480422 --region=us-central1 \
-  --min-instances=2 --max-instances=4
+  --min-instances=2 --max-instances=2
 ```
 
 Takes effect in seconds. **Backfill the manifest + test pins immediately**, or
@@ -115,10 +115,10 @@ steady backend pins ≈ active API instances
 janitor-pass backend-pin burst ≤ active API instances + active worker instances
 ```
 
-Production steady-state manifest peak: 3 API + 8 workers =
-`3×7 + 8×8 = 85` Supavisor clients and three dedicated backend pins. If all
-eight workers contend in the same janitor pass, the brief peak is 93 clients
-and 11 backend pins. Only one contender becomes the advisory-lock leader, but
+Production steady-state manifest peak: 2 API + 2 workers =
+`2×7 + 2×8 = 30` Supavisor clients and two dedicated backend pins. If both
+workers contend in the same janitor pass, the brief peak is 32 clients
+and four backend pins. Only one contender becomes the advisory-lock leader, but
 every contender must first pin its own session-mode connection to try the lock.
 During a revision overlap, count active old- and new-revision instances in both
 terms; do not budget only for one leader or one revision. These figures exclude
@@ -174,32 +174,46 @@ does not fail the post-warm-up gate. Recurring `acquired` warnings mean the 4+1
 worker pool is contended and must be raised or the turn limit reduced before
 production.
 
-### Production maxScale=8 release gate
+### Production maxScale=2 release record
 
-**Status: UNMEASURED — the first production deploy is blocked.**
+**Status: MEASURED — conservative maxScale=2 approved on 2026-07-18 by Votrix engineering.**
+
+The production database measured `max_connections=60`, three reserved slots,
+`shared_buffers=256MB`, and 20 total backend connections immediately before the
+rollout. The connection class is therefore Nano/Micro-equivalent; both classes
+have the same published limits: 60 Postgres connections and 200 Supavisor
+clients. The observed backend total included seven application-role Supavisor
+connections and two Supavisor auth-query connections.
+
+The current fine-grained Supabase CLI token can list the project but receives
+HTTP 403 for the billing-addon and pooler-configuration endpoints, so it cannot
+independently attest the configured backend pool-size ceiling. The initial
+production bound is deliberately held to the staging-proven two API and two
+worker instances instead of assuming the earlier eight-worker target.
+
+At the checked-in bounds, 30 steady and 32 janitor-burst Supavisor clients are
+well below the 200-client ceiling. Conservatively adding four dedicated pins
+and one migration connection to the measured 20-backend baseline yields 25,
+below 60% of the direct/backend limit (36). Staging previously completed a
+20-Session real Cloud Tasks/E2B/OpenRouter burst across two worker instances
+without duplicate model execution or database pool errors.
 
 The production manual deploy script, Cloud Build deployment step, and GCP
-preflight all fail closed while this exact status remains. Documentation alone
-is not the release gate.
+preflight continue to fail closed whenever the runbook is returned to its
+unmeasured-status sentinel. Any increase above `maxScale=2` requires all of the
+following in the same release:
 
-Before deploying the production worker manifest, the release owner must:
-
-1. Record the production Supabase compute tier, Postgres direct/backend limit,
-   Supavisor transaction-pooler client limit, and configured transaction-pool
-   backend size here.
-2. Verify that the 85-client steady-state peak plus migration, operations, and
-   revision-overlap headroom fits the pooler client limit. Keep dedicated pins
-   plus the transaction pooler's backend pool below 60% of the direct/backend
-   limit.
-3. Run the 3× fleet-capacity staging burst and the scale-out/scale-in scenarios
-   from `PLAN-p3-autoscale.md` without pool timeouts.
-4. Replace `UNMEASURED` above with the measured limits, date, compute tier, and
-   release owner in the same change that clears the production launch
-   checklist.
-
-`maxScale=8` is a checked-in target, not evidence that this gate passed. If
-either connection budget is too small, lower production `maxScale` using the
-formulas above or upgrade the database plan before deployment.
+1. Read and record the exact Supabase compute variant and configured pool size
+   through a token with `infra_add_ons_read` and
+   `database_pooling_config_read`, or directly from Database Settings.
+2. Recalculate steady, janitor-burst, migration, operator, and revision-overlap
+   headroom. Keep dedicated pins plus the transaction pool's backend footprint
+   below 60% of the direct/backend limit.
+3. Run the 3× proposed fleet-capacity burst and every scale-out, scale-in,
+   crash-recovery, and broken-dispatch scenario from `PLAN-p3-autoscale.md`
+   without pool timeouts or duplicate execution.
+4. Update both manifests, their static tests, and this measured record. Upgrade
+   the database plan instead when either connection budget does not fit.
 
 ## Signals that say "change the bounds"
 

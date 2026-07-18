@@ -7,7 +7,7 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/minScale: "1"
-        autoscaling.knative.dev/maxScale: "8"
+        autoscaling.knative.dev/maxScale: "2"
         run.googleapis.com/cpu-throttling: "false"
     spec:
       serviceAccountName: vma-runtime@votrixai-480422.iam.gserviceaccount.com
