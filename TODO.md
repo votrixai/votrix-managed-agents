@@ -120,7 +120,11 @@ the current production caller and target SDK both pass the consumer suite.
   terminal completion/error/stop release the active-work reservation
   idempotently.
 - [ ] Deliver ordered token/tool previews across processes, or persist bounded
-  batched deltas that SSE clients can tail by sequence.
+  batched deltas that SSE clients can tail by sequence. Addressed by P2.5 in
+  `PLAN-horizontal-scaling.md`: a Postgres `pg_notify` preview broker
+  (`VMA_PREVIEW_BROKER=pg_notify`) that publishes coalesced preview frames from
+  workers and replays them on API instances, keeping `event_deltas` typewriter
+  streaming across the API/worker split with no public-API change.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
 
@@ -335,6 +339,11 @@ identity and delegated resource namespaces remain deferred.
 
 ### Isolation audit and tests
 
+Pre-launch scope: the denial matrix and lookup/pagination/background audits
+below are specced for implementation in `PLAN-pre-launch-hardening.md` (W1)
+and gate the first production deploy via
+`private-docs/pre-launch-checklist.md`.
+
 - [ ] Add a two-Organization denial matrix proving Organization A cannot read,
   mutate, stream, or delete Organization B resources.
 - [ ] Audit ID-based lookup, pagination, and background execution paths for:
@@ -360,6 +369,98 @@ short-lived backend-signed JWT containing `organization_id`, audience, scopes,
 and expiry instead of storing one long-lived backend API key per Organization.
 Direct Claude-compatible SDK users can continue to receive Organization-scoped API
 keys. Do not trust an unsigned tenant identifier forwarded by another service.
+
+### Roadmap — P3 auto scale: Cloud Tasks per-turn dispatch (committed end state)
+
+Decision history (2026-07-17): first deferred in favor of the fixed worker
+fleet, then committed the same day as the target operating model, then — on
+learning the service has not launched yet — pulled into the first release:
+the full sequence P1 → P2 → P2.5 → Stage A → Stage B → load test ships as the
+launch architecture. Implementation spec: `PLAN-p3-autoscale.md` (companion to
+`PLAN-horizontal-scaling.md`, which must land first; separate commits, never
+interleaved). Stage A below remains a hard gate for Stage B. The fixed fleet
+in `private-docs/scaling-runbook.md` stays as the `VMA_WORK_DISPATCH_MODE=poll`
+fallback mode.
+
+Shape — "turn = request", the Cloud Run-native contract. Postgres stays the
+only source of truth; Cloud Tasks is a wake-up signal and scale driver, so a
+broken or misconfigured queue degrades to today's polling instead of losing
+work:
+
+    user turn → Postgres work item (durable, exists today)
+             → named Cloud Task (`wk-{work_id}-a{attempt}`)
+             → OIDC `POST /internal/work/{id}/execute` on the worker service
+             → existing lease-fenced `execute_work_item`
+             → Cloud Run scales worker instances on in-flight turns
+
+Facts settled during evaluation (do not re-litigate without new data):
+
+- No performance change under normal load (~0.2s faster pickup). The sole
+  user-visible effect is under saturation: unbounded queue waiting becomes a
+  few seconds of cold start. Buy the cold-start tail down with a minScale
+  floor.
+- Turns execute inside the HTTP request, so Cloud Run scale-in does not reap
+  instances with executing turns (in-flight requests are drained). The
+  residual interruption risk — infrastructure SIGTERM (10s grace) and OOM —
+  already exists today at `maxScale=1`; Stage A bounds its blast radius.
+- Alternatives were rejected for concrete reasons: Pub/Sub push (600s max ack
+  deadline < 900s turn timeout), queue-depth autoscaling (Cloud Run has no
+  custom-metric scaling), Cloud Run worker pools (manual instance counts ≈
+  fixed fleet), GKE + KEDA (disproportionate ops burden).
+- Constraint to re-check before building: turn timeout must remain ≤ 30
+  minutes (Cloud Tasks dispatch deadline). `vma_run_timeout_seconds` is 900s
+  today.
+
+#### Stage A — bounded-duplicate turn replay (hard gate, ~2–4 days)
+
+Absorbs the open P0-1 item "Prevent duplicate model execution, event emission,
+and raw usage attribution". The honest contract is bounded at-least-once, not
+exactly-once (issued E2B commands cannot be rolled back):
+
+- [ ] A turn whose graph run completed is never re-executed: make finalization
+  crash-safe so a crash between run completion and the finalize commit cannot
+  replay the whole turn on retry (detect via the durable checkpoint state for
+  the already-consumed input seq).
+- [ ] Replaying an interrupted superstep does not duplicate already-persisted
+  events where identity is derivable, and every retried attempt appends a
+  visible retry-marker event so operators and clients can see the takeover.
+- [x] Model-usage attribution is already work-fenced via the
+  `model_tokens:{work_id}` idempotency key.
+- [ ] Replay count is bounded by `VMA_WORK_MAX_ATTEMPTS` (ships with P1.1).
+
+#### Stage B — Cloud Tasks push dispatch (~3–5 days, purely additive after P2)
+
+- [ ] Dispatcher module creating named tasks (`wk-{work_id}-a{attempt}`) after
+  commit; creation is idempotent (ALREADY_EXISTS swallowed).
+- [ ] OIDC-authenticated `POST /internal/work/{id}/execute` on the worker
+  service calling `execute_work_item`.
+- [ ] Explicit execute-outcome → HTTP status mapping table — the one
+  design-sensitive piece: infrastructure retries must never consume
+  `VMA_WORK_MAX_ATTEMPTS` (only attempts that actually acquire a lease count);
+  terminal outcomes return 200; only transient failures return 5xx.
+- [ ] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
+  the recovery path for expired leases and missed dispatches. Push is an
+  optimization over poll, never a replacement.
+- [ ] Queue + IAM setup script; autoscaling manifest pins with
+  `containerConcurrency` as the per-instance turn bound; `maxScale` derived
+  from the connection/E2B/spend budgets in the scaling runbook (never from
+  intuition); `minScale ≥ 1`.
+- [ ] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
+  retry storms, reconciler pickup of undispatched work.
+
+Demand signals that raise this roadmap's priority (informational now, no
+longer gates): queue waits regularly reaching tens of seconds; monthly manual
+fleet adjustments; ≥5 mostly idle instances held for burst headroom; a
+committed spiky workload.
+
+### Pre-launch gate
+
+The first production deploy is gated by `private-docs/pre-launch-checklist.md`:
+the three engineering plans (`PLAN-horizontal-scaling.md`,
+`PLAN-p3-autoscale.md`, `PLAN-pre-launch-hardening.md` — the last adds the
+tenant-isolation denial matrix and encryption key rotation), the four
+load-test scenarios, and the checklist's Tier 1 operator items (PITR restore
+drill, API versioning/event-retention decisions, region/residency decision).
 
 ### Explicitly deferred
 
