@@ -16,25 +16,31 @@ identity and a migration gate before every API-and-worker rollout.
 | Staging API service | `votrix-managed-agents-staging` |
 | Staging worker service | `votrix-managed-agents-staging-worker` |
 | Runtime service account | `vma-runtime@votrixai-480422.iam.gserviceaccount.com` |
+| Production Cloud Tasks queue | `us-central1/vma-turns` |
+| Staging Cloud Tasks queue | `us-central1/vma-turns-staging` |
 
 Each environment is split into an API service and a worker service. API
 instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
-instances expose only private health endpoints and run five durable-work
-consumers each. Both roles keep CPU allocated, use one web process, and run the
+instances expose a private OIDC turn endpoint plus health endpoints. Each worker
+admits at most five in-flight turn requests and keeps one slow PostgreSQL
+reconciler for expired leases and failed task creation. Both roles keep CPU
+allocated, use one web process, and run the
 same startup and database liveness probes. Each instance is pinned to one vCPU
 and 4 GiB memory; API instances accept 40 concurrent HTTP requests while worker
-instances use a concurrency setting of 10 for their health-only surface.
+instances use `containerConcurrency=5`, equal to the process turn limiter.
 
-Production keeps one to three API instances and two to three worker instances.
-Staging keeps one to two API instances and exactly one worker instance. Only the
+Production keeps one to three API instances and one to eight worker instances.
+Staging keeps one to two API instances and one to two worker instances. Only the
 API services disable the Cloud Run Invoker IAM check; the worker services stay
-private. API request autoscaling and Agent-turn capacity are independent.
+private. Cloud Tasks push requests drive worker autoscaling, while PostgreSQL
+remains the source of truth and the reconciler preserves progress when dispatch
+is unavailable. API request autoscaling and Agent-turn capacity are independent.
 
 ## Prerequisites
 
 - Install and authenticate the Google Cloud CLI.
 - Ensure your account can enable APIs, edit IAM, submit builds, and manage Cloud
-  Run, Artifact Registry, Secret Manager, and Cloud Build triggers.
+  Run, Cloud Tasks, Artifact Registry, Secret Manager, and Cloud Build triggers.
 - Use managed PostgreSQL. SQLite is not durable or multi-instance safe on Cloud
   Run.
 - Keep development, staging, and production in three separate Supabase projects;
@@ -60,6 +66,23 @@ Run the scripts in order:
 This enables the required APIs, creates the Artifact Registry and dedicated
 runtime service account, and grants Cloud Build permission to deploy as that
 identity. Runtime access to secrets is granted per secret by the next step.
+
+Create the Cloud Tasks queues and grant the runtime identity permission to
+enqueue OIDC tasks:
+
+```bash
+./scripts/gcloud/8-setup-cloud-tasks.sh all
+```
+
+On the first run, the worker services do not exist yet, so the command configures
+the queues, Enqueuer role, the Cloud Tasks primary service-agent role, and both
+OIDC `iam.serviceAccounts.actAs` bindings, then reports that worker Invoker
+bindings are pending. This is expected. The deploy
+scripts create a missing worker once in `poll` mode, query its real Cloud Run
+URL, grant the runtime identity `roles/run.invoker` on that private service, and
+only then render the final `hybrid` worker and API revisions with that URL.
+Rerunning the setup command remains an idempotent IAM/queue repair path. No
+guessed URL or Secret Manager placeholder is used.
 
 Create the two untracked Secret Manager input files from the checked-in
 templates, then replace every placeholder:
@@ -146,8 +169,9 @@ Worker-specific settings are:
 ```env
 VMA_SERVICE_ROLE=worker
 VMA_EMBEDDED_WORKER_ENABLED=true
-VMA_WORKER_CONCURRENCY=5
-VMA_WORKER_POLL_INTERVAL_SECONDS=0.5
+VMA_WORKER_TURN_LIMIT=5
+VMA_WORKER_CONCURRENCY=1
+VMA_WORKER_POLL_INTERVAL_SECONDS=20
 VMA_WORKER_LEASE_SECONDS=120
 VMA_WORK_MAX_ATTEMPTS=3
 VMA_DB_POOL_SIZE=5
@@ -159,6 +183,11 @@ Shared hosted settings include:
 ```env
 VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
 VMA_PREVIEW_BROKER=pg_notify
+VMA_WORK_DISPATCH_MODE=hybrid
+VMA_TASKS_QUEUE=vma-turns[-staging]
+VMA_TASKS_LOCATION=us-central1
+VMA_TASKS_SERVICE_ACCOUNT=vma-runtime@votrixai-480422.iam.gserviceaccount.com
+VMA_WORKER_URL=<discovered private Cloud Run worker URL>
 VMA_MAX_SESSION_INPUT_BYTES=67108864
 VMA_DB_POOL_TIMEOUT_SECONDS=10
 VMA_DB_POOL_RECYCLE_SECONDS=300
@@ -178,8 +207,9 @@ process. Worker publishers use their existing SQLAlchemy pool and do not add a
 dedicated listener connection. PostgreSQL preview delivery is best-effort; SSE
 clients reconcile dropped or missed frames against durable Session events. The
 hosted Organization defaults admit bursts of up to 20 queued/running turns.
-Production starts with ten execution slots across its two warm worker instances,
-while the durable queue absorbs the remainder.
+Each worker admits five turns. Production starts with five warm execution slots
+and may scale to forty only after the production Supabase connection ceiling is
+measured and the release gate in the scaling runbook is satisfied.
 
 ## Manual deploys
 
@@ -222,8 +252,22 @@ Both scripts enforce the same sequence:
 1. Build and push a commit-tagged image.
 2. Deploy or update `<service>-migrate` with that exact image.
 3. execute `sh scripts/migrate.sh` as a Cloud Run Job and wait for success.
-4. Replace the API Cloud Run service only after migrations succeed.
-5. Replace the worker Cloud Run service with the same immutable image.
+4. If the worker does not exist, create it in `poll` mode and query the URL that
+   Cloud Run actually assigned.
+5. Grant the runtime OIDC identity `roles/run.invoker` on the private worker.
+6. Render and replace the private worker in `hybrid` mode with that URL.
+7. Render and replace the API service in `hybrid` mode only after the worker is
+   ready.
+
+After the first deployment of an environment, verify the final state:
+
+```bash
+./scripts/gcloud/preflight.sh staging
+```
+
+Use `production` for the production environment after its connection and load
+gates are cleared. Subsequent deploys discover the existing worker URL and need
+no bootstrap revision.
 
 The web entrypoint has no migration branch, so restarts never race to run
 Alembic themselves.
@@ -235,44 +279,34 @@ is in the private [scaling runbook](../../private-docs/scaling-runbook.md). The
 summary below is sufficient only for routine worker-count adjustments.
 
 API capacity and Agent-turn capacity scale independently. Cloud Run scales the
-API service from HTTP/SSE request load. Only worker instances consume the
-PostgreSQL work queue, so the turn-capacity formula is:
+API service from HTTP/SSE request load. Named Cloud Tasks send one authenticated
+request per durable work item, so in-flight turn requests drive worker scale-out.
+The process limiter and Cloud Run concurrency use the same bound:
 
 ```text
-turn execution capacity = worker instances × VMA_WORKER_CONCURRENCY
+turn execution capacity = worker instances × VMA_WORKER_TURN_LIMIT
 ```
 
-The checked-in worker manifests use `VMA_WORKER_CONCURRENCY=5`. Production's
-two warm worker instances therefore execute up to ten turns concurrently; three
-instances execute up to fifteen. Staging's one worker executes up to five.
+The checked-in manifests use `VMA_WORKER_TURN_LIMIT=5`, `containerConcurrency=5`,
+and one slow reconciler coroutine per instance. Production keeps one warm worker
+and permits at most eight instances, for 5–40 turns. Staging permits one or two,
+for 5–10 turns. The production maximum is not permission to deploy blindly:
+the first production release remains blocked until the measured Supabase
+session-mode connection ceiling is recorded in the scaling runbook and covers
+the 144-connection computed peak plus explicit operational headroom.
 
-The current worker fleet is intentionally scaled manually. Pin both bounds to
-the desired count so Cloud Run keeps that many background consumers alive:
+Cloud Tasks is never the work ledger. Task creation failure is logged and the
+20-second PostgreSQL reconciler eventually claims the queued item. Pausing or
+deleting a queue therefore slows dispatch but does not lose work. Queue retry
+policy is `maxAttempts=8`, 5–300 second backoff, and at most 100 concurrent
+dispatches. Each task sets its own 1,800-second dispatch deadline in application
+code; there is deliberately no queue-level deadline setting.
 
-```bash
-gcloud run services update votrix-managed-agents-worker \
-  --project=votrixai-480422 \
-  --region=us-central1 \
-  --min-instances=3 \
-  --max-instances=3
-
-gcloud run services update votrix-managed-agents-staging-worker \
-  --project=votrixai-480422 \
-  --region=us-central1 \
-  --min-instances=2 \
-  --max-instances=2
-```
-
-This creates new worker revisions without rebuilding the image or changing API
-capacity. A later manifest deployment restores the checked-in min/max values,
-so promote a proven capacity change into both worker manifests. Before raising
-worker count or per-instance concurrency, verify the aggregate PostgreSQL,
-model-provider, E2B, CPU, and memory budgets. Use
-`scripts/performance_smoke.py` against staging after each step.
-
-Cloud Tasks, Pub/Sub, and queue-depth-driven automatic worker dispatch are not
-part of this release. That P3 work remains deferred; changing API autoscaling
-does not change Agent-turn capacity.
+Before raising `maxScale` or the per-instance turn limit, recalculate PostgreSQL,
+model-provider, E2B, CPU, memory, and spend budgets. A manual Cloud Run scaling
+change is temporary because the next manifest replacement restores the
+checked-in bounds. Validate changes with `scripts/performance_smoke.py` in
+staging and update the manifest, static tests, and runbook together.
 
 ## Staging acceptance gates
 
@@ -434,7 +468,8 @@ ingress does not add an anonymous application path.
 ```
 
 The command prints each API and worker service URL, ready revision, immutable
-image tag, and the image configured on each migration job.
+image tag, migration-job image, and each Cloud Tasks queue's state, retry cap,
+and concurrent-dispatch bound.
 
 ## Files
 
@@ -454,5 +489,6 @@ image tag, and the image configured on each migration job.
 | `scripts/gcloud/5-allow-public.sh` | Repair the public Invoker IAM-check setting |
 | `scripts/gcloud/6-bootstrap-operator.sh` | Securely bootstrap an operator API key to Secret Manager and Postgres |
 | `scripts/gcloud/7-run-acceptance.sh` | Provision the BYOK smoke Vault and run real R2/E2B/model acceptance |
+| `scripts/gcloud/8-setup-cloud-tasks.sh` | Idempotently configure queues and OIDC dispatch IAM |
 | `scripts/gcloud/preflight.sh` | Read-only GCP, IAM, secret metadata, manifest, and git readiness |
 | `scripts/gcloud/status.sh` | Deployed service and job status |

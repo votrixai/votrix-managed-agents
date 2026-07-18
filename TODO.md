@@ -130,11 +130,12 @@ the current production caller and target SDK both pass the consumer suite.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
 
-Hosted boundary: API instances may autoscale independently, while the private
-worker fleet is warm and manually bounded by the checked-in production
-`minScale=2 / maxScale=3` manifest. Queue depth does not drive worker scaling. A
-queue-driven push dispatcher such as Cloud Tasks/Pub/Sub remains deferred; it is
-not required for the current horizontally scaled worker topology.
+Hosted boundary: API instances autoscale independently. Private workers use
+OIDC-authenticated Cloud Tasks turn requests with `minScale=1`; the permanent
+PostgreSQL reconciler remains the correctness fallback. The checked-in staging
+bound is `maxScale=2`. Production targets `maxScale=8`, but its first deployment
+is blocked until the Supabase connection ceiling and load-test gates in the
+scaling runbook are recorded.
 
 ### P0-2 — Dynamic files and generated artifacts
 
@@ -392,7 +393,7 @@ broken or misconfigured queue degrades to today's polling instead of losing
 work:
 
     user turn → Postgres work item (durable, exists today)
-             → named Cloud Task (`wk-{work_id}-a{attempt}`)
+             → named Cloud Task (`wk-{sha1[:8]}-{work_id}-a{attempt}`)
              → OIDC `POST /internal/work/{id}/execute` on the worker service
              → existing lease-fenced `execute_work_item`
              → Cloud Run scales worker instances on in-flight turns
@@ -437,23 +438,25 @@ exactly-once (issued E2B commands cannot be rolled back):
 
 #### Stage B — Cloud Tasks push dispatch (~3–5 days, purely additive after P2)
 
-- [ ] Dispatcher module creating named tasks (`wk-{work_id}-a{attempt}`) after
+- [x] Dispatcher module creating named tasks
+  (`wk-{sha1(work_id)[:8]}-{work_id}-a{attempt}`) after
   commit; creation is idempotent (ALREADY_EXISTS swallowed).
-- [ ] OIDC-authenticated `POST /internal/work/{id}/execute` on the worker
+- [x] OIDC-authenticated `POST /internal/work/{id}/execute` on the worker
   service calling `execute_work_item`.
-- [ ] Explicit execute-outcome → HTTP status mapping table — the one
+- [x] Explicit execute-outcome → HTTP status mapping table — the one
   design-sensitive piece: infrastructure retries must never consume
   `VMA_WORK_MAX_ATTEMPTS` (lease acquisition alone does not count; only turns
   that pass the runner admission boundary and begin graph execution count);
   terminal outcomes return 200; only transient failures return 5xx.
-- [ ] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
+- [x] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
   the recovery path for expired leases and missed dispatches. Push is an
   optimization over poll, never a replacement.
-- [ ] Queue + IAM setup script; autoscaling manifest pins with
+- [x] Queue + IAM setup script; autoscaling manifest pins with
   `containerConcurrency` as the per-instance turn bound; `maxScale` derived
   from the connection/E2B/spend budgets in the scaling runbook (never from
-  intuition); `minScale ≥ 1`.
-- [ ] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
+  intuition); `minScale ≥ 1`. The checked-in production `maxScale=8` remains
+  blocked by the runbook's unmeasured Supabase connection-ceiling gate.
+- [x] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
   retry storms, reconciler pickup of undispatched work.
 
 Demand signals that raise this roadmap's priority (informational now, no

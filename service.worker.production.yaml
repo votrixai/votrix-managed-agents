@@ -6,12 +6,12 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/minScale: "2"
-        autoscaling.knative.dev/maxScale: "3"
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "8"
         run.googleapis.com/cpu-throttling: "false"
     spec:
       serviceAccountName: vma-runtime@votrixai-480422.iam.gserviceaccount.com
-      containerConcurrency: 10
+      containerConcurrency: 5
       timeoutSeconds: 3600
       containers:
         - image: IMAGE_URL
@@ -46,10 +46,22 @@ spec:
               value: "pg_notify"
             - name: VMA_EMBEDDED_WORKER_ENABLED
               value: "true"
-            - name: VMA_WORKER_CONCURRENCY
+            - name: VMA_WORK_DISPATCH_MODE
+              value: "hybrid"
+            - name: VMA_TASKS_QUEUE
+              value: "vma-turns"
+            - name: VMA_TASKS_LOCATION
+              value: "us-central1"
+            - name: VMA_TASKS_SERVICE_ACCOUNT
+              value: "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
+            - name: VMA_WORKER_URL
+              value: "__VMA_WORKER_URL__"
+            - name: VMA_WORKER_TURN_LIMIT
               value: "5"
+            - name: VMA_WORKER_CONCURRENCY
+              value: "1"
             - name: VMA_WORKER_POLL_INTERVAL_SECONDS
-              value: "0.5"
+              value: "20"
             - name: VMA_WORKER_LEASE_SECONDS
               value: "120"
             - name: VMA_WORK_MAX_ATTEMPTS

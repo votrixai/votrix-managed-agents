@@ -14,6 +14,7 @@ gcloud services enable \
   run.googleapis.com \
   secretmanager.googleapis.com \
   cloudbuild.googleapis.com \
+  cloudtasks.googleapis.com \
   artifactregistry.googleapis.com \
   iam.googleapis.com \
   --project="$PROJECT_ID"

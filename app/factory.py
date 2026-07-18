@@ -19,12 +19,14 @@ from app.models.status import CapabilityManifestResponse, DatabaseHealthResponse
 from app.public_surface import capability_manifest, is_public_ga_path, public_ga_openapi
 from app.runtime.checkpoints import close_checkpoint_saver
 from app.runtime.preview_broker import close_preview_broker, start_preview_broker
+from app.runtime.turn_limiter import TurnLimiter
 from app.routers import (
     agents,
     api_keys,
     environments,
     files,
     generic_resources,
+    internal_work,
     model_providers,
     sessions,
     skills,
@@ -39,6 +41,10 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    if settings.vma_work_dispatch_mode == "hybrid":
+        from app.runtime.dispatch import validate_dispatch_settings
+
+        validate_dispatch_settings(settings)
     setup_logging(
         app_env=settings.app_env,
         sentry_dsn=settings.sentry_dsn,
@@ -75,6 +81,8 @@ async def lifespan(app: FastAPI):
                         worker_id=worker_id,
                         lease_seconds=settings.vma_worker_lease_seconds,
                         stop_event=worker_stop,
+                        dispatch_mode=settings.vma_work_dispatch_mode,
+                        turn_limiter=app.state.turn_limiter,
                     ),
                     name=f"vma-embedded-worker-{index}",
                 )
@@ -99,6 +107,10 @@ async def lifespan(app: FastAPI):
                     task.cancel()
                 with suppress(asyncio.CancelledError):
                     await asyncio.gather(*worker_tasks)
+        if settings.vma_work_dispatch_mode == "hybrid":
+            from app.runtime.dispatch import close_dispatcher
+
+            await close_dispatcher()
         await close_preview_broker()
         await close_checkpoint_saver()
 
@@ -137,6 +149,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
         openapi_url=None if is_worker_service else "/openapi.json",
     )
     app.state.auth_provider = auth_provider or default_auth_provider()
+    app.state.turn_limiter = TurnLimiter(settings.vma_worker_turn_limit)
     install_error_handlers(app)
 
     if not is_worker_service:
@@ -248,6 +261,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
         return response
 
     if is_worker_service:
+        app.include_router(internal_work.router)
         _install_health_routes(app)
         return app
 

@@ -7,30 +7,34 @@ Cloud Run. It assumes the P1 hardening, P2 API/worker split, and mandatory P2.5
 cross-instance preview transport from `PLAN-horizontal-scaling.md` have shipped.
 Autoscaling (P3, Cloud Tasks) ships pre-launch as part of the first release
 (spec: `PLAN-p3-autoscale.md`).
-This runbook's fixed-fleet procedures remain valid as the
-`VMA_WORK_DISPATCH_MODE=poll` fallback and for reasoning about capacity; the
-connection-budget section below governs `maxScale` derivation in both modes.
+The checked-in hosted profile uses `VMA_WORK_DISPATCH_MODE=hybrid`: Cloud Tasks
+push drives Cloud Run autoscaling, while the permanent PostgreSQL reconciler is
+the correctness fallback. The connection-budget section below governs every
+`maxScale` change in both hybrid and poll modes.
 
-## Topology after P2 + P2.5
+## First-release topology after P3
 
 | Service | Role | Scaling | Manifest |
 |---|---|---|---|
 | `votrix-managed-agents` | Public API + SSE | `minScale=1 / maxScale=3`, request-driven | `service.production.yaml` |
-| `votrix-managed-agents-worker` | Turn execution (embedded Postgres-queue pollers + E2B janitor) | Warm/manual bounded fleet: `minScale=2 / maxScale=3` | `service.worker.production.yaml` |
+| `votrix-managed-agents-worker` | Private OIDC turn execution + slow PostgreSQL reconciler + E2B janitor | Cloud Tasks request-driven, `minScale=1 / maxScale=8` | `service.worker.production.yaml` |
 | `votrix-managed-agents-staging` | Staging API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.staging.yaml` |
-| `votrix-managed-agents-staging-worker` | Staging turn execution | `minScale=1 / maxScale=1` | `service.worker.staging.yaml` |
+| `votrix-managed-agents-staging-worker` | Staging turn execution | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.staging.yaml` |
 
 Project `votrixai-480422`, region `us-central1` (see `scripts/gcloud/config.sh`).
 
 ## Capacity model
 
 ```
-concurrent turn capacity = worker instances × VMA_WORKER_CONCURRENCY
+concurrent turn capacity = worker instances × VMA_WORKER_TURN_LIMIT
 ```
 
-- `VMA_WORKER_CONCURRENCY` is pinned to `5` in the worker manifests.
-- Production starts with 2 warm instances → **10 guaranteed concurrent turns**.
-  An intentional 3-instance fleet provides **15 concurrent turns**.
+- `VMA_WORKER_TURN_LIMIT` and Cloud Run `containerConcurrency` are both pinned
+  to `5` in the worker manifests.
+- Production starts with 1 warm instance → **5 guaranteed concurrent turns**
+  and may autoscale to 8 instances → **40 concurrent turns** only after the
+  connection gate below is satisfied.
+- Staging starts at 5 and may autoscale to 10 concurrent turns.
 - Turns are IO-bound coordinators (model streaming, E2B, Postgres); heavy
   compute happens inside E2B sandboxes, not on the worker. A 1 vCPU / 4 GiB
   instance sustains 5 concurrent turns comfortably.
@@ -38,41 +42,46 @@ concurrent turn capacity = worker instances × VMA_WORKER_CONCURRENCY
   `queued`) until a slot frees. The hosted Organization active-work limit is 20,
   so requests beyond that queued/running cap can be rejected rather than queued.
 
-## How to scale the worker fleet
+## How worker autoscaling operates
 
 Deploys in this repo are declarative (`gcloud run services replace <manifest>`),
-so the manifest is the source of truth. **A manual `gcloud run services update`
-is reverted by the next deploy.**
+so the manifest remains the source of truth. **A manual
+`gcloud run services update` is reverted by the next deploy.**
 
-### Standard path (persistent)
+Named Cloud Tasks target the private worker URL with an OIDC token. Each task is
+an in-flight HTTP request for the duration of the turn, so Cloud Run observes
+demand and scales worker instances. The process-wide limiter prevents the push
+handler and reconciler together from exceeding five turns per instance.
 
-1. Edit `service.worker.production.yaml`. Raise `minScale` to change guaranteed
-   warm capacity and keep `maxScale >= minScale`. Set both to the same value when
-   an exactly fixed fleet is operationally required. The checked-in default is
-   deliberately bounded at `minScale=2 / maxScale=3`; Postgres queue depth does
-   not drive the service to its maximum.
-2. Update the pinned values in `tests/test_cloud_run_config.py` (the topology
-   is asserted there; the suite fails on drift by design).
-3. Ship through the normal pipeline (merge → Cloud Build → migrate job →
-   `services replace`).
+`VMA_WORKER_CONCURRENCY=1` and
+`VMA_WORKER_POLL_INTERVAL_SECONDS=20` intentionally describe only the slow
+reconciler. They do not cap push capacity. If task creation or delivery fails,
+the reconciler eventually leases the durable PostgreSQL work row; Cloud Tasks
+never carries correctness.
+
+### Standard persistent capacity change
+
+1. Recalculate the connection ceiling, E2B concurrency/quota, provider limits,
+   and spend ceiling.
+2. Edit the worker manifest's `maxScale` and, only when guaranteed warm capacity
+   is required, `minScale`. Keep `VMA_WORKER_TURN_LIMIT` equal to
+   `containerConcurrency`.
+3. Update `tests/test_cloud_run_config.py` and this runbook in the same change.
+4. Ship through the normal migration-gated pipeline and rerun the staging load
+   scenarios before production promotion.
 
 ### Emergency path (immediate, temporary)
 
 ```bash
 gcloud run services update votrix-managed-agents-worker \
   --project=votrixai-480422 --region=us-central1 \
-  --min-instances=4 --max-instances=4
+  --min-instances=2 --max-instances=4
 ```
 
 Takes effect in seconds. **Backfill the manifest + test pins immediately**, or
-the next deploy silently reverts the fleet size.
-
-### Second knob: per-instance concurrency
-
-`VMA_WORKER_CONCURRENCY` (worker manifest env) can go from 5 to ~8 before
-instance sizing becomes the constraint. Prefer adding instances: it also adds
-memory headroom and blast-radius isolation. If raising it, watch instance
-memory (4 GiB) under peak concurrent turns.
+the next deploy silently reverts the bounds. Do not raise the per-instance turn
+limit independently of `containerConcurrency`; prefer adding instances because
+that also adds memory headroom and blast-radius isolation.
 
 ## Connection budget (check BEFORE scaling up)
 
@@ -91,25 +100,45 @@ cap. Per-instance worst case:
 total ≈ 16 × (API instances) + 12 × (worker instances) + migrations/ops slack
 ```
 
-Example: 3 API + 3 worker ≈ 84 + slack. Verify the target Supabase plan's
-connection limit covers the total before raising either fleet; raise the plan
-first if not.
+Production manifest peak: 3 API + 8 workers = `3×16 + 8×12 = 144`
+connections before migrations, operator SQL, incident tooling, or transient
+pool overlap during revisions.
 
-## Signals that say "scale" (and the one that says "build P3")
+### Production maxScale=8 release gate
 
-Scale up (add 1 instance) when either holds for more than a day:
+**Status: UNMEASURED — the first production deploy is blocked.**
+
+The production manual deploy script, Cloud Build deployment step, and GCP
+preflight all fail closed while this exact status remains. Documentation alone
+is not the release gate.
+
+Before deploying the production worker manifest, the release owner must:
+
+1. Measure or obtain the production Supavisor session-mode client-connection
+   ceiling from the actual Supabase project and record the numeric value here.
+2. Reserve explicit headroom for migrations, operations, and revision overlap;
+   the accepted ceiling must be at least 160 connections, and a higher margin
+   is preferred.
+3. Run the 3× fleet-capacity staging burst and the scale-out/scale-in scenarios
+   from `PLAN-p3-autoscale.md` without pool timeouts.
+4. Replace `UNMEASURED` above with the measured ceiling, date, plan, and release
+   owner in the same change that clears the production launch checklist.
+
+`maxScale=8` is a checked-in target, not evidence that this gate passed. If the
+measured ceiling is below 160, lower production `maxScale` using the formula
+above or upgrade the database plan before deployment.
+
+## Signals that say "change the bounds"
+
+Raise `maxScale` when either holds for more than a day and every budget permits:
+
 - Work items regularly sit in `queued` for tens of seconds while all slots are
   busy (queue wait = `started_at - queued_at` in `environment_work` rows).
 - Worker instance CPU or memory sustained above ~70% at normal load.
 
-Scale down when the fleet is mostly idle for a week and queue waits are zero.
-
-P3 auto scale ships with the first release (`PLAN-p3-autoscale.md`), so in
-normal operation Cloud Run adds and removes worker instances automatically and
-the signals above become capacity-planning hints (chiefly: when to raise
-`maxScale`, which must always be re-derived from the connection budget above).
-Manual fleet scaling per this runbook applies when running in the
-`VMA_WORK_DISPATCH_MODE=poll` fallback mode.
+Lower `maxScale` when the fleet never approaches its bound for a week and queue
+waits are zero. Change `minScale` only for cold-start or guaranteed-capacity
+requirements; Cloud Tasks already supplies the scale signal in hybrid mode.
 
 ## What scaling does NOT change
 
@@ -130,8 +159,28 @@ Manual fleet scaling per this runbook applies when running in the
 - **Correctness.** Work-queue leases (`lease_id + generation` + heartbeat) and
   the per-Session execution lease fence concurrent instances; a superseded
   worker cannot persist events or finalize work. Retries are capped by
-  `VMA_WORK_MAX_ATTEMPTS=3` — the 4th lease of a failing work item errors the
-  work and terminates the Session with a `session.error` event.
+  `VMA_WORK_MAX_ATTEMPTS=3`; only admission to graph execution consumes an
+  attempt. Duplicate, busy, deferred, or superseded dispatches do not consume
+  the cap. Stage A journals and deterministic events prevent a completed graph
+  from invoking the model again after a control-plane crash.
+
+## Cloud Tasks incident fallback
+
+If task creation or delivery is failing:
+
+1. Do not delete or rewrite PostgreSQL work rows. They are the durable ledger.
+2. Confirm workers remain at `minScale=1`; the 20-second reconciler continues
+   processing queued and expired work without Cloud Tasks.
+3. Inspect `scripts/gcloud/status.sh`, then rerun
+   `scripts/gcloud/8-setup-cloud-tasks.sh <environment>` to repair queue policy
+   and IAM drift.
+4. If hybrid dispatch itself must be disabled, deploy both API and worker with
+   `VMA_WORK_DISPATCH_MODE=poll`. Restore the normal hybrid manifests only after
+   task delivery is healthy.
+
+Cloud Tasks retry `maxAttempts=8` is an infrastructure delivery bound, not the
+model-execution attempt counter. The application maps terminal/busy outcomes to
+HTTP 200 and only transient outcomes to retryable 5xx responses.
 
 ## Combined role is local/self-hosted only
 

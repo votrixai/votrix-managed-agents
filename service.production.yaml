@@ -48,6 +48,16 @@ spec:
               value: "pg_notify"
             - name: VMA_EMBEDDED_WORKER_ENABLED
               value: "false"
+            - name: VMA_WORK_DISPATCH_MODE
+              value: "hybrid"
+            - name: VMA_TASKS_QUEUE
+              value: "vma-turns"
+            - name: VMA_TASKS_LOCATION
+              value: "us-central1"
+            - name: VMA_TASKS_SERVICE_ACCOUNT
+              value: "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
+            - name: VMA_WORKER_URL
+              value: "__VMA_WORKER_URL__"
             - name: VMA_EVENT_POLL_INTERVAL_SECONDS
               value: "1.0"
             - name: VMA_MAX_SESSION_INPUT_BYTES

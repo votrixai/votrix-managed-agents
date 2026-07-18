@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -526,3 +527,43 @@ async def test_pre_finalize_transaction_crash_recovers_exactly_once(
     assert model._index == 1
     assert finalize_calls == 2
     await _assert_exactly_once_rows(session_id, work_id, total_tokens=12)
+
+
+async def test_push_and_poller_contention_executes_one_owner(
+    postgres_client,
+    monkeypatch,
+):
+    _session_id, environment_id, work_id, _runtime_thread_id = (
+        await _create_queued_turn(postgres_client)
+    )
+    lease = await _lease_work(environment_id, worker_id="poller-race-owner")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    execution_count = 0
+
+    async def hold_poller_turn(*_args, **_kwargs):
+        nonlocal execution_count
+        execution_count += 1
+        entered.set()
+        await release.wait()
+        return False
+
+    monkeypatch.setattr("app.runtime.runner.run_session_turn", hold_poller_turn)
+    poller = asyncio.create_task(_execute_leased_work(work_id, lease))
+    await entered.wait()
+    push_outcome = await execute_work_item(
+        work_id,
+        worker_id="push-race-contender",
+        lease_seconds=60,
+    )
+    release.set()
+    poller_outcome = await poller
+
+    assert push_outcome == "already_running"
+    assert poller_outcome == "deferred"
+    assert execution_count == 1
+    async with session_scope() as db:
+        work = await res_q.get_work_item_for_worker(db, work_id)
+    assert work is not None
+    assert work.status == "queued"
+    assert work.data["attempt"] == 0

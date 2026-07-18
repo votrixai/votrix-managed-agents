@@ -7,8 +7,10 @@ from typing import Any
 
 import structlog
 
+from app.config import get_settings
 from app.db.engine import session_scope
 from app.logging import setup as setup_logging
+from app.runtime.turn_limiter import TurnLimiter
 from app.runtime.work_queue import execute_work_item, lease_next_work_for_worker
 
 logger = structlog.get_logger()
@@ -22,9 +24,16 @@ async def run_worker(
     worker_id: str = "vma-worker",
     lease_seconds: int = 60,
     stop_event: asyncio.Event | None = None,
+    dispatch_mode: str | None = None,
+    turn_limiter: TurnLimiter | None = None,
 ) -> None:
     owns_stop_event = stop_event is None
     stop_event = stop_event or asyncio.Event()
+    effective_dispatch_mode = dispatch_mode or get_settings().vma_work_dispatch_mode
+    if effective_dispatch_mode not in {"poll", "hybrid"}:
+        raise ValueError(f"Unsupported work dispatch mode: {effective_dispatch_mode}")
+    if effective_dispatch_mode == "hybrid" and turn_limiter is None:
+        turn_limiter = TurnLimiter(get_settings().vma_worker_turn_limit)
     if owns_stop_event:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -34,13 +43,26 @@ async def run_worker(
                 pass
 
     while not stop_event.is_set():
+        limiter_acquired = False
         try:
+            if effective_dispatch_mode == "hybrid":
+                assert turn_limiter is not None
+                limiter_acquired = turn_limiter.acquire_nowait()
+                if not limiter_acquired:
+                    if once:
+                        return
+                    await asyncio.sleep(poll_interval_seconds)
+                    continue
             work = await _next_runnable_work(
                 environment_id=environment_id,
                 worker_id=worker_id,
                 lease_seconds=lease_seconds,
             )
             if work is None:
+                if limiter_acquired:
+                    assert turn_limiter is not None
+                    turn_limiter.release()
+                    limiter_acquired = False
                 if once:
                     return
                 await asyncio.sleep(poll_interval_seconds)
@@ -56,6 +78,10 @@ async def run_worker(
             if once:
                 return
         except Exception:
+            if limiter_acquired:
+                assert turn_limiter is not None
+                turn_limiter.release()
+                limiter_acquired = False
             if once:
                 raise
             logger.exception(
@@ -65,6 +91,10 @@ async def run_worker(
             )
             await asyncio.sleep(poll_interval_seconds)
             continue
+        finally:
+            if limiter_acquired:
+                assert turn_limiter is not None
+                turn_limiter.release()
 
 
 async def _next_runnable_work(

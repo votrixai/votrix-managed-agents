@@ -143,7 +143,7 @@ In `hybrid` mode the embedded worker loop keeps running with `VMA_WORKER_CONCURR
 
 - Worker manifests: `VMA_WORK_DISPATCH_MODE=hybrid`, `containerConcurrency: 5` (was 10 — it now carries turn requests and must equal `vma_worker_turn_limit`), `minScale: 1`, `maxScale: 8` production (verify `8×12 + API 3×16 ≈ 144` connections fit the Supabase plan per `private-docs/scaling-runbook.md` before raising; staging `1/2`), worker concurrency/poll pins per B.5, queue/location/SA/worker-URL envs.
 - API manifests: `VMA_WORK_DISPATCH_MODE=hybrid` (it only dispatches).
-- New `scripts/gcloud/6-setup-cloud-tasks.sh`: create queue (`vma-turns`, `vma-turns-staging`; `dispatchDeadline=1800s` — fits the 900s turn budget with init/finalize margin; `maxAttempts=8`, `minBackoff=5s`, `maxBackoff=300s`, modest `maxConcurrentDispatches≈100`); grant `roles/cloudtasks.enqueuer` to the runtime SA and `roles/run.invoker` on the worker service to the same SA. Update `preflight.sh`, `status.sh`, README, and `tests/test_cloud_run_config.py` pins in the same commit.
+- New `scripts/gcloud/8-setup-cloud-tasks.sh` (numbers 6 and 7 already exist): create queues (`vma-turns`, `vma-turns-staging`) with `maxAttempts=8`, `minBackoff=5s`, `maxBackoff=300s`, and `maxConcurrentDispatches=100`; grant `roles/cloudtasks.enqueuer`, both required `iam.serviceAccounts.actAs` bindings, the primary `roles/cloudtasks.serviceAgent`, and worker-scoped `roles/run.invoker`. The 1,800-second dispatch deadline belongs to each Task in the runtime dispatcher, not to the queue. First deploy creates a missing worker in poll mode, discovers its real Cloud Run URL, grants Invoker, then renders final hybrid worker/API revisions; no URL is guessed or stored as a secret. `preflight.sh`, `status.sh`, the deployment README, and static config tests pin the contract. Production deploy paths fail closed while the connection ceiling remains `UNMEASURED`.
 
 ### Stage B tests
 
@@ -173,9 +173,11 @@ First production deploy happens only after all four pass.
 - [x] Version-1 journals round-trip `final_text`, `events_persisted`, and every other field required to reconstruct `RuntimeResult`; unknown versions fail closed.
 - [x] Duplicate emissions dedupe via deterministic ids + idempotent append; seq gaps tolerated.
 - [x] Attempts count admitted graph executions, not leases or pre-admission status changes; `deferred` never burns the cap and `VMA_WORK_MAX_ATTEMPTS=0` remains unlimited.
-- [ ] Outcome→HTTP mapping exactly per table; terminal outcomes never retried by Cloud Tasks.
-- [ ] Push handler and poller share one turn limiter; instance-level concurrency can never exceed `vma_worker_turn_limit`.
-- [ ] Reconciler alone (dispatch disabled) still executes all work correctly.
-- [ ] `poll` mode byte-identical to pre-Stage-B behavior; local dev/test untouched.
-- [ ] Postgres remains sole source of truth: deleting the Cloud Tasks queue loses no work.
+- [x] Outcome→HTTP mapping exactly per table; terminal outcomes never retried by Cloud Tasks.
+- [x] Push handler and poller share one turn limiter; instance-level concurrency can never exceed `vma_worker_turn_limit`.
+- [x] Reconciler alone (dispatch disabled) still executes all work correctly.
+- [x] `poll` mode byte-identical to pre-Stage-B behavior; local dev/test untouched.
+- [x] Postgres remains sole source of truth: deleting the Cloud Tasks queue loses no work.
+- [x] Hosted API/worker manifests pin hybrid dispatch, queue identity, OIDC service account, a discovered worker URL, worker `containerConcurrency=5`, and the 1/8 production plus 1/2 staging bounds.
+- [x] Idempotent queue/IAM setup, first-deploy URL bootstrap, read-only preflight checks, status reporting, and static deployment tests are implemented; the production maxScale=8 connection gate remains explicitly unmeasured.
 - [ ] Load-test gate (all four scenarios) passed before first production deploy; final `maxScale` recorded in the runbook.

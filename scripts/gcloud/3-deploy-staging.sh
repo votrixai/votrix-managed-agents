@@ -103,16 +103,59 @@ gcloud run jobs execute "$MIGRATION_JOB" \
   --wait \
   --quiet
 
-echo "Deploying ${STAGING_SERVICE} API service..."
-sed "s|IMAGE_URL|${IMAGE}|" "$API_MANIFEST" | \
+WORKER_URL=$(gcloud run services describe "$STAGING_WORKER_SERVICE" \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --format='value(status.url)' 2>/dev/null || true)
+
+if [ -z "$WORKER_URL" ]; then
+  echo "Creating ${STAGING_WORKER_SERVICE} in bootstrap poll mode..."
+  sed \
+    -e "s|IMAGE_URL|${IMAGE}|" \
+    -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
+    -e 's|value: "hybrid"|value: "poll"|' \
+    "$WORKER_MANIFEST" | \
+    gcloud run services replace \
+      --project="$PROJECT_ID" \
+      --region="$REGION" \
+      /dev/stdin \
+      --quiet
+
+  WORKER_URL=$(gcloud run services describe "$STAGING_WORKER_SERVICE" \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    --format='value(status.url)')
+fi
+
+if [ -z "$WORKER_URL" ]; then
+  echo "Cloud Run did not report a worker service URL." >&2
+  exit 1
+fi
+
+echo "Allowing Cloud Tasks to invoke ${STAGING_WORKER_SERVICE}..."
+gcloud run services add-iam-policy-binding "$STAGING_WORKER_SERVICE" \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --member="serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+  --role="roles/run.invoker" \
+  --quiet
+
+echo "Deploying ${STAGING_WORKER_SERVICE} worker service in hybrid mode..."
+sed \
+  -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
+  "$WORKER_MANIFEST" | \
   gcloud run services replace \
     --project="$PROJECT_ID" \
     --region="$REGION" \
     /dev/stdin \
     --quiet
 
-echo "Deploying ${STAGING_WORKER_SERVICE} worker service..."
-sed "s|IMAGE_URL|${IMAGE}|" "$WORKER_MANIFEST" | \
+echo "Deploying ${STAGING_SERVICE} API service in hybrid mode..."
+sed \
+  -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
+  "$API_MANIFEST" | \
   gcloud run services replace \
     --project="$PROJECT_ID" \
     --region="$REGION" \

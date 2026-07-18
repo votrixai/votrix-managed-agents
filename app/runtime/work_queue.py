@@ -141,25 +141,37 @@ async def execute_work_item(
     lease_seconds: int = 60,
 ) -> str:
     effective_worker_id = worker_id or f"inline-{uuid4().hex}"
+    claimed_lease = lease_id is not None or lease_generation is not None
     async with session_scope() as db:
         work = await res_q.get_work_item_for_worker(db, work_id)
         if work is None:
             return "missing"
         data = dict(work.data or {})
-        if work.status == "running" and data.get("started_at") and not _lease_expired(work, datetime.now(timezone.utc)):
-            return "already_running"
         if work.status in LEASED_WORK_STATUSES:
-            _require_lease_owner(
-                work,
-                worker_id=effective_worker_id,
-                lease_id=lease_id,
-                action="execute",
-            )
-            current_generation = int(((work.data or {}).get("lease") or {}).get("generation") or 0)
-            if lease_generation is not None and current_generation != lease_generation:
-                raise WorkLeaseError(
-                    f"Worker {effective_worker_id} does not own the current work lease generation"
+            if not claimed_lease:
+                if not _lease_expired(work, datetime.now(timezone.utc)):
+                    return "already_running"
+                await lease_work(
+                    db,
+                    work,
+                    worker_id=effective_worker_id,
+                    lease_seconds=lease_seconds,
                 )
+                data = dict(work.data or {})
+            else:
+                _require_lease_owner(
+                    work,
+                    worker_id=effective_worker_id,
+                    lease_id=lease_id,
+                    action="execute",
+                )
+                current_generation = int(
+                    ((work.data or {}).get("lease") or {}).get("generation") or 0
+                )
+                if lease_generation is not None and current_generation != lease_generation:
+                    raise WorkLeaseError(
+                        f"Worker {effective_worker_id} does not own the current work lease generation"
+                    )
         elif is_work_ready_for_execution(work):
             await lease_work(
                 db,
@@ -255,6 +267,7 @@ async def execute_work_item(
             await db.commit()
         return "deferred"
 
+    follow_up_dispatch: tuple[int, datetime | None] | None = None
     async with session_scope() as db:
         work = await res_q.get_work_item_for_worker(db, work_id)
         if work is None:
@@ -296,6 +309,19 @@ async def execute_work_item(
                 actor_id=effective_worker_id,
             )
         await db.commit()
+        if status == "rescheduling":
+            follow_up_dispatch = (
+                int(data.get("attempt") or 0),
+                _parse_datetime(data.get("retry_at")),
+            )
+    if (
+        follow_up_dispatch is not None
+        and get_settings().vma_work_dispatch_mode == "hybrid"
+    ):
+        from app.runtime.dispatch import dispatch_work
+
+        attempt, schedule_at = follow_up_dispatch
+        await dispatch_work(work_id, attempt=attempt, schedule_at=schedule_at)
     return status
 
 
@@ -580,6 +606,18 @@ def _retry_at_due(work: ManagedResource, now: datetime) -> bool:
         return datetime.fromisoformat(retry_at) <= now
     except ValueError:
         return True
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _lease_expired(work: ManagedResource, now: datetime) -> bool:

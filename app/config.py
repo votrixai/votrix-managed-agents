@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     vma_worker_poll_interval_seconds: float = 0.5
     vma_worker_lease_seconds: int = 120
     vma_work_max_attempts: int = Field(default=3, ge=0)
+    vma_work_dispatch_mode: Literal["poll", "hybrid"] = "poll"
+    vma_tasks_queue: str = ""
+    vma_tasks_location: str = ""
+    vma_tasks_service_account: str = ""
+    vma_worker_url: str = ""
+    vma_worker_turn_limit: int = Field(default=5, ge=1)
     vma_checkpoint_pool_max_size: int = Field(default=5, ge=1)
     vma_preview_broker: Literal["process_local", "pg_notify"] = "process_local"
     vma_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)

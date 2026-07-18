@@ -6,11 +6,13 @@ import pytest
 
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
+from app.runtime.turn_limiter import TurnLimiter
 from app.worker import _next_runnable_work, run_worker
 from tests.conftest import TEST_HEADERS
 
 
-async def test_worker_once_consumes_queued_work(client):
+@pytest.mark.parametrize("dispatch_mode", ["poll", "hybrid"])
+async def test_worker_once_consumes_queued_work(client, dispatch_mode):
     response = await client.post(
         "/v1/agents",
         headers=TEST_HEADERS,
@@ -42,7 +44,12 @@ async def test_worker_once_consumes_queued_work(client):
     )
     assert response.status_code == 200, response.text
 
-    await run_worker(environment_id=environment["id"], poll_interval_seconds=0.01, once=True)
+    await run_worker(
+        environment_id=environment["id"],
+        poll_interval_seconds=0.01,
+        once=True,
+        dispatch_mode=dispatch_mode,
+    )
 
     response = await client.get(f"/v1/environments/{environment['id']}/work/stats", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
@@ -192,6 +199,174 @@ async def test_worker_once_propagates_polling_error(monkeypatch):
             poll_interval_seconds=0,
             once=True,
         )
+
+
+async def test_hybrid_reconciler_skips_leasing_when_turn_limit_is_full(
+    monkeypatch,
+):
+    limiter = TurnLimiter(1)
+    assert limiter.acquire_nowait()
+    lease_calls = 0
+
+    async def fake_next_runnable_work(**_kwargs):
+        nonlocal lease_calls
+        lease_calls += 1
+        return None
+
+    monkeypatch.setattr("app.worker._next_runnable_work", fake_next_runnable_work)
+
+    await run_worker(
+        environment_id=None,
+        poll_interval_seconds=0,
+        once=True,
+        dispatch_mode="hybrid",
+        turn_limiter=limiter,
+    )
+
+    assert lease_calls == 0
+    limiter.release()
+
+
+async def test_hybrid_reconciler_holds_turn_limit_from_lease_through_execution(
+    monkeypatch,
+):
+    limiter = TurnLimiter(1)
+    execution_started = asyncio.Event()
+    allow_execution_to_finish = asyncio.Event()
+
+    async def fake_next_runnable_work(**_kwargs):
+        return {
+            "id": "work-reconciled",
+            "session_id": "session-reconciled",
+            "lease": {
+                "lease_id": "lease-reconciled",
+                "generation": 4,
+            },
+        }
+
+    async def fake_execute_work_item(*_args, **_kwargs):
+        execution_started.set()
+        await allow_execution_to_finish.wait()
+        return "completed"
+
+    monkeypatch.setattr("app.worker._next_runnable_work", fake_next_runnable_work)
+    monkeypatch.setattr("app.worker.execute_work_item", fake_execute_work_item)
+
+    reconciler = asyncio.create_task(
+        run_worker(
+            environment_id=None,
+            poll_interval_seconds=0,
+            once=True,
+            dispatch_mode="hybrid",
+            turn_limiter=limiter,
+        )
+    )
+    await asyncio.wait_for(execution_started.wait(), timeout=1)
+
+    assert not limiter.acquire_nowait()
+    allow_execution_to_finish.set()
+    await asyncio.wait_for(reconciler, timeout=1)
+    assert limiter.acquire_nowait()
+    limiter.release()
+
+
+async def test_hybrid_reconciler_releases_turn_limit_before_idle_sleep(
+    monkeypatch,
+):
+    limiter = TurnLimiter(1)
+    stop_event = asyncio.Event()
+    sleep_started = asyncio.Event()
+    finish_sleep = asyncio.Event()
+
+    async def fake_next_runnable_work(**_kwargs):
+        return None
+
+    async def fake_sleep(_seconds):
+        sleep_started.set()
+        await finish_sleep.wait()
+
+    monkeypatch.setattr("app.worker._next_runnable_work", fake_next_runnable_work)
+    monkeypatch.setattr("app.worker.asyncio.sleep", fake_sleep)
+
+    reconciler = asyncio.create_task(
+        run_worker(
+            environment_id=None,
+            poll_interval_seconds=20,
+            once=False,
+            stop_event=stop_event,
+            dispatch_mode="hybrid",
+            turn_limiter=limiter,
+        )
+    )
+    await asyncio.wait_for(sleep_started.wait(), timeout=1)
+
+    assert limiter.acquire_nowait()
+    limiter.release()
+    stop_event.set()
+    finish_sleep.set()
+    await asyncio.wait_for(reconciler, timeout=1)
+
+
+async def test_hybrid_reconciler_releases_turn_limit_before_error_backoff(
+    monkeypatch,
+):
+    limiter = TurnLimiter(1)
+    stop_event = asyncio.Event()
+    sleep_started = asyncio.Event()
+    finish_sleep = asyncio.Event()
+
+    async def fake_next_runnable_work(**_kwargs):
+        raise RuntimeError("database unavailable")
+
+    async def fake_sleep(_seconds):
+        sleep_started.set()
+        await finish_sleep.wait()
+
+    monkeypatch.setattr("app.worker._next_runnable_work", fake_next_runnable_work)
+    monkeypatch.setattr("app.worker.asyncio.sleep", fake_sleep)
+
+    reconciler = asyncio.create_task(
+        run_worker(
+            environment_id=None,
+            poll_interval_seconds=20,
+            once=False,
+            stop_event=stop_event,
+            dispatch_mode="hybrid",
+            turn_limiter=limiter,
+        )
+    )
+    await asyncio.wait_for(sleep_started.wait(), timeout=1)
+
+    assert limiter.acquire_nowait()
+    limiter.release()
+    stop_event.set()
+    finish_sleep.set()
+    await asyncio.wait_for(reconciler, timeout=1)
+
+
+async def test_poll_mode_does_not_consult_hybrid_turn_limit(monkeypatch):
+    limiter = TurnLimiter(1)
+    assert limiter.acquire_nowait()
+    lease_calls = 0
+
+    async def fake_next_runnable_work(**_kwargs):
+        nonlocal lease_calls
+        lease_calls += 1
+        return None
+
+    monkeypatch.setattr("app.worker._next_runnable_work", fake_next_runnable_work)
+
+    await run_worker(
+        environment_id=None,
+        poll_interval_seconds=0,
+        once=True,
+        dispatch_mode="poll",
+        turn_limiter=limiter,
+    )
+
+    assert lease_calls == 1
+    assert not limiter.acquire_nowait()
+    limiter.release()
 
 
 async def test_vault_credential_response_redacts_secret_fields(client):

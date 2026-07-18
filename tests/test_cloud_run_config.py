@@ -55,6 +55,7 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         "scripts/gcloud/5-allow-public.sh",
         "scripts/gcloud/6-bootstrap-operator.sh",
         "scripts/gcloud/7-run-acceptance.sh",
+        "scripts/gcloud/8-setup-cloud-tasks.sh",
         "scripts/gcloud/preflight.sh",
         "scripts/gcloud/status.sh",
     ):
@@ -77,8 +78,8 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
 def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
     api_max_scale = {"production": "3", "staging": "2"}
     worker_scale = {
-        "production": ("2", "3"),
-        "staging": ("1", "1"),
+        "production": ("1", "8"),
+        "staging": ("1", "2"),
     }
 
     for environment in ("production", "staging"):
@@ -107,6 +108,21 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
             r'name:\s*VMA_EMBEDDED_WORKER_ENABLED\s+value:\s*["\']?false["\']?',
             flat,
         )
+        expected_queue = "vma-turns" if environment == "production" else "vma-turns-staging"
+        expected_dispatch_values = {
+            "VMA_WORK_DISPATCH_MODE": "hybrid",
+            "VMA_TASKS_QUEUE": expected_queue,
+            "VMA_TASKS_LOCATION": "us-central1",
+            "VMA_TASKS_SERVICE_ACCOUNT": (
+                "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
+            ),
+            "VMA_WORKER_URL": "__VMA_WORKER_URL__",
+        }
+        for name, value in expected_dispatch_values.items():
+            assert re.search(
+                rf'name:\s*{name}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                flat,
+            )
         for worker_only_name in (
             "VMA_WORKER_CONCURRENCY",
             "VMA_WORKER_POLL_INTERVAL_SECONDS",
@@ -144,7 +160,7 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
         assert re.search(r'run\.googleapis\.com/cpu-throttling:\s*["\']?false["\']?', worker)
         assert "run.googleapis.com/invoker-iam-disabled" not in worker
         assert "serviceAccountName: vma-runtime@" in worker
-        assert re.search(r"containerConcurrency:\s*10", worker)
+        assert re.search(r"containerConcurrency:\s*5", worker)
         assert "startupProbe:" in worker and "path: /health" in worker
         assert "livenessProbe:" in worker and "path: /health/db" in worker
         assert re.search(r'name:\s*WEB_CONCURRENCY\s+value:\s*["\']?1["\']?', worker_flat)
@@ -158,8 +174,10 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
             worker_flat,
         )
         expected_worker_values = {
-            "VMA_WORKER_CONCURRENCY": "5",
-            "VMA_WORKER_POLL_INTERVAL_SECONDS": "0.5",
+            **expected_dispatch_values,
+            "VMA_WORKER_TURN_LIMIT": "5",
+            "VMA_WORKER_CONCURRENCY": "1",
+            "VMA_WORKER_POLL_INTERVAL_SECONDS": "20",
             "VMA_WORKER_LEASE_SECONDS": "120",
             "VMA_WORK_MAX_ATTEMPTS": "3",
             "VMA_CHECKPOINT_POOL_MAX_SIZE": "5",
@@ -367,10 +385,15 @@ def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
 
     assert migration_deploy >= 0
     assert migration_execute > migration_deploy
-    assert len(service_deploys) == 2
+    assert len(service_deploys) == 3
     assert "--wait" in cloudbuild[migration_execute:service_deploys[0]]
     assert all(service_deploy > migration_execute for service_deploy in service_deploys)
-    assert cloudbuild.find('${_SERVICE_CONFIG}') < cloudbuild.find('$$WORKER_SERVICE_CONFIG')
+    assert cloudbuild.find('Creating $$WORKER_SERVICE in bootstrap poll mode') >= 0
+    assert cloudbuild.find('value: "hybrid"|value: "poll"') >= 0
+    assert cloudbuild.find('Deploying $$WORKER_SERVICE in hybrid mode') < cloudbuild.find(
+        'Deploying ${_SERVICE_NAME} API service in hybrid mode'
+    )
+    assert cloudbuild.count("__VMA_WORKER_URL__") == 3
     assert 'WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"' in cloudbuild
 
 
@@ -397,10 +420,16 @@ def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() 
         ]
         assert migration_deploy >= 0
         assert migration_execute > migration_deploy
-        assert len(service_deploys) == 2
+        assert len(service_deploys) == 3
         assert "--wait" in script[migration_execute:service_deploys[0]]
         assert all(service_deploy > migration_execute for service_deploy in service_deploys)
-        assert script.find("$API_MANIFEST") < script.find("$WORKER_MANIFEST")
+        assert 'value: "hybrid"|value: "poll"' in script
+        assert "in bootstrap poll mode" in script
+        assert "worker service in hybrid mode" in script
+        assert "API service in hybrid mode" in script
+        assert script.find("worker service in hybrid mode") < script.find(
+            "API service in hybrid mode"
+        )
 
 
 def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_changes() -> None:
@@ -459,6 +488,15 @@ def test_preflight_is_read_only_and_checks_both_environment_secret_sets() -> Non
     assert "secrets versions list" in script
     assert "roles/secretmanager.secretAccessor" in script
     assert "roles/iam.serviceAccountUser" in script
+    assert "roles/cloudtasks.enqueuer" in script
+    assert "roles/cloudtasks.serviceAgent" in script
+    assert "roles/run.invoker" in script
+    assert "gcp-sa-cloudtasks.iam.gserviceaccount.com" in script
+    assert "cloudtasks.googleapis.com" in script
+    assert 'check_tasks_environment "$PRODUCTION_TASKS_QUEUE"' in script
+    assert 'check_tasks_environment "$STAGING_TASKS_QUEUE"' in script
+    assert "retryConfig.maxAttempts" in script
+    assert "rateLimits.maxConcurrentDispatches" in script
     assert "value(format)" in script
     assert "value(disabled)" in script
     assert "--dry-run" in script
@@ -484,7 +522,78 @@ def test_status_reports_missing_resources_instead_of_being_silent() -> None:
     assert '"$STAGING_SERVICE"' in script
     assert '"$STAGING_WORKER_SERVICE"' in script
     assert "vma-deploy-production vma-deploy-staging" in script
+    assert '"$PRODUCTION_TASKS_QUEUE"' in script
+    assert '"$STAGING_TASKS_QUEUE"' in script
+    assert "retryConfig.maxAttempts" in script
+    assert "rateLimits.maxConcurrentDispatches" in script
     assert "Status: not configured" in script
+
+
+def test_cloud_tasks_setup_is_idempotent_and_keeps_task_deadline_in_runtime() -> None:
+    setup = _read("scripts/gcloud/8-setup-cloud-tasks.sh")
+    registry = _read("scripts/gcloud/0-setup-registry.sh")
+    config = _read("scripts/gcloud/config.sh")
+
+    assert "cloudtasks.googleapis.com" in registry
+    assert 'PRODUCTION_TASKS_QUEUE="vma-turns"' in config
+    assert 'STAGING_TASKS_QUEUE="vma-turns-staging"' in config
+    assert 'TASKS_LOCATION="$REGION"' in config
+    assert "gcloud tasks queues describe" in setup
+    assert "gcloud tasks queues create" in setup
+    assert "gcloud tasks queues update" in setup
+    assert "gcloud tasks queues resume" in setup
+    assert "--max-attempts=8" in setup
+    assert "--min-backoff=5s" in setup
+    assert "--max-backoff=300s" in setup
+    assert "--max-concurrent-dispatches=100" in setup
+    assert "dispatch-deadline" not in setup.lower()
+    assert "dispatchDeadline" not in setup
+    assert "roles/cloudtasks.enqueuer" in setup
+    assert "roles/cloudtasks.serviceAgent" in setup
+    assert "roles/iam.serviceAccountUser" in setup
+    assert "roles/run.invoker" in setup
+    assert "gcloud beta services identity create" in setup
+    assert "gcp-sa-cloudtasks.iam.gserviceaccount.com" in setup
+    assert "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" in setup
+    assert "Worker service is not deployed yet" in setup
+    assert "deploy flow grants Invoker after bootstrap" in setup
+
+
+def test_production_worker_max_scale_is_explicitly_gated_by_connection_budget() -> None:
+    runbook = _read("private-docs/scaling-runbook.md")
+    production_deploy = _read("scripts/gcloud/2-deploy-production.sh")
+    cloudbuild = _read("cloudbuild.yaml")
+    preflight = _read("scripts/gcloud/preflight.sh")
+
+    assert "3×16 + 8×12 = 144" in runbook
+    assert "Production maxScale=8 release gate" in runbook
+    assert "Status: UNMEASURED" in runbook
+    assert "first production deploy is blocked" in runbook
+    assert "at least 160 connections" in runbook
+    assert "maxScale=8` is a checked-in target, not evidence" in runbook
+    assert "Status: UNMEASURED" in production_deploy
+    assert "Status: UNMEASURED" in cloudbuild
+    assert "check_production_connection_gate" in preflight
+
+
+def test_deploy_paths_grant_worker_invoker_before_enabling_hybrid() -> None:
+    cloudbuild = _read("cloudbuild.yaml")
+    invoker = cloudbuild.find("gcloud run services add-iam-policy-binding")
+    hybrid_worker = cloudbuild.find("Deploying $$WORKER_SERVICE in hybrid mode")
+    hybrid_api = cloudbuild.find(
+        "Deploying ${_SERVICE_NAME} API service in hybrid mode"
+    )
+    assert 0 <= invoker < hybrid_worker < hybrid_api
+
+    for script_name in (
+        "scripts/gcloud/2-deploy-production.sh",
+        "scripts/gcloud/3-deploy-staging.sh",
+    ):
+        script = _read(script_name)
+        invoker = script.find("gcloud run services add-iam-policy-binding")
+        hybrid_worker = script.find("worker service in hybrid mode")
+        hybrid_api = script.find("API service in hybrid mode")
+        assert 0 <= invoker < hybrid_worker < hybrid_api
 
 
 def test_checkpoint_database_url_is_an_optional_application_override() -> None:
