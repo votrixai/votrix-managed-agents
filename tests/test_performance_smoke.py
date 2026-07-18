@@ -207,6 +207,9 @@ async def test_smoke_runs_turns_concurrently_and_cleans_only_owned_resources():
     assert client.agents.archived == ["agent_smoke"]
     assert client.environments.deleted == ["environment_smoke"]
     assert client.vaults.retrieved == ["vault_organization"]
+    assert [
+        session["metadata"]["smoke_index"] for session in client.sessions.created
+    ] == ["1", "2", "3"]
     assert all(result.queue_wait_ms == 100 for result in report.results)
     assert all(result.first_event_ms == 250 for result in report.results)
     assert all(result.total_ms == 400 for result in report.results)

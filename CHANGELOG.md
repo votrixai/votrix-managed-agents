@@ -148,6 +148,10 @@ operator-provisioned Organization platform funding.
 
 ### Fixed
 
+- Native Python SDK SSE decoding now accepts structured `event_start` preview
+  descriptors while preserving string event names for durable events.
+- The deployed performance smoke now emits string-valued Session metadata as
+  required by the public API contract.
 - Runtime event-history loading now paginates to the end instead of silently
   stopping after the first 500 events.
 - Recovered work can no longer be finalized by an older lease held by the same
