@@ -96,6 +96,30 @@ architecture reference; the PLANs become history.
   per-instance turn limiter, queue `maxConcurrentDispatches`.
 - Overflow degrades to queue wait — never to failures.
 
+## API surfaces (one app, four tiers)
+
+One FastAPI implementation exposes four surfaces with different audiences,
+authenticators, and — critically — different contract disciplines. The public
+tier is frozen; everything else may change freely.
+
+| Tier | Paths | Audience | Auth | Visibility | Contract |
+|---|---|---|---|---|---|
+| Public product API | `/v1/*` (GA allowlist in `app/public_surface.py`) | SDK/API integrators | Organization API key | fumadocs + filtered OpenAPI export | Frozen: fields, codes, event shapes never break; pinned by `tests/test_public_ga_surface.py` |
+| First-party app | `/v1/me/*` | VMA builder frontend | Supabase user JWT | `include_in_schema=False` | Changeable with the frontend |
+| Hosted operator | `/internal/organizations/*` | Operators | Supabase superadmin JWT (`require_super_admin` router dependency) | private-docs SOPs only | Changeable; never versioned |
+| Infrastructure M2M | `/internal/work/*` (P3, worker service only) | Cloud Tasks | Cloud Run IAM/OIDC; service is private | No schema at all | Changes with the deployment |
+
+Rules:
+
+- Every new non-public endpoint goes under `/internal/` (auto-exempt from the
+  GA middleware, never exported) or carries `include_in_schema=False`.
+- Auth tiers never cross: an Organization API key must not authenticate
+  `/internal` or `/v1/me`; a human JWT must not authenticate `/v1`
+  Organization resources. (Tier-crossing denial tests ride with the W1
+  isolation matrix.)
+- SDKs are generated/validated only against the filtered GA OpenAPI.
+- No separate internal service, no gRPC, no versioning of `/internal`.
+
 ## Pointers
 
 - Operations: `private-docs/scaling-runbook.md` (capacity, budgets, manual

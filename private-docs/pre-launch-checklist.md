@@ -13,6 +13,10 @@ of `PLAN-p3-autoscale.md`.
 ### 1. Tenant isolation audit  (owner: Codex — `PLAN-pre-launch-hardening.md` W1)
 - [ ] Denial matrix suite merged and green (every resource × direct-ID /
       pagination / streaming / sub-resource traversal / write-spoofing).
+- [ ] Auth tier-crossing denials included (Organization API key →
+      `/internal/*` and `/v1/me/*` rejected; user JWT → `/v1` Organization
+      resources rejected) — see the API-surfaces table in
+      `private-docs/architecture.md`.
 - [ ] Any failing cell fixed at the query layer and documented.
 
 Why pre-launch: a cross-tenant leak after launch is a trust event that no fix
