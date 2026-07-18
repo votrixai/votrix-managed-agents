@@ -75,6 +75,12 @@ a one-way door in practice.
       for runtime/checkpoints, session DSN for LISTEN/janitor/migrations)
       deployed; backend usage under ~60% of the tier's direct-connection
       limit at target `maxScale`.
+- [ ] **Public docs consistency pass**: update `docs/work-queue.md` (it still
+      says the hosted profile runs "the embedded durable consumer in the one
+      Cloud Run process") and add the bounded at-least-once tool-side-effect
+      note to the relevant contract pages. Deployment topology, instance
+      counts, and connection budgets stay OUT of public docs — the internal
+      view lives in `private-docs/architecture.md`.
 
 ## Explicitly NOT launch blockers
 
