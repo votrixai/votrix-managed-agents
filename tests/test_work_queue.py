@@ -1,6 +1,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.queries import api_keys as api_keys_q
@@ -9,8 +11,62 @@ from app.db.queries import governance as governance_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from app.governance import ACTIVE_GAUGE_WINDOW
-from app.runtime.work_queue import execute_work_item, lease_next_work_for_worker
+from app.runtime.runner import _admit_graph_execution
+from app.runtime.work_queue import WorkExecutionLease, execute_work_item, lease_next_work_for_worker
 from tests.conftest import TEST_HEADERS, UNAUTHENTICATED_TEST_HEADERS
+
+
+def test_turn_journal_round_trip_and_unknown_version_fail_closed():
+    from app.runtime.runner import _runtime_result_from_turn_journal
+
+    journal = {
+        "version": 1,
+        "input_seq": 9,
+        "agent_version_id": "agtv_test",
+        "run_state": {"backend": "deepagents", "last_input_event_seq": 9},
+        "final_text": "journaled",
+        "events_persisted": True,
+        "tool_events": [],
+        "requires_action": True,
+        "blocking_event_ids": ["evt_action"],
+        "usage": {"total_tokens": 7},
+        "sandbox_state": {"runtime_backend": "deepagents"},
+        "outputs_persisted": True,
+    }
+    result = _runtime_result_from_turn_journal(
+        journal,
+        expected_agent_version_id="agtv_test",
+    )
+    assert result.final_text == "journaled"
+    assert result.events_persisted is True
+    assert result.requires_action is True
+    assert result.blocking_event_ids == ["evt_action"]
+    assert result.usage == {"total_tokens": 7}
+    assert result.run_state == {"backend": "deepagents", "last_input_event_seq": 9}
+    assert result.sandbox_state == {"runtime_backend": "deepagents"}
+
+    with pytest.raises(RuntimeError, match="version"):
+        _runtime_result_from_turn_journal(
+            {**journal, "version": 2},
+            expected_agent_version_id="agtv_test",
+        )
+
+    invalid_fields = {
+        "final_text": None,
+        "events_persisted": "true",
+        "tool_events": None,
+        "requires_action": 1,
+        "blocking_event_ids": "evt_action",
+        "usage": None,
+        "sandbox_state": None,
+        "outputs_persisted": False,
+    }
+    for field, value in invalid_fields.items():
+        with pytest.raises(RuntimeError):
+            _runtime_result_from_turn_journal(
+                {**journal, field: value},
+                expected_agent_version_id="agtv_test",
+            )
 
 
 async def _create_agent(client):
@@ -46,29 +102,49 @@ async def _create_session(client, agent, environment):
     return response.json()
 
 
-async def _force_four_work_leases(*, environment_id: str) -> tuple[str, dict]:
+async def _force_fourth_work_lease(
+    *,
+    environment_id: str,
+    session_id: str,
+) -> tuple[str, dict]:
     work_id = ""
     latest_lease: dict = {}
-    for attempt in range(1, 5):
+    for generation in range(1, 5):
         async with session_scope() as db:
             work = await lease_next_work_for_worker(
                 db,
                 environment_id=environment_id,
-                worker_id=f"retry-worker-{attempt}",
+                worker_id=f"retry-worker-{generation}",
                 lease_seconds=30,
             )
             assert work is not None
-            assert int((work.data or {}).get("attempt") or 0) == attempt
+            assert int((work.data or {}).get("attempt") or 0) == generation - 1
             work_id = work.id
             latest_lease = dict((work.data or {}).get("lease") or {})
-            if attempt < 4:
+            await db.commit()
+        if generation < 4:
+            admitted = await _admit_graph_execution(
+                session_id=session_id,
+                organization_id="org_test",
+                work_lease=WorkExecutionLease(
+                    work_id=work_id,
+                    worker_id=f"retry-worker-{generation}",
+                    lease_id=str(latest_lease["lease_id"]),
+                    generation=int(latest_lease["generation"]),
+                    attempt=generation - 1,
+                ),
+            )
+            assert admitted.attempt == generation
+            async with session_scope() as db:
+                work = await res_q.get_work_item_for_worker(db, work_id)
+                assert work is not None
                 data = dict(work.data or {})
                 data["lease"] = {
                     **latest_lease,
                     "expires_at": datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat(),
                 }
                 await res_q.update_resource(db, work, data=data, status="running")
-            await db.commit()
+                await db.commit()
     return work_id, latest_lease
 
 
@@ -271,7 +347,7 @@ async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
     )
     assert response.status_code == 200, response.text
     first_lease = response.json()
-    assert first_lease["attempt"] == 1
+    assert first_lease["attempt"] == 0
 
     async with session_scope() as db:
         work = await res_q.get_resource(
@@ -299,7 +375,7 @@ async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
     recovered = response.json()
     assert recovered["id"] == first_lease["id"]
     assert recovered["status"] == "leased"
-    assert recovered["attempt"] == 2
+    assert recovered["attempt"] == 0
     assert recovered["lease"]["worker_id"] == "worker-2"
 
 
@@ -319,12 +395,20 @@ async def test_fourth_execution_attempt_exhausts_work_and_terminates_session(
     )
     assert response.status_code == 200, response.text
 
-    work_id, lease = await _force_four_work_leases(environment_id=environment["id"])
+    work_id, lease = await _force_fourth_work_lease(
+        environment_id=environment["id"],
+        session_id=session["id"],
+    )
 
-    async def fail_if_executed(*_args, **_kwargs):
-        raise AssertionError("exhausted work must not execute the Session turn")
+    async def fail_if_graph_executes(session_id, *, organization_id, work_lease, **_kwargs):
+        await _admit_graph_execution(
+            session_id=session_id,
+            organization_id=organization_id,
+            work_lease=work_lease,
+        )
+        raise AssertionError("exhausted work must not execute the graph")
 
-    monkeypatch.setattr("app.runtime.runner.run_session_turn", fail_if_executed)
+    monkeypatch.setattr("app.runtime.runner.run_session_turn", fail_if_graph_executes)
     result = await execute_work_item(
         work_id,
         worker_id="retry-worker-4",
@@ -360,7 +444,7 @@ async def test_fourth_execution_attempt_exhausts_work_and_terminates_session(
 
     assert work is not None
     assert work.status == "error"
-    assert work.data["attempt"] == 4
+    assert work.data["attempt"] == 3
     assert work.data["error"] == {
         "type": "max_attempts_exceeded",
         "message": "Work item exceeded 3 execution attempts",
@@ -407,10 +491,18 @@ async def test_zero_max_attempts_allows_fourth_execution(client, monkeypatch):
     )
     assert response.status_code == 200, response.text
 
-    work_id, lease = await _force_four_work_leases(environment_id=environment["id"])
+    work_id, lease = await _force_fourth_work_lease(
+        environment_id=environment["id"],
+        session_id=session["id"],
+    )
     executed: list[str] = []
 
-    async def fake_run_session_turn(session_id, **_kwargs):
+    async def fake_run_session_turn(session_id, *, organization_id, work_lease, **_kwargs):
+        await _admit_graph_execution(
+            session_id=session_id,
+            organization_id=organization_id,
+            work_lease=work_lease,
+        )
         executed.append(session_id)
         return True
 
@@ -430,6 +522,238 @@ async def test_zero_max_attempts_allows_fourth_execution(client, monkeypatch):
     assert work.status == "completed"
     assert work.data["attempt"] == 4
     assert "error" not in work.data
+
+
+async def test_deferred_work_does_not_consume_execution_attempts(client, monkeypatch):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "stay deferred"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    async def defer_without_admission(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr("app.runtime.runner.run_session_turn", defer_without_admission)
+    async with session_scope() as db:
+        queued = await lease_next_work_for_worker(
+            db,
+            environment_id=environment["id"],
+            worker_id="deferred-worker-0",
+        )
+        assert queued is not None
+        work_id = queued.id
+        initial_lease = dict((queued.data or {}).get("lease") or {})
+        await db.commit()
+
+    for index in range(3):
+        result = await execute_work_item(
+            work_id,
+            worker_id=f"deferred-worker-{index}",
+            lease_id=str(initial_lease["lease_id"]) if index == 0 else None,
+            lease_generation=int(initial_lease["generation"]) if index == 0 else None,
+        )
+        assert result == "deferred"
+
+    async with session_scope() as db:
+        work = await res_q.get_work_item_for_worker(db, work_id)
+    assert work is not None
+    assert work.status == "queued"
+    assert work.data["attempt"] == 0
+
+
+async def test_admitted_failure_consumes_attempt_and_exposes_retry_identity(client, monkeypatch):
+    import app.runtime.runner as runner
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "fail after admission"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    async with session_scope() as db:
+        work = (
+            await res_q.list_resources(
+                db,
+                resource_type="environment_work",
+                parent_id=environment["id"],
+                limit=10,
+            )
+        )[0]
+        work_id = work.id
+
+    async def fail_after_admission(*_args, admit_execution, **_kwargs):
+        await admit_execution()
+        raise RuntimeError("provider failed after admission")
+
+    monkeypatch.setattr(runner, "_execute", fail_after_admission)
+    result = await execute_work_item(work_id, worker_id="admitted-failure-worker")
+    assert result == "error"
+
+    async with session_scope() as db:
+        stored_work = await res_q.get_work_item_for_worker(db, work_id)
+        events = await events_q.list_events(
+            db,
+            session_id=session["id"],
+            organization_id="org_test",
+            limit=100,
+        )
+    assert stored_work is not None
+    assert stored_work.status == "error"
+    assert stored_work.data["attempt"] == 1
+    running = [event for event in events if event.type == "session.status_running"]
+    assert len(running) == 1
+    assert running[0].payload["attempt"] == 1
+    assert running[0].payload["work_id"] == work_id
+    assert running[0].payload["lease_generation"] == 1
+
+
+async def test_turn_journal_recovers_without_invoking_model_runner(client, monkeypatch):
+    from app.runtime.contracts import RuntimeResult
+    import app.runtime.runner as runner
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "journal recovery"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    async with session_scope() as db:
+        leased = await lease_next_work_for_worker(
+            db,
+            environment_id=environment["id"],
+            worker_id="journal-worker-1",
+            lease_seconds=30,
+        )
+        assert leased is not None
+        work_id = leased.id
+        first_lease = dict((leased.data or {}).get("lease") or {})
+        await db.commit()
+
+    async def first_execution(
+        _version,
+        history,
+        _environment_config,
+        *,
+        emit_event,
+        admit_execution,
+        **_kwargs,
+    ):
+        await admit_execution()
+        await emit_event(
+            {
+                "type": "agent.message",
+                "content": [{"type": "text", "text": "durable answer"}],
+                "_event_id": "evt_journal_recovery",
+            }
+        )
+        input_seq = max(event.seq for event in history if event.type == "user.message")
+        return RuntimeResult(
+            final_text="durable answer",
+            events_persisted=True,
+            run_state={
+                "backend": "deepagents",
+                "last_input_event_seq": input_seq,
+            },
+            sandbox_state={"runtime_backend": "deepagents"},
+            usage={"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+        )
+
+    class SimulatedCrash(BaseException):
+        pass
+
+    async def crash_after_journal(**_kwargs):
+        raise SimulatedCrash()
+
+    original_record_usage = runner._record_model_usage_after_result
+    monkeypatch.setattr(runner, "_execute", first_execution)
+    monkeypatch.setattr(runner, "_record_model_usage_after_result", crash_after_journal)
+    try:
+        await execute_work_item(
+            work_id,
+            worker_id="journal-worker-1",
+            lease_id=str(first_lease["lease_id"]),
+            lease_generation=int(first_lease["generation"]),
+            lease_seconds=30,
+        )
+    except SimulatedCrash:
+        pass
+    else:
+        raise AssertionError("the simulated post-journal crash did not fire")
+
+    async with session_scope() as db:
+        work = await res_q.get_work_item_for_worker(db, work_id)
+        assert work is not None
+        assert work.data["turn_journal"]["final_text"] == "durable answer"
+        assert work.data["attempt"] == 1
+        data = dict(work.data or {})
+        data["lease"] = {
+            **dict(data["lease"]),
+            "expires_at": datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat(),
+        }
+        await res_q.update_resource(db, work, data=data, status="running")
+        await db.commit()
+
+    async with session_scope() as db:
+        recovered = await lease_next_work_for_worker(
+            db,
+            environment_id=environment["id"],
+            worker_id="journal-worker-2",
+            lease_seconds=30,
+        )
+        assert recovered is not None
+        second_lease = dict((recovered.data or {}).get("lease") or {})
+        await db.commit()
+
+    async def fail_if_model_runner_is_called(*_args, **_kwargs):
+        raise AssertionError("journal recovery must not invoke the model runner")
+
+    monkeypatch.setattr(runner, "_execute", fail_if_model_runner_is_called)
+    monkeypatch.setattr(runner, "_record_model_usage_after_result", original_record_usage)
+    result = await execute_work_item(
+        work_id,
+        worker_id="journal-worker-2",
+        lease_id=str(second_lease["lease_id"]),
+        lease_generation=int(second_lease["generation"]),
+        lease_seconds=30,
+    )
+    assert result == "completed"
+
+    async with session_scope() as db:
+        work = await res_q.get_work_item_for_worker(db, work_id)
+        stored_session = await sessions_q.get_session(
+            db,
+            session["id"],
+            organization_id="org_test",
+        )
+        events = await events_q.list_events(
+            db,
+            session_id=session["id"],
+            organization_id="org_test",
+            limit=100,
+        )
+    assert work is not None
+    assert work.status == "completed"
+    assert work.data["attempt"] == 1
+    assert "turn_journal" not in work.data
+    assert stored_session is not None
+    assert stored_session.status == "idle"
+    assert stored_session.run_state["last_input_event_seq"] > 0
+    messages = [event for event in events if event.type == "agent.message"]
+    assert len(messages) == 1
+    assert messages[0].id == "evt_journal_recovery"
 
 
 async def test_stale_lease_id_is_fenced_when_worker_id_is_reused(client):

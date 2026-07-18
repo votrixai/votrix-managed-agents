@@ -14,19 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.models import ManagedResource, ManagedSession
-from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from app.governance import QuotaExceededError
 from app.governance_runtime import governance_service
 from app.organization import current_organization, resolve_organization_id
-from app.session_errors import session_error_payload
 from app.session_state import SESSION_RESCHEDULING, SESSION_TERMINATED
 
 logger = structlog.get_logger()
 
 RUNNABLE_WORK_STATUSES = {"queued", "rescheduling"}
 LEASED_WORK_STATUSES = {"leased", "running"}
+TERMINAL_WORK_OUTCOMES = {"completed", "error", "stopped", "rescheduling"}
 
 
 class WorkLeaseError(RuntimeError):
@@ -39,6 +38,25 @@ class WorkExecutionLease:
     worker_id: str
     lease_id: str
     generation: int
+    attempt: int = 0
+
+
+class WorkAttemptsExhausted(RuntimeError):
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        organization_id: str,
+        work_id: str,
+        attempt: int,
+        max_attempts: int,
+    ) -> None:
+        super().__init__(f"Work item {work_id} exceeded {max_attempts} execution attempts")
+        self.session_id = session_id
+        self.organization_id = organization_id
+        self.work_id = work_id
+        self.attempt = attempt
+        self.max_attempts = max_attempts
 
 
 async def get_active_session_work(
@@ -153,30 +171,6 @@ async def execute_work_item(
         else:
             return "not_runnable"
         execution_lease = _execution_lease(work)
-        attempt = int(data.get("attempt") or 0)
-        max_attempts = int(get_settings().vma_work_max_attempts)
-        if max_attempts > 0 and attempt > max_attempts:
-            data["error"] = {
-                "type": "max_attempts_exceeded",
-                "message": f"Work item exceeded {max_attempts} execution attempts",
-                "attempt": attempt,
-                "max_attempts": max_attempts,
-            }
-            data["finished_at"] = _utcnow_iso()
-            await res_q.update_resource(db, work, data=data, status="error")
-            await _release_work_quota(db, work, actor_id=effective_worker_id)
-            await db.commit()
-            await _terminate_session_for_exhausted_work(
-                session_id=str(data.get("session_id") or ""),
-                organization_id=work.organization_id,
-                work_id=work.id,
-                attempt=attempt,
-                max_attempts=max_attempts,
-            )
-            return "exhausted"
-        data["started_at"] = _utcnow_iso()
-        data["started_by"] = effective_worker_id
-        await res_q.update_resource(db, work, data=data, status="running")
         await db.commit()
 
     heartbeat_stop = asyncio.Event()
@@ -197,11 +191,23 @@ async def execute_work_item(
             organization_id=resolve_organization_id(work.organization_id),
             work_lease=execution_lease,
         )
+    except WorkAttemptsExhausted as exc:
+        logger.warning(
+            "work_item_attempts_exhausted",
+            work_id=exc.work_id,
+            attempt=exc.attempt,
+            max_attempts=exc.max_attempts,
+        )
+        return "exhausted"
     except Exception as exc:
         logger.exception("work_item_failed", work_id=work_id)
         async with session_scope() as db:
             work = await res_q.get_work_item_for_worker(db, work_id)
-            if work is not None and _lease_matches(work, execution_lease):
+            if (
+                work is not None
+                and work.status in LEASED_WORK_STATUSES
+                and _lease_matches(work, execution_lease)
+            ):
                 data = dict(work.data or {})
                 data["error"] = {"type": exc.__class__.__name__, "message": str(exc)}
                 data["finished_at"] = _utcnow_iso()
@@ -231,19 +237,34 @@ async def execute_work_item(
     if not executed:
         async with session_scope() as db:
             work = await res_q.get_work_item_for_worker(db, work_id)
-            if work is not None and _lease_matches(work, execution_lease):
-                data = dict(work.data or {})
-                data.pop("started_at", None)
-                data.pop("started_by", None)
-                data.pop("lease", None)
-                data["deferred_at"] = _utcnow_iso()
-                await res_q.update_resource(db, work, data=data, status="queued")
-                await db.commit()
+            if work is None:
+                return "superseded"
+            if work.status in TERMINAL_WORK_OUTCOMES:
+                return work.status
+            if work.status not in LEASED_WORK_STATUSES or not _lease_matches(
+                work,
+                execution_lease,
+            ):
+                return "superseded"
+            data = dict(work.data or {})
+            data.pop("started_at", None)
+            data.pop("started_by", None)
+            data.pop("lease", None)
+            data["deferred_at"] = _utcnow_iso()
+            await res_q.update_resource(db, work, data=data, status="queued")
+            await db.commit()
         return "deferred"
 
     async with session_scope() as db:
         work = await res_q.get_work_item_for_worker(db, work_id)
-        if work is None or not _lease_matches(work, execution_lease):
+        if work is None:
+            return "superseded"
+        if work.status in TERMINAL_WORK_OUTCOMES:
+            return work.status
+        if work.status not in LEASED_WORK_STATUSES or not _lease_matches(
+            work,
+            execution_lease,
+        ):
             return "superseded"
         session = await sessions_q.get_session(
             db,
@@ -265,6 +286,8 @@ async def execute_work_item(
             status = "error"
         if work.status == "stopped":
             status = "stopped"
+        if status != "rescheduling":
+            data.pop("turn_journal", None)
         await res_q.update_resource(db, work, data=data, status=status)
         if status in {"completed", "error", "stopped"}:
             await _release_work_quota(
@@ -363,7 +386,6 @@ async def lease_work(
     now = now or datetime.now(timezone.utc)
     data = dict(work.data or {})
     generation = int(data.get("run_generation") or 0) + 1
-    data["attempt"] = int(data.get("attempt") or 0) + 1
     data["run_generation"] = generation
     data["lease"] = {
         "worker_id": worker_id,
@@ -375,6 +397,52 @@ async def lease_work(
     await res_q.update_resource(db, work, data=data, status="leased")
     await db.flush()
     return work
+
+
+async def admit_work_execution(
+    db: AsyncSession,
+    work: ManagedResource,
+    execution_lease: WorkExecutionLease,
+) -> WorkExecutionLease:
+    """Fence and count one graph execution inside the caller's transaction."""
+
+    if work.status not in LEASED_WORK_STATUSES:
+        raise WorkLeaseError("Work item is no longer available for execution")
+    if not _lease_matches(work, execution_lease):
+        raise WorkLeaseError("Work execution lease was superseded before admission")
+
+    data = dict(work.data or {})
+    attempt = int(data.get("attempt") or 0) + 1
+    max_attempts = int(get_settings().vma_work_max_attempts)
+    if max_attempts > 0 and attempt > max_attempts:
+        data["error"] = {
+            "type": "max_attempts_exceeded",
+            "message": f"Work item exceeded {max_attempts} execution attempts",
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+        }
+        data["finished_at"] = _utcnow_iso()
+        await res_q.update_resource(db, work, data=data, status="error")
+        await _release_work_quota(db, work, actor_id=execution_lease.worker_id)
+        raise WorkAttemptsExhausted(
+            session_id=str(data.get("session_id") or ""),
+            organization_id=work.organization_id,
+            work_id=work.id,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
+
+    data["attempt"] = attempt
+    data["started_at"] = _utcnow_iso()
+    data["started_by"] = execution_lease.worker_id
+    await res_q.update_resource(db, work, data=data, status="running")
+    return WorkExecutionLease(
+        work_id=execution_lease.work_id,
+        worker_id=execution_lease.worker_id,
+        lease_id=execution_lease.lease_id,
+        generation=execution_lease.generation,
+        attempt=attempt,
+    )
 
 
 async def ack_work(
@@ -407,6 +475,7 @@ async def heartbeat_work(
     lease_id: str | None = None,
     lease_seconds: int = 60,
     payload: dict[str, Any] | None = None,
+    preserve_status: bool = False,
 ) -> ManagedResource:
     _require_lease_owner(work, worker_id=worker_id, lease_id=lease_id, action="heartbeat")
     data = dict(work.data or {})
@@ -418,7 +487,12 @@ async def heartbeat_work(
         lease["worker_id"] = worker_id
     lease["expires_at"] = (now + timedelta(seconds=lease_seconds)).isoformat()
     data["lease"] = lease
-    await res_q.update_resource(db, work, data=data, status="running")
+    await res_q.update_resource(
+        db,
+        work,
+        data=data,
+        status=work.status if preserve_status else "running",
+    )
     return work
 
 
@@ -446,6 +520,7 @@ async def _heartbeat_execution_lease(
                 lease_id=execution_lease.lease_id,
                 lease_seconds=lease_seconds,
                 payload={"type": "execution"},
+                preserve_status=True,
             )
             await db.commit()
 
@@ -475,73 +550,6 @@ async def _release_work_quota(
         reference_id=work.id,
         actor_id=actor_id,
     )
-
-
-async def _terminate_session_for_exhausted_work(
-    *,
-    session_id: str,
-    organization_id: str,
-    work_id: str,
-    attempt: int,
-    max_attempts: int,
-) -> None:
-    """Terminate a Session after its work row is finalized in a prior transaction.
-
-    The separate transaction preserves the session-then-work lock order used by
-    normal execution. A crash between the two transactions can leave the work
-    errored without terminating the Session; a later user turn can enqueue fresh
-    work, so this accepted gap does not leave a zombie queue row.
-    """
-    if not session_id:
-        return
-    async with session_scope() as db:
-        session = await sessions_q.get_session(
-            db,
-            session_id,
-            organization_id=resolve_organization_id(organization_id),
-            for_update=True,
-        )
-        if session is None or session.status == SESSION_TERMINATED:
-            return
-        details = dict(session.status_details or {})
-        details.pop("execution_lease", None)
-        stop_reason = {
-            "type": "error",
-            "error_type": "max_attempts_exceeded",
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-            "work_id": work_id,
-        }
-        await sessions_q.update_session(
-            db,
-            session,
-            status=SESSION_TERMINATED,
-            status_details=details,
-            stop_reason=stop_reason,
-        )
-        await events_q.append_event(
-            db,
-            session,
-            event_type="session.error",
-            payload=session_error_payload(
-                "Session turn exceeded the maximum number of execution attempts",
-                error_type="max_attempts_exceeded",
-                retry_status="terminal",
-                attempt=attempt,
-                max_attempts=max_attempts,
-            ),
-        )
-        await events_q.append_event(
-            db,
-            session,
-            event_type="session.status_terminated",
-            payload={
-                "type": "session.status_terminated",
-                "status": SESSION_TERMINATED,
-                "stop_reason": stop_reason,
-            },
-        )
-        await db.commit()
 
 
 def _work_ready_for_execution(work: ManagedResource, now: datetime) -> bool:
@@ -623,6 +631,7 @@ def _execution_lease(work: ManagedResource) -> WorkExecutionLease:
         worker_id=worker_id,
         lease_id=lease_id,
         generation=generation,
+        attempt=int((work.data or {}).get("attempt") or 0),
     )
 
 

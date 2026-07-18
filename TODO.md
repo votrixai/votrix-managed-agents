@@ -421,16 +421,19 @@ Absorbs the open P0-1 item "Prevent duplicate model execution, event emission,
 and raw usage attribution". The honest contract is bounded at-least-once, not
 exactly-once (issued E2B commands cannot be rolled back):
 
-- [ ] A turn whose graph run completed is never re-executed: make finalization
-  crash-safe so a crash between run completion and the finalize commit cannot
-  replay the whole turn on retry (detect via the durable checkpoint state for
-  the already-consumed input seq).
-- [ ] Replaying an interrupted superstep does not duplicate already-persisted
+- [x] A turn whose graph run completed is never re-executed: write a versioned
+  completion marker in the terminal LangGraph checkpoint before the database
+  turn journal, then finalize from the matching marker/journal after any crash.
+  The journal must preserve `final_text`, `events_persisted`, its schema
+  `version`, and the remaining `RuntimeResult` fields needed for recovery.
+- [x] Replaying an interrupted superstep does not duplicate already-persisted
   events where identity is derivable, and every retried attempt appends a
   visible retry-marker event so operators and clients can see the takeover.
 - [x] Model-usage attribution is already work-fenced via the
   `model_tokens:{work_id}` idempotency key.
-- [ ] Replay count is bounded by `VMA_WORK_MAX_ATTEMPTS` (ships with P1.1).
+- [x] Replay count is bounded by `VMA_WORK_MAX_ATTEMPTS` (ships with P1.1),
+  with the P3 admission amendment: leases and deferred/no-input paths consume
+  no attempt; only a turn admitted immediately before graph execution counts.
 
 #### Stage B — Cloud Tasks push dispatch (~3–5 days, purely additive after P2)
 
@@ -440,7 +443,8 @@ exactly-once (issued E2B commands cannot be rolled back):
   service calling `execute_work_item`.
 - [ ] Explicit execute-outcome → HTTP status mapping table — the one
   design-sensitive piece: infrastructure retries must never consume
-  `VMA_WORK_MAX_ATTEMPTS` (only attempts that actually acquire a lease count);
+  `VMA_WORK_MAX_ATTEMPTS` (lease acquisition alone does not count; only turns
+  that pass the runner admission boundary and begin graph execution count);
   terminal outcomes return 200; only transient failures return 5xx.
 - [ ] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
   the recovery path for expired leases and missed dispatches. Push is an

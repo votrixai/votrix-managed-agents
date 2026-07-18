@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -19,6 +20,53 @@ async def append_event(
     payload: dict[str, Any] | None = None,
     source: str | None = None,
     event_id: str | None = None,
+) -> SessionEvent:
+    if event_id is None:
+        return await _insert_event(
+            db,
+            session,
+            event_type=event_type,
+            payload=payload,
+            source=source,
+            event_id=None,
+        )
+
+    try:
+        async with db.begin_nested():
+            return await _insert_event(
+                db,
+                session,
+                event_type=event_type,
+                payload=payload,
+                source=source,
+                event_id=event_id,
+            )
+    except IntegrityError:
+        # The savepoint rollback keeps the caller's outer transaction usable.
+        # Only an event already owned by this organization and session can satisfy
+        # the retry; a collision elsewhere must remain an integrity failure.
+        await db.refresh(session, attribute_names=["last_event_seq"])
+        result = await db.execute(
+            select(SessionEvent).where(
+                SessionEvent.id == event_id,
+                SessionEvent.organization_id == session.organization_id,
+                SessionEvent.session_id == session.id,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing is None:
+            raise
+        return existing
+
+
+async def _insert_event(
+    db: AsyncSession,
+    session: ManagedSession,
+    *,
+    event_type: str,
+    payload: dict[str, Any] | None,
+    source: str | None,
+    event_id: str | None,
 ) -> SessionEvent:
     # Allocate the per-session sequence in the database. Incrementing the ORM
     # attribute directly races when API and worker processes append concurrently.
