@@ -75,12 +75,26 @@ a one-way door in practice.
       for runtime/checkpoints, session DSN for LISTEN/janitor/migrations)
       deployed; backend usage under ~60% of the tier's direct-connection
       limit at target `maxScale`.
-- [ ] **Public docs consistency pass**: update `docs/work-queue.md` (it still
-      says the hosted profile runs "the embedded durable consumer in the one
-      Cloud Run process") and add the bounded at-least-once tool-side-effect
-      note to the relevant contract pages. Deployment topology, instance
-      counts, and connection budgets stay OUT of public docs — the internal
-      view lives in `private-docs/architecture.md`.
+- [ ] **Public docs consistency pass + launch pages**. Fix what implementation
+      makes stale, and add the contract-level pages integrators need. Topology,
+      instance counts, and connection budgets stay OUT of public docs — the
+      internal view lives in `private-docs/architecture.md`.
+      - [ ] Update `docs/work-queue.md` (still says the hosted profile runs
+            "the embedded durable consumer in the one Cloud Run process").
+      - [ ] Reliability & execution semantics page: turn lifecycle/statuses,
+            `rescheduling`/`retry_at`, attempt cap, bounded at-least-once tool
+            side effects (recommend `tool_use_id` idempotency keys for
+            high-risk custom tools), full `requires_action` handshake.
+      - [ ] Streaming guide: SSE endpoints, `Last-Event-ID` resume semantics,
+            cursor-less open behavior, `event_deltas` as best-effort preview,
+            reconnect example code.
+      - [ ] Rate limits & quotas reference: the four quota families and the
+            `X-RateLimit-*` / `X-Quota-*` header tables, 429 handling.
+      - [ ] Errors reference: envelope shape, stable codes, `retry_status`
+            semantics, what to retry.
+      - [ ] Nice-to-have: quickstart (if `index.mdx` isn't one), custom-tools
+            walkthrough, idempotency page, limits table (50MB upload / 64MB
+            session input / 25MB skill / 900s turn budget).
 
 ## Explicitly NOT launch blockers
 
