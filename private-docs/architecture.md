@@ -109,6 +109,14 @@ tier is frozen; everything else may change freely.
 | Hosted operator | `/internal/organizations/*` | Operators | Supabase superadmin JWT (`require_super_admin` router dependency) | private-docs SOPs only | Changeable; never versioned |
 | Infrastructure M2M | `/internal/work/*` (P3, worker service only) | Cloud Tasks | Cloud Run IAM/OIDC; service is private | No schema at all | Changes with the deployment |
 
+Domains: the naming plan, the hostname→path forwarding table, and the
+admin-host/origin-cloaking three-together rule live in
+`private-docs/domains.md`. Summary: `api.vma.votrixai.com` is the only
+hostname SDK users ever see (its Worker rejects `/internal/*`);
+`vma.votrixai.com` is the builder frontend; the Cloud Run `run.app` URL is the
+official operator entry behind superadmin JWT. Hostnames are routing, never
+the security boundary — the auth tiers above are the enforcement.
+
 Rules:
 
 - Every new non-public endpoint goes under `/internal/` (auto-exempt from the

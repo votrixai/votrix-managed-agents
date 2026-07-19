@@ -68,9 +68,18 @@ a one-way door in practice.
       and keep usage records append-only (usage attribution is already
       idempotent per work item). Post-launch metering fixes are revenue
       disputes.
-- [ ] **Canonical API domain**: CORS currently mixes `votrix.ai` and
-      `votrixai.com` roots. Pick the permanent API hostname before any client
-      SDK configuration points at it: ______
+- [ ] **Canonical domains** (decided 2026-07-19; full plan and execution
+      checklist in `private-docs/domains.md`): `api.vma.votrixai.com` =
+      public API, `vma.votrixai.com` = builder frontend,
+      `docs.vma.votrixai.com` = VMA docs, `staging[-api].vma.votrixai.com`
+      mirrors; bare `api./docs./app.votrixai.com` stay reserved for the main
+      product; operator entry = the Cloud Run `run.app` URL behind superadmin
+      JWT (`admin.vma` is conditional, bound to origin cloaking — the
+      three-together rule in `domains.md`). Permanent once the first external
+      client integrates.
+      - [ ] `domains.md` execution checklist completed (Cloudflare, Worker
+            `/internal` 404 rule, repo strings, CORS + test pins, frontend
+            repo).
 - [ ] **Deletion semantics**: the schema soft-deletes (`deleted_at`); define
       the hard-delete path (DB rows + R2 objects + E2B teardown) for customer
       data-deletion requests before there is real customer data.
