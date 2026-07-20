@@ -3,7 +3,6 @@ import { getMDXComponents } from '@/components/mdx';
 import { PageActions } from '@/components/page-actions';
 import { scopeOpenAPIPageProps } from '@/lib/openapi-page';
 import { getServedPageMarkdownUrl, source } from '@/lib/source';
-import { gitConfig } from '@/lib/shared';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
@@ -27,10 +26,7 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
     return (
       <DocsPage full className="votrix-api-reference">
         <h1 className="text-[1.75em] font-semibold">{page.data.title}</h1>
-        <PageActions
-          markdownUrl={markdownUrl}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/website/public/openapi/vma.json`}
-        />
+        <PageActions markdownUrl={markdownUrl} />
         <DocsBody>
           <OpenAPIPage {...openAPIPageProps} />
         </DocsBody>
@@ -49,10 +45,7 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
     >
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <PageActions
-        markdownUrl={markdownUrl}
-        githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/${page.path}`}
-      />
+      <PageActions markdownUrl={markdownUrl} />
       <DocsBody className="docs-prose">
         <MDX
           components={getMDXComponents({

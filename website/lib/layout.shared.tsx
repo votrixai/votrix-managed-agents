@@ -1,6 +1,6 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 import Image from 'next/image';
-import { appName, gitConfig } from '@/lib/shared';
+import { appName } from '@/lib/shared';
 
 function VotrixMark() {
   return (
@@ -34,6 +34,5 @@ export function baseOptions(): BaseLayoutProps {
         on: 'nav',
       },
     ],
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };
 }
