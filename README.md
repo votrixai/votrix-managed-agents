@@ -19,7 +19,7 @@ for real workloads.
 
 ## What is here
 
-Implemented in the Votrix core:
+Supported in the Votrix core:
 
 - A public-beta `/v1` surface for API keys, agents and immutable versions,
   environments, sessions and events, files, Skills, Vaults, native model
@@ -53,7 +53,7 @@ Implemented in the Votrix core:
 - An optional E2B sandbox provider for isolated session command and filesystem execution.
 - An optional self-hosted work-queue worker and an importable deployment scheduler tick.
 
-Important partial areas:
+Important deployment and feature constraints:
 
 - Streaming previews are intentionally best-effort. PostgreSQL `NOTIFY` preserves
   hosted cross-instance typewriter delivery but does not make ephemeral frames

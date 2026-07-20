@@ -30,6 +30,15 @@ async def list_user_organizations(
     return list(result.all())
 
 
+async def list_all_organizations(db: AsyncSession) -> list[Organization]:
+    result = await db.execute(
+        select(Organization)
+        .where(Organization.archived_at.is_(None))
+        .order_by(Organization.name.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def list_owners(db: AsyncSession, organization_id: str) -> list[OrganizationOwner]:
     result = await db.execute(
         select(OrganizationOwner)

@@ -3,36 +3,36 @@ title: Known Incompatibilities
 description: Important behavioral and infrastructure differences from Claude Managed Agents.
 ---
 
-Snapshot: 2026-07-17
+Snapshot: 2026-07-20
 Runtime kernel: Deep Agents 0.6.12
 
 This is the explicit gap ledger between VMA and [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview). It covers differences that can be hidden by a compatible route or response shape but materially affect execution, security, durability, or operations.
 
 VMA is an independent implementation. The goal is to make incompatibilities visible and actionable, not to imply that another model provider or a self-hosted process reproduces Anthropic's private harness and managed infrastructure.
 
-Status terms match the [compatibility matrix](./compatibility-matrix.md): **Implemented**, **Partial**, and **Gap**.
+Availability and readiness labels match the [compatibility matrix](./compatibility-matrix.md). They state whether a capability is public, preview-only, operator-configured, constrained, or unavailable; they do not treat Claude equivalence as the same question.
 
 ## Summary
 
-| Difference | Status | Operational consequence |
+| Difference | Availability and VMA readiness | Operational consequence |
 | --- | --- | --- |
-| Cross-process live preview broker | Implemented | Hosted API/worker services use PostgreSQL `pg_notify`; local/self-hosted deployments default to the in-process transport. Preview frames remain best-effort and non-replayable. |
-| Distributed turn ownership | Partial | Database work and Session execution leases support the maintained multi-instance worker fleet and fence stale terminal writes, but provider and sandbox side effects are not exactly-once. |
-| E2B remote sandbox | Partial | Optional isolated execution exists, but E2B is hosted unless deployed through BYOC and is not Claude's managed sandbox service. |
-| Dynamic Session files and output export | Partial | E2B supports bounded append-only inputs, direct output snapshots, and mounted-file block translation, but not arbitrary mount mutation or model-independent Claude-identical multimodal behavior. |
-| Provider behavioral parity | Inherently partial | Tool calls, streaming, reasoning, multimodal input, usage, and failures vary by model/provider. |
-| `deepseek-reasoner` runtime | Unsupported | The current Deep Agents adapter rejects it because the harness requires tool calling. |
-| Exact declared subagent roster | Partial | Deep Agents can add a built-in general-purpose subagent when `task` is exposed. |
-| Claude durable multiagent threads | Gap | Deep Agents synchronous subagents are ephemeral; background subagents use another protocol. |
-| MCP OAuth lifecycle | Gap | Stored/matched access tokens are not automatically refreshed or revoked. |
-| Anthropic system skills | Gap | Their private packages and behavior are unavailable to VMA. |
-| Claude memory mount/writeback | Gap | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
-| Production deployment scheduler | Gap | An idempotent tick exists, but no always-on scheduler service is included. |
-| Webhook delivery | Gap | Cryptographic helpers exist, but endpoint management and delivery do not; webhooks are not a public-beta product promise. |
-| User-profile enrollment and attribution | Gap | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |
-| Organization RBAC/SSO and Postgres RLS | Gap | Organization-scoped API keys are the beta tenant boundary, not an enterprise identity system or database defense-in-depth policy. |
-| Tenant quotas and raw ledgers | Implemented | Request, active-work, daily token, and stored-byte limits plus append-only audit/usage facts provide the public-beta baseline, not enterprise policy or priced billing. |
-| Billing and payments | Deferred | Operator-provisioned, upstream-limited Organization keys can fund trials, but price books, authoritative balances/reservations, top-ups, refunds, Stripe, and invoices are outside this release. |
+| Cross-process live preview broker | Hosted infrastructure — supported | Hosted API/worker services use PostgreSQL `pg_notify`; local/self-hosted deployments default to the in-process transport. Preview frames remain best-effort and non-replayable. |
+| Distributed turn ownership | Runtime — constrained | Database work and Session execution leases support the maintained multi-instance worker fleet and fence stale terminal writes, but provider and sandbox side effects are not exactly-once. |
+| E2B remote sandbox | Operator-configured — constrained | Optional isolated execution exists, but E2B is hosted unless deployed through BYOC and is not Claude's managed sandbox service. |
+| Dynamic Session files and output export | Public beta subset — constrained | E2B supports bounded append-only inputs, direct output snapshots, and mounted-file block translation, but not arbitrary mount mutation or model-independent Claude-identical multimodal behavior. |
+| Provider behavioral parity | Provider-dependent — equivalence not claimed | Tool calls, streaming, reasoning, multimodal input, usage, and failures vary by model/provider. |
+| `deepseek-reasoner` runtime | Not supported | The current Deep Agents adapter rejects it because the harness requires tool calling. |
+| Exact declared subagent roster | Runtime — constrained | Deep Agents can add a built-in general-purpose subagent when `task` is exposed. |
+| Claude durable multiagent threads | Not offered | Deep Agents synchronous subagents are ephemeral; background subagents use another protocol. |
+| MCP OAuth lifecycle | Not available | Stored/matched access tokens are not automatically refreshed or revoked. |
+| Anthropic system skills | Not offered | Their private packages and behavior are unavailable to VMA. |
+| Claude memory mount/writeback | Repository preview — no writeback | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
+| Production deployment scheduler | Operator tick only — no running service | An idempotent tick exists, but no always-on scheduler service is included. |
+| Webhook delivery | Not offered | Cryptographic helpers exist, but endpoint management and delivery do not; webhooks are not a public-beta product promise. |
+| User-profile enrollment and attribution | Repository preview — lifecycle only | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |
+| Organization RBAC/SSO and Postgres RLS | Hosted owner/superadmin subset | Hosted Supabase owners and platform superadmins are supported, but member roles, group mapping, SSO policy, and Postgres RLS are not. |
+| Tenant quotas and raw ledgers | Public beta — supported | Request, active-work, daily token, and stored-byte limits plus append-only audit/usage facts provide the public-beta baseline, not enterprise policy or priced billing. |
+| Billing and payments | Deferred product — not offered | Operator-provisioned, upstream-limited Organization keys can fund trials, but price books, authoritative balances/reservations, top-ups, refunds, Stripe, and invoices are outside this release. |
 
 ## API and SDK surface
 
@@ -301,7 +301,7 @@ grep -> grep
 
 Arguments, path handling, result strings, truncation, error messages, and event timing can differ. Clients should consume the public VMA events, not depend on raw Deep Agents tool output.
 
-### Approval is partial
+### Approval coverage is limited
 
 `always_ask` maps to LangGraph human-in-the-loop interrupts for supported tools, and VMA can represent approval/denial continuation events. Remaining risks include:
 
@@ -331,7 +331,7 @@ A Deep Agents synchronous subagent:
 - Returns one final message or structured response to the coordinator.
 - Does not expose a durable independently steerable VMA session thread.
 
-Claude multiagent sessions instead expose durable thread resources and event streams while sharing session infrastructure. VMA thread response objects therefore remain partial even when their shapes validate.
+Claude multiagent sessions instead expose durable thread resources and event streams while sharing session infrastructure. VMA thread response objects therefore remain a shape-only repository preview even when their shapes validate.
 
 ### Built-in general-purpose subagent can expand the roster
 
@@ -353,7 +353,7 @@ VMA does not currently bridge these protocols. Enabling upstream async subagents
 
 ## MCP and vault credentials
 
-### Static connection support is partial
+### Static connection support is limited
 
 VMA validates MCP server/toolset references, matches session-vault credentials by normalized server URL, strips secrets from public run state, and can supply authorization headers to remote MCP clients. Missing credentials emit a session error rather than preventing resource creation.
 

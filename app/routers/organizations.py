@@ -101,6 +101,11 @@ async def my_organizations(
     user: AuthenticatedUser = Depends(require_user),
     db: AsyncSession = Depends(get_session),
 ):
+    if user.is_super_admin:
+        return [
+            _organization_response(organization)
+            for organization in await owners_q.list_all_organizations(db)
+        ]
     rows = await owners_q.list_user_organizations(db, user.id)
     return [_organization_response(organization) for organization, _owner in rows]
 

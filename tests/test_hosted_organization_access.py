@@ -81,6 +81,45 @@ async def test_non_owner_is_rejected_and_owner_cannot_manage_api_keys(client, mo
 
 
 @pytest.mark.anyio
+async def test_superadmin_can_list_and_access_all_organizations_without_membership(
+    client, monkeypatch
+):
+    async with session_scope() as db:
+        for suffix in ("all_one", "all_two"):
+            db.add(
+                Organization(
+                    id=f"org_superadmin_{suffix}",
+                    slug=f"superadmin-{suffix}",
+                    name=f"Superadmin {suffix}",
+                    metadata_={},
+                )
+            )
+        await db.commit()
+
+    monkeypatch.setattr(
+        "app.human_auth.authenticate_user",
+        lambda _token: _user("user_superadmin", super_admin=True),
+    )
+    response = await client.get(
+        "/v1/me/organizations", headers={"authorization": "Bearer a.b.c"}
+    )
+    assert response.status_code == 200
+    assert {"org_superadmin_all_one", "org_superadmin_all_two"}.issubset(
+        {item["id"] for item in response.json()}
+    )
+
+    response = await client.get(
+        "/v1/agents",
+        headers={
+            "authorization": "Bearer a.b.c",
+            "x-organization-id": "org_superadmin_all_one",
+            "votrix-managed-agents-beta": "votrix-managed-agents-2026-04-01",
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.anyio
 async def test_superadmin_creates_organization_owner_and_api_key(client, monkeypatch):
     monkeypatch.setattr(
         "app.human_auth.authenticate_user",
