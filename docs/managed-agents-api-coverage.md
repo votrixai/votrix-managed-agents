@@ -17,12 +17,16 @@ Skills, Vaults/native model Credentials, Model Providers, health, and
 capabilities appear in OpenAPI. Other rows below describe repository
 compatibility work, not public-beta product promises.
 
-Status legend:
+Every row answers three separate questions:
 
-- `implemented`: route and basic lifecycle behavior are implemented.
-- `partial`: route exists and persists data, but exact schema or production semantics are incomplete.
-- `stub`: route exists as a compatibility placeholder.
-- `todo`: not implemented.
+- **Public Beta**: `Yes` means the route is exposed when `VMA_PUBLIC_GA_ONLY=true`.
+- **VMA Readiness**: `Complete` is fully usable for the documented VMA contract;
+  `Limited` has a material constraint described in that section; `Prototype`
+  provides compatibility data without a product-grade execution path; `Missing`
+  is not implemented.
+- **Claude Parity**: `Compatible` means the tested wire contract is compatible;
+  `Different` means material behavior intentionally differs; `N/A` marks a
+  VMA-native route or an unavailable capability.
 
 Cross-resource metadata contract:
 
@@ -36,13 +40,13 @@ Hosted API keys are Organization-scoped, hashed at rest, independently revocable
 and authorized through `api`, `api_keys:manage`, or `worker`. Plaintext is
 returned only by create/rotate. A trusted CLI creates the first management key.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/api_keys` | implemented |
-| list | `GET /v1/api_keys` | implemented |
-| retrieve | `GET /v1/api_keys/{api_key_id}` | implemented |
-| revoke | `POST /v1/api_keys/{api_key_id}/revoke` | implemented |
-| rotate | `POST /v1/api_keys/{api_key_id}/rotate` | implemented |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/api_keys` | Yes | Complete | N/A |
+| list | `GET /v1/api_keys` | Yes | Complete | N/A |
+| retrieve | `GET /v1/api_keys/{api_key_id}` | Yes | Complete | N/A |
+| revoke | `POST /v1/api_keys/{api_key_id}/revoke` | Yes | Complete | N/A |
+| rotate | `POST /v1/api_keys/{api_key_id}/rotate` | Yes | Complete | N/A |
 
 ## Model Providers (VMA native)
 
@@ -50,42 +54,46 @@ The authenticated catalog is a secret-free projection of the server-owned
 provider registry. It never returns an API key, private environment-variable
 name, base URL, model kwargs, or Session-specific credential availability.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| list | `GET /v1/model_providers` | implemented |
-| retrieve | `GET /v1/model_providers/{provider_id}` | implemented |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| list | `GET /v1/model_providers` | Yes | Complete | N/A |
+| retrieve | `GET /v1/model_providers/{provider_id}` | Yes | Complete | N/A |
 
 ## Agents
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/agents` | implemented |
-| retrieve | `GET /v1/agents/{agent_id}` | implemented |
-| update | `POST /v1/agents/{agent_id}` | implemented |
-| update alias | `PATCH /v1/agents/{agent_id}` | implemented |
-| list | `GET /v1/agents` | implemented |
-| archive | `POST /v1/agents/{agent_id}/archive` | implemented |
-| list versions | `GET /v1/agents/{agent_id}/versions` | implemented |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/agents` | Yes | Complete | Compatible |
+| retrieve | `GET /v1/agents/{agent_id}` | Yes | Complete | Compatible |
+| update | `POST /v1/agents/{agent_id}` | Yes | Complete | Compatible |
+| update alias | `PATCH /v1/agents/{agent_id}` | Yes | Complete | Compatible |
+| list | `GET /v1/agents` | Yes | Complete | Compatible |
+| archive | `POST /v1/agents/{agent_id}/archive` | Yes | Complete | Compatible |
+| list versions | `GET /v1/agents/{agent_id}/versions` | Yes | Complete | Compatible |
 
 ## Environments
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/environments` | implemented |
-| retrieve | `GET /v1/environments/{environment_id}` | implemented |
-| update | `POST /v1/environments/{environment_id}` | implemented |
-| update alias | `PATCH /v1/environments/{environment_id}` | implemented |
-| list | `GET /v1/environments` | implemented |
-| delete | `DELETE /v1/environments/{environment_id}` | implemented |
-| archive | `POST /v1/environments/{environment_id}/archive` | implemented |
-| work retrieve | `GET /v1/environments/{environment_id}/work/{work_id}` | partial |
-| work update | `POST /v1/environments/{environment_id}/work/{work_id}` | partial |
-| work list | `GET /v1/environments/{environment_id}/work` | partial |
-| work ack | `POST /v1/environments/{environment_id}/work/{work_id}/ack` | partial |
-| work heartbeat | `POST /v1/environments/{environment_id}/work/{work_id}/heartbeat` | partial |
-| work poll | `GET /v1/environments/{environment_id}/work/poll` | partial |
-| work stats | `GET /v1/environments/{environment_id}/work/stats` | partial |
-| work stop | `POST /v1/environments/{environment_id}/work/{work_id}/stop` | partial |
+The work routes are the operator/self-hosted worker protocol. They are complete
+for VMA's durable work ledger but excluded from the public-beta schema; remote
+provider side effects are not guaranteed exactly once.
+
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/environments` | Yes | Complete | Compatible |
+| retrieve | `GET /v1/environments/{environment_id}` | Yes | Complete | Compatible |
+| update | `POST /v1/environments/{environment_id}` | Yes | Complete | Compatible |
+| update alias | `PATCH /v1/environments/{environment_id}` | Yes | Complete | Compatible |
+| list | `GET /v1/environments` | Yes | Complete | Compatible |
+| delete | `DELETE /v1/environments/{environment_id}` | Yes | Complete | Compatible |
+| archive | `POST /v1/environments/{environment_id}/archive` | Yes | Complete | Compatible |
+| work retrieve | `GET /v1/environments/{environment_id}/work/{work_id}` | No | Complete | Different |
+| work update | `POST /v1/environments/{environment_id}/work/{work_id}` | No | Complete | Different |
+| work list | `GET /v1/environments/{environment_id}/work` | No | Complete | Different |
+| work ack | `POST /v1/environments/{environment_id}/work/{work_id}/ack` | No | Complete | Different |
+| work heartbeat | `POST /v1/environments/{environment_id}/work/{work_id}/heartbeat` | No | Complete | Different |
+| work poll | `GET /v1/environments/{environment_id}/work/poll` | No | Complete | Different |
+| work stats | `GET /v1/environments/{environment_id}/work/stats` | No | Complete | Different |
+| work stop | `POST /v1/environments/{environment_id}/work/{work_id}/stop` | No | Complete | Different |
 
 ## Sessions
 
@@ -105,26 +113,26 @@ Credential returns `422 model_credential_required`. Because the MVP persists
 one funding binding per Session, the coordinator and all pinned subagents must
 use the same provider.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/sessions` | implemented |
-| retrieve | `GET /v1/sessions/{session_id}` | implemented |
-| update | `POST /v1/sessions/{session_id}` | implemented |
-| update alias | `PATCH /v1/sessions/{session_id}` | implemented |
-| list | `GET /v1/sessions` | implemented |
-| delete | `DELETE /v1/sessions/{session_id}` | implemented |
-| archive | `POST /v1/sessions/{session_id}/archive` | implemented |
-| cancel compatibility helper | `POST /v1/sessions/{session_id}/cancel` | implemented |
-| resume compatibility helper | `POST /v1/sessions/{session_id}/resume` | implemented |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/sessions` | Yes | Complete | Compatible |
+| retrieve | `GET /v1/sessions/{session_id}` | Yes | Complete | Compatible |
+| update | `POST /v1/sessions/{session_id}` | Yes | Complete | Compatible |
+| update alias | `PATCH /v1/sessions/{session_id}` | Yes | Complete | Compatible |
+| list | `GET /v1/sessions` | Yes | Complete | Compatible |
+| delete | `DELETE /v1/sessions/{session_id}` | Yes | Complete | Compatible |
+| archive | `POST /v1/sessions/{session_id}/archive` | Yes | Complete | Compatible |
+| cancel compatibility helper | `POST /v1/sessions/{session_id}/cancel` | Yes | Complete | Compatible |
+| resume compatibility helper | `POST /v1/sessions/{session_id}/resume` | Yes | Complete | Compatible |
 
 ## Session Events
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| list | `GET /v1/sessions/{session_id}/events` | implemented |
-| send | `POST /v1/sessions/{session_id}/events` | implemented; optional durable `Idempotency-Key` replay |
-| stream | `GET /v1/sessions/{session_id}/events/stream` | partial |
-| stream alias | `GET /v1/sessions/{session_id}/stream` | partial |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| list | `GET /v1/sessions/{session_id}/events` | Yes | Complete | Compatible |
+| send | `POST /v1/sessions/{session_id}/events` | Yes | Complete | Compatible |
+| stream | `GET /v1/sessions/{session_id}/events/stream` | Yes | Limited | Different |
+| stream alias | `GET /v1/sessions/{session_id}/stream` | Yes | Limited | Different |
 
 ## Session Resources
 
@@ -147,36 +155,39 @@ transaction. Only an exact retry repairs a provider seal that advanced before
 the database commit; unrelated operations fail closed. There is no durable
 outbox or automatic orphan recovery in this MVP.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| add | `POST /v1/sessions/{session_id}/resources` | implemented for files; bound E2B Sessions require an idle append |
-| retrieve | `GET /v1/sessions/{session_id}/resources/{resource_id}` | implemented |
-| update | `POST /v1/sessions/{session_id}/resources/{resource_id}` | partial; rejected after E2B binding |
-| list | `GET /v1/sessions/{session_id}/resources` | implemented |
-| delete | `DELETE /v1/sessions/{session_id}/resources/{resource_id}` | partial; rejected after E2B binding |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| add | `POST /v1/sessions/{session_id}/resources` | Yes | Limited | Different |
+| retrieve | `GET /v1/sessions/{session_id}/resources/{resource_id}` | Yes | Complete | Compatible |
+| update | `POST /v1/sessions/{session_id}/resources/{resource_id}` | Yes | Limited | Different |
+| list | `GET /v1/sessions/{session_id}/resources` | Yes | Complete | Compatible |
+| delete | `DELETE /v1/sessions/{session_id}/resources/{resource_id}` | Yes | Limited | Different |
 
 ## Session Threads
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| retrieve | `GET /v1/sessions/{session_id}/threads/{thread_id}` | partial |
-| list | `GET /v1/sessions/{session_id}/threads` | partial |
-| archive | `POST /v1/sessions/{session_id}/threads/{thread_id}/archive` | partial |
-| list events | `GET /v1/sessions/{session_id}/threads/{thread_id}/events` | partial |
-| stream events | `GET /v1/sessions/{session_id}/threads/{thread_id}/stream` | partial |
+Thread records and response shapes exist, but Deep Agents delegation does not
+provide Claude-equivalent durable, independently steerable child-agent threads.
+
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| retrieve | `GET /v1/sessions/{session_id}/threads/{thread_id}` | No | Prototype | Different |
+| list | `GET /v1/sessions/{session_id}/threads` | No | Prototype | Different |
+| archive | `POST /v1/sessions/{session_id}/threads/{thread_id}/archive` | No | Prototype | Different |
+| list events | `GET /v1/sessions/{session_id}/threads/{thread_id}/events` | No | Prototype | Different |
+| stream events | `GET /v1/sessions/{session_id}/threads/{thread_id}/stream` | No | Prototype | Different |
 
 ## Deployments
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/deployments` | partial |
-| retrieve | `GET /v1/deployments/{deployment_id}` | partial |
-| update | `POST /v1/deployments/{deployment_id}` | partial |
-| list | `GET /v1/deployments` | partial |
-| archive | `POST /v1/deployments/{deployment_id}/archive` | partial |
-| pause | `POST /v1/deployments/{deployment_id}/pause` | partial |
-| run | `POST /v1/deployments/{deployment_id}/run` | partial |
-| unpause | `POST /v1/deployments/{deployment_id}/unpause` | partial |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/deployments` | No | Limited | Different |
+| retrieve | `GET /v1/deployments/{deployment_id}` | No | Complete | Compatible |
+| update | `POST /v1/deployments/{deployment_id}` | No | Limited | Different |
+| list | `GET /v1/deployments` | No | Complete | Compatible |
+| archive | `POST /v1/deployments/{deployment_id}/archive` | No | Complete | Compatible |
+| pause | `POST /v1/deployments/{deployment_id}/pause` | No | Complete | Compatible |
+| run | `POST /v1/deployments/{deployment_id}/run` | No | Complete | Compatible |
+| unpause | `POST /v1/deployments/{deployment_id}/unpause` | No | Complete | Compatible |
 
 Deployment create/update validates the referenced agent, environment, and `initial_events` containing at least one `user.message`; short-form `agent="<agent_id>"` pins the latest active agent version. Deployment list supports SDK `agent_id`/`status` filters and rejects `status` combined with `include_archived`. Deployment resources use the SDK session-resource union for files, GitHub repositories, and memory stores. Deployment responses omit write-only GitHub authorization tokens, and manual deployment runs mount deployment resources onto the created session. Paused deployments still allow manual runs while suppressing scheduled triggers, archived deployments are terminal for modification/run routes, primary-agent archive auto-archives the deployment without creating a run, failed session creation is recorded on the deployment run, and the core exposes an importable due-schedule tick for self-hosted/hosted schedulers.
 
@@ -184,10 +195,10 @@ Deployment create/update validates the referenced agent, environment, and `initi
 
 Deployment-run list supports SDK `deployment_id`, `trigger_type`, created-at filters, and exact `has_error` semantics: `true` returns runs with non-null `error`, while `false` returns runs with non-null `session_id`.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| retrieve | `GET /v1/deployment_runs/{deployment_run_id}` | partial |
-| list | `GET /v1/deployment_runs` | partial |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| retrieve | `GET /v1/deployment_runs/{deployment_run_id}` | No | Complete | Compatible |
+| list | `GET /v1/deployment_runs` | No | Complete | Compatible |
 
 ## Vaults
 
@@ -205,48 +216,52 @@ copied into E2B. VMA never reads a model API key from process environment or
 provider configuration. Keyless `fake` and `ollama` providers use credential
 source `none`.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/vaults` | partial |
-| retrieve | `GET /v1/vaults/{vault_id}` | partial |
-| update | `POST /v1/vaults/{vault_id}` | partial |
-| list | `GET /v1/vaults` | partial |
-| delete | `DELETE /v1/vaults/{vault_id}` | partial |
-| archive | `POST /v1/vaults/{vault_id}/archive` | partial |
-| credential create | `POST /v1/vaults/{vault_id}/credentials` | partial |
-| native model credential create | `POST /v1/vaults/{vault_id}/model_credentials` | implemented |
-| native model credential list | `GET /v1/vaults/{vault_id}/model_credentials` | implemented |
-| native model credential retrieve | `GET /v1/vaults/{vault_id}/model_credentials/{credential_id}` | implemented |
-| native model credential rotate | `POST /v1/vaults/{vault_id}/model_credentials/{credential_id}` | implemented |
-| native model credential archive | `POST /v1/vaults/{vault_id}/model_credentials/{credential_id}/archive` | implemented |
-| native model credential delete | `DELETE /v1/vaults/{vault_id}/model_credentials/{credential_id}` | implemented |
-| credential retrieve | `GET /v1/vaults/{vault_id}/credentials/{credential_id}` | partial |
-| credential update | `POST /v1/vaults/{vault_id}/credentials/{credential_id}` | partial |
-| credential list | `GET /v1/vaults/{vault_id}/credentials` | partial |
-| credential delete | `DELETE /v1/vaults/{vault_id}/credentials/{credential_id}` | partial |
-| credential archive | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/archive` | partial |
-| credential OAuth validate | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate` | partial |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/vaults` | Yes | Complete | Compatible |
+| retrieve | `GET /v1/vaults/{vault_id}` | Yes | Complete | Compatible |
+| update | `POST /v1/vaults/{vault_id}` | Yes | Complete | Compatible |
+| list | `GET /v1/vaults` | Yes | Complete | Compatible |
+| delete | `DELETE /v1/vaults/{vault_id}` | Yes | Complete | Compatible |
+| archive | `POST /v1/vaults/{vault_id}/archive` | Yes | Complete | Compatible |
+| credential create | `POST /v1/vaults/{vault_id}/credentials` | No | Limited | Compatible |
+| native model credential create | `POST /v1/vaults/{vault_id}/model_credentials` | Yes | Complete | N/A |
+| native model credential list | `GET /v1/vaults/{vault_id}/model_credentials` | Yes | Complete | N/A |
+| native model credential retrieve | `GET /v1/vaults/{vault_id}/model_credentials/{credential_id}` | Yes | Complete | N/A |
+| native model credential rotate | `POST /v1/vaults/{vault_id}/model_credentials/{credential_id}` | Yes | Complete | N/A |
+| native model credential archive | `POST /v1/vaults/{vault_id}/model_credentials/{credential_id}/archive` | Yes | Complete | N/A |
+| native model credential delete | `DELETE /v1/vaults/{vault_id}/model_credentials/{credential_id}` | Yes | Complete | N/A |
+| credential retrieve | `GET /v1/vaults/{vault_id}/credentials/{credential_id}` | No | Limited | Compatible |
+| credential update | `POST /v1/vaults/{vault_id}/credentials/{credential_id}` | No | Limited | Compatible |
+| credential list | `GET /v1/vaults/{vault_id}/credentials` | No | Limited | Compatible |
+| credential delete | `DELETE /v1/vaults/{vault_id}/credentials/{credential_id}` | No | Limited | Compatible |
+| credential archive | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/archive` | No | Limited | Compatible |
+| credential OAuth validate | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate` | No | Limited | Different |
 
 ## Memory Stores
 
 Memory records enforce SDK-compatible slash-prefixed path validation, required create content, the official 100KB content limit, and the 2000 memories per store limit. Memory list supports `path_prefix`, `depth` rollups as `memory_prefix` items, `order`, `order_by`, and `view`. Every non-no-op create/update/delete produces an immutable memory version; stale content preconditions return the current memory when the requested content/path already matches. Delete supports `expected_content_sha256`, and deleted memory-version responses return `null` content/hash/size while preserving the deleted path. Store-level version listing and version retrieve keep working after the memory is deleted. Memory-version list supports SDK `memory_id`, `operation`, `api_key_id`, `session_id`, `view`, and created-at filters. Redaction rejects the current live head version, and archived stores remain readable but reject writes and new session attachments.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/memory_stores` | partial |
-| retrieve | `GET /v1/memory_stores/{memory_store_id}` | partial |
-| update | `POST /v1/memory_stores/{memory_store_id}` | partial |
-| list | `GET /v1/memory_stores` | partial |
-| delete | `DELETE /v1/memory_stores/{memory_store_id}` | partial |
-| archive | `POST /v1/memory_stores/{memory_store_id}/archive` | partial |
-| memory create | `POST /v1/memory_stores/{memory_store_id}/memories` | partial |
-| memory retrieve | `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | partial |
-| memory update | `POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | partial |
-| memory list | `GET /v1/memory_stores/{memory_store_id}/memories` | partial |
-| memory delete | `DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | partial |
-| memory version retrieve | `GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}` | partial |
-| memory version list | `GET /v1/memory_stores/{memory_store_id}/memory_versions` | partial |
-| memory version redact | `POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact` | partial |
+Memory Store route readiness is complete. The separate runtime limitation is
+that edits made inside a read-write sandbox are not synchronized back into
+managed Memory Store versions.
+
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/memory_stores` | No | Complete | Compatible |
+| retrieve | `GET /v1/memory_stores/{memory_store_id}` | No | Complete | Compatible |
+| update | `POST /v1/memory_stores/{memory_store_id}` | No | Complete | Compatible |
+| list | `GET /v1/memory_stores` | No | Complete | Compatible |
+| delete | `DELETE /v1/memory_stores/{memory_store_id}` | No | Complete | Compatible |
+| archive | `POST /v1/memory_stores/{memory_store_id}/archive` | No | Complete | Compatible |
+| memory create | `POST /v1/memory_stores/{memory_store_id}/memories` | No | Complete | Compatible |
+| memory retrieve | `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | No | Complete | Compatible |
+| memory update | `POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | No | Complete | Compatible |
+| memory list | `GET /v1/memory_stores/{memory_store_id}/memories` | No | Complete | Compatible |
+| memory delete | `DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | No | Complete | Compatible |
+| memory version retrieve | `GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}` | No | Complete | Compatible |
+| memory version list | `GET /v1/memory_stores/{memory_store_id}/memory_versions` | No | Complete | Compatible |
+| memory version redact | `POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact` | No | Complete | Compatible |
 
 ## Files
 
@@ -267,42 +282,48 @@ files mounted in that Session and become LangChain standard image, PDF, or text
 blocks. Profiles without multimodal input receive a sandbox-path marker for
 binary files instead of an invalid provider file ID.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| list | `GET /v1/files` | partial |
-| delete | `DELETE /v1/files/{file_id}` | partial |
-| download | `GET /v1/files/{file_id}/content` | partial |
-| retrieve metadata | `GET /v1/files/{file_id}` | partial |
-| upload | `POST /v1/files` | partial |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| list | `GET /v1/files` | Yes | Limited | Compatible |
+| delete | `DELETE /v1/files/{file_id}` | Yes | Limited | Compatible |
+| download | `GET /v1/files/{file_id}/content` | Yes | Limited | Compatible |
+| retrieve metadata | `GET /v1/files/{file_id}` | Yes | Limited | Compatible |
+| upload | `POST /v1/files` | Yes | Limited | Compatible |
 
 ## Skills
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/skills` | partial |
-| retrieve | `GET /v1/skills/{skill_id}` | partial |
-| list | `GET /v1/skills` | partial |
-| delete | `DELETE /v1/skills/{skill_id}` | partial |
-| version create | `POST /v1/skills/{skill_id}/versions` | partial |
-| version retrieve | `GET /v1/skills/{skill_id}/versions/{version}` | partial |
-| version list | `GET /v1/skills/{skill_id}/versions` | partial |
-| version delete | `DELETE /v1/skills/{skill_id}/versions/{version}` | partial |
-| version download | `GET /v1/skills/{skill_id}/versions/{version}/content` | partial |
+Custom Skill archives are validated and versioned, but runtime behavior follows
+Deep Agents and Anthropic system Skill packages are not available to VMA.
+
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/skills` | Yes | Limited | Different |
+| retrieve | `GET /v1/skills/{skill_id}` | Yes | Limited | Different |
+| list | `GET /v1/skills` | Yes | Limited | Different |
+| delete | `DELETE /v1/skills/{skill_id}` | Yes | Limited | Different |
+| version create | `POST /v1/skills/{skill_id}/versions` | Yes | Limited | Different |
+| version retrieve | `GET /v1/skills/{skill_id}/versions/{version}` | Yes | Limited | Different |
+| version list | `GET /v1/skills/{skill_id}/versions` | Yes | Limited | Different |
+| version delete | `DELETE /v1/skills/{skill_id}/versions/{version}` | Yes | Limited | Different |
+| version download | `GET /v1/skills/{skill_id}/versions/{version}/content` | Yes | Limited | Different |
 
 ## Webhooks
 
 The current SDK exposes webhook event types and unwrap helpers in beta, but this API pass did not find beta webhook CRUD routes in `api.md`.
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| unwrap/verify helpers | SDK local helper | partial; Standard Webhooks-compatible helpers in `app.webhooks` |
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| unwrap/verify helpers | SDK local helper | No | Prototype | Different |
 
 ## User Profiles
 
-| Operation | Route | Status |
-| --- | --- | --- |
-| create | `POST /v1/user_profiles` | partial |
-| retrieve | `GET /v1/user_profiles/{user_profile_id}` | partial |
-| update | `POST /v1/user_profiles/{user_profile_id}` | partial |
-| list | `GET /v1/user_profiles` | partial |
-| create enrollment URL | `POST /v1/user_profiles/{user_profile_id}/enrollment_url` | not implemented; VMA has no hosted enrollment or trust-grant flow |
+Profile records and relationship metadata are stored, but VMA has no hosted
+enrollment, verification, trust-grant, or provider-attribution flow.
+
+| Operation | Route | Public Beta | VMA Readiness | Claude Parity |
+| --- | --- | --- | --- | --- |
+| create | `POST /v1/user_profiles` | No | Prototype | Different |
+| retrieve | `GET /v1/user_profiles/{user_profile_id}` | No | Prototype | Different |
+| update | `POST /v1/user_profiles/{user_profile_id}` | No | Prototype | Different |
+| list | `GET /v1/user_profiles` | No | Prototype | Different |
+| create enrollment URL | `POST /v1/user_profiles/{user_profile_id}/enrollment_url` | No | Missing | N/A |
