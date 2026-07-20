@@ -96,12 +96,12 @@ class HostedUserAuthProvider:
             organization = await db.get(Organization, organization_id)
             if organization is None or organization.archived_at is not None:
                 raise HTTPException(status_code=404, detail="Organization not found")
-            if not await is_owner(db, organization_id, user.id):
+            if not user.is_super_admin and not await is_owner(db, organization_id, user.id):
                 raise HTTPException(status_code=403, detail="Not an owner of this Organization")
         return CurrentOrganization(
             id=organization_id,
             slug=organization.slug,
-            source="supabase_owner",
+            source="supabase_super_admin" if user.is_super_admin else "supabase_owner",
             api_key_id=user.id,
             scopes=frozenset({API_SCOPE}),
         )
