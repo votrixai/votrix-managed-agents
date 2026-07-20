@@ -23,13 +23,13 @@
       "name": "vma-api-router-staging",
       "routes": [
         {
-          "pattern": "staging-vma.votrixai.com",
+          "pattern": "staging-api.vma.votrixai.com",
           "custom_domain": true
         }
       ],
       "vars": {
         "ENVIRONMENT": "staging",
-        "PUBLIC_HOSTNAME": "staging-vma.votrixai.com",
+        "PUBLIC_HOSTNAME": "staging-api.vma.votrixai.com",
         "ORIGIN_URL": "https://votrix-managed-agents-staging-eqp3ofm5eq-uc.a.run.app"
       }
     },
@@ -37,13 +37,13 @@
       "name": "vma-api-router-production",
       "routes": [
         {
-          "pattern": "vma.votrixai.com",
+          "pattern": "api.vma.votrixai.com",
           "custom_domain": true
         }
       ],
       "vars": {
         "ENVIRONMENT": "production",
-        "PUBLIC_HOSTNAME": "vma.votrixai.com",
+        "PUBLIC_HOSTNAME": "api.vma.votrixai.com",
         "ORIGIN_URL": "https://votrix-managed-agents-eqp3ofm5eq-uc.a.run.app"
       }
     }

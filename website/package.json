@@ -12,6 +12,8 @@
     "lint": "eslint",
     "typecheck": "next typegen && fumadocs-mdx && tsc --noEmit",
     "postinstall": "fumadocs-mdx && patch-package",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:dry-run": "npm run build && wrangler deploy --dry-run",
     "openapi:export": "cd .. && uv run python scripts/export_openapi.py",
     "openapi:sync": "npm run openapi:export"
   },
@@ -42,7 +44,8 @@
     "postcss": "^8.5.19",
     "serve": "^14.2.6",
     "tailwindcss": "^4.3.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "4.111.0"
   },
   "engines": {
     "node": ">=22.0"

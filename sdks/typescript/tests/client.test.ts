@@ -80,7 +80,7 @@ describe("client configuration and transport", () => {
     clearConfigurationEnvironment();
     process.env.VMA_API_KEY = "vma_live_primary_secret";
     process.env.VOTRIX_VMA_API_KEY = "vma_live_alias_secret";
-    process.env.VMA_BASE_URL = "https://vma.votrixai.com";
+    process.env.VMA_BASE_URL = "https://api.vma.votrixai.com";
 
     expect(() => new Votrix({ fetch: successFetch() })).toThrow(
       "VMA_API_KEY and VOTRIX_VMA_API_KEY are both set but have different values; unset one or make them match",
@@ -93,7 +93,7 @@ describe("client configuration and transport", () => {
     }
 
     delete process.env.VOTRIX_VMA_API_KEY;
-    process.env.VOTRIX_VMA_BASE_URL = "https://staging-vma.votrixai.com";
+    process.env.VOTRIX_VMA_BASE_URL = "https://staging-api.vma.votrixai.com";
     expect(() => new Votrix({ fetch: successFetch() })).toThrow(
       "VMA_BASE_URL and VOTRIX_VMA_BASE_URL are both set but have different values; unset one or make them match",
     );
@@ -106,7 +106,7 @@ describe("client configuration and transport", () => {
     process.env.VMA_BASE_URL = "https://primary.votrix.test";
     process.env.VOTRIX_VMA_BASE_URL = "https://alias.votrix.test";
     process.env.VOTRIX_API_KEY = "generic-main-product-key";
-    process.env.VOTRIX_BASE_URL = "https://api.votrixai.com";
+    process.env.VOTRIX_BASE_URL = "https://legacy.example.test";
 
     const client = new Votrix({
       apiKey: "vma_test_explicit",

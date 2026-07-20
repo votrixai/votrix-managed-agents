@@ -42,7 +42,7 @@ def test_client_requires_explicit_configuration(monkeypatch):
     with pytest.raises(ValueError, match="api_key"):
         AsyncVotrix(base_url="https://vma.test")
     monkeypatch.setenv("VOTRIX_API_KEY", "main-product-key")
-    monkeypatch.setenv("VOTRIX_BASE_URL", "https://api.votrixai.com")
+    monkeypatch.setenv("VOTRIX_BASE_URL", "https://legacy.example.test")
     with pytest.raises(ValueError, match="api_key"):
         AsyncVotrix(base_url="https://vma.test")
     monkeypatch.setenv("VMA_API_KEY", "vma_test_environment")

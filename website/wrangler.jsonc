@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "votrix-managed-agents-docs",
+  "account_id": "258bb648bcbf054bf3c927d9fe382c7a",
+  "compatibility_date": "2026-07-19",
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "docs.vma.votrixai.com",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  }
+}
