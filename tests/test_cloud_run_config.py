@@ -466,7 +466,7 @@ def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_chan
     assert "repositoryEventConfig:" in template
     assert "--repo-name" not in script
     assert "--repo-owner" not in script
-    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
+    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-false' in script
     assert "PRODUCTION_APPROVAL_REQUIRED=true" in script
     for ignored_path in (
         "docs/**",

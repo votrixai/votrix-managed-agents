@@ -412,8 +412,7 @@ connection and repository link are complete, run:
 
 This creates:
 
-- `vma-deploy-production`: `main` → production, with manual build approval
-  required by default
+- `vma-deploy-production`: `main` → production, deployed automatically
 - `vma-deploy-staging`: `staging` → staging, deployed automatically
 
 The setup command is idempotent: it imports the complete desired trigger state,
@@ -436,15 +435,15 @@ by `0-setup-registry.sh`. Set `VMA_CLOUD_BUILD_SERVICE_ACCOUNT` to another
 service-account email only after granting the equivalent Artifact Registry,
 Cloud Run, build, logging, and runtime-identity permissions.
 
-If production should intentionally deploy without a human approval gate, make
-that unsafe policy change explicit:
+If production should intentionally require a human approval gate, enable it
+explicitly:
 
 ```bash
-VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL=false \
+VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL=true \
   ./scripts/gcloud/4-setup-triggers.sh <github-owner> <repo-name>
 ```
 
-The default is `true`. Both triggers ignore changes limited to `docs/**`,
+The default is `false`. Both triggers ignore changes limited to `docs/**`,
 `website/**`, `sdks/**`, `infra/cloudflare/**`, `README.md`, and
 `CHANGELOG.md`, so documentation, SDK, and Cloudflare-router-only commits do
 not rebuild the API image or run migrations. A commit that also changes any
