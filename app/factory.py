@@ -20,6 +20,7 @@ from app.public_surface import capability_manifest, is_public_ga_path, public_ga
 from app.runtime.checkpoints import close_checkpoint_saver
 from app.runtime.preview_broker import close_preview_broker, start_preview_broker
 from app.runtime.turn_limiter import TurnLimiter
+from app.version import __version__
 from app.routers import (
     agents,
     api_keys,
@@ -115,10 +116,10 @@ async def lifespan(app: FastAPI):
         await close_checkpoint_saver()
 
 
-def _install_health_routes(app: FastAPI) -> None:
+def _install_health_routes(app: FastAPI, *, build_id: str) -> None:
     @app.get("/health", tags=["health"], response_model=HealthResponse)
     async def health():
-        return {"status": "ok"}
+        return {"status": "ok", "version": __version__, "build": build_id}
 
     @app.get("/health/db", tags=["health"], response_model=DatabaseHealthResponse)
     async def health_db():
@@ -128,7 +129,12 @@ def _install_health_routes(app: FastAPI) -> None:
 
         async with session_scope() as db:
             await db.execute(text("SELECT 1"))
-        return {"status": "ok", "db": "ok"}
+        return {
+            "status": "ok",
+            "version": __version__,
+            "build": build_id,
+            "db": "ok",
+        }
 
 
 def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
@@ -262,7 +268,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
 
     if is_worker_service:
         app.include_router(internal_work.router)
-        _install_health_routes(app)
+        _install_health_routes(app, build_id=settings.vma_public_build_id)
         return app
 
     app.include_router(api_keys.router)
@@ -277,7 +283,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(organizations.me_router)
     app.include_router(organizations.admin_router)
 
-    _install_health_routes(app)
+    _install_health_routes(app, build_id=settings.vma_public_build_id)
 
     @app.get(
         "/v1/capabilities",

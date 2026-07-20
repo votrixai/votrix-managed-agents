@@ -111,6 +111,7 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
         )
         expected_queue = "vma-turns" if environment == "production" else "vma-turns-staging"
         expected_dispatch_values = {
+            "VMA_PUBLIC_BUILD_ID": "__VMA_PUBLIC_BUILD_ID__",
             "VMA_WORK_DISPATCH_MODE": "hybrid",
             "VMA_TASKS_QUEUE": expected_queue,
             "VMA_TASKS_LOCATION": "us-central1",
@@ -401,6 +402,9 @@ def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
         'Deploying ${_SERVICE_NAME} API service in hybrid mode'
     )
     assert cloudbuild.count("__VMA_WORKER_URL__") == 3
+    assert cloudbuild.count('s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|') == len(
+        service_deploys
+    )
     assert 'WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"' in cloudbuild
     assert 'DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"' in cloudbuild
 
@@ -437,6 +441,9 @@ def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() 
         assert "API service in hybrid mode" in script
         assert script.find("worker service in hybrid mode") < script.find(
             "API service in hybrid mode"
+        )
+        assert script.count('s|__VMA_PUBLIC_BUILD_ID__|${TAG}|') == len(
+            service_deploys
         )
 
     assert 'DATABASE_SECRET="vma-database-url-direct"' in production

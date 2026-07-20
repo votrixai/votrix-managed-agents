@@ -112,6 +112,7 @@ if [ -z "$WORKER_URL" ]; then
   echo "Creating ${PRODUCTION_WORKER_SERVICE} in bootstrap poll mode..."
   sed \
     -e "s|IMAGE_URL|${IMAGE}|" \
+    -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
     -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
     -e 's|value: "hybrid"|value: "poll"|' \
     "$WORKER_MANIFEST" | \
@@ -143,6 +144,7 @@ gcloud run services add-iam-policy-binding "$PRODUCTION_WORKER_SERVICE" \
 echo "Deploying ${PRODUCTION_WORKER_SERVICE} worker service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$WORKER_MANIFEST" | \
   gcloud run services replace \
@@ -154,6 +156,7 @@ sed \
 echo "Deploying ${PRODUCTION_SERVICE} API service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$API_MANIFEST" | \
   gcloud run services replace \

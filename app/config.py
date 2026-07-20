@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     vma_preview_broker: Literal["process_local", "pg_notify"] = "process_local"
     vma_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     vma_public_ga_only: bool = False
+    vma_public_build_id: str = Field(
+        default="dev",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
     vma_governance_enabled: bool = True
     vma_requests_per_minute: int = Field(default=120, ge=0)
     vma_max_active_work: int = Field(default=5, ge=0)
@@ -112,6 +118,13 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
+
+    @field_validator("vma_public_build_id", mode="before")
+    @classmethod
+    def normalize_public_build_id(cls, value):
+        if value is None:
+            return "dev"
+        return str(value).strip() or "dev"
 
     @field_validator("vma_model_providers", mode="before")
     @classmethod

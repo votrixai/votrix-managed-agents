@@ -7,6 +7,8 @@ from app.models.common import ApiModel
 
 class HealthResponse(ApiModel):
     status: Literal["ok"] = Field(description="Application health state.")
+    version: str = Field(description="Installed VMA package version.")
+    build: str = Field(description="Public identifier for the deployed build.")
 
 
 class DatabaseHealthResponse(HealthResponse):

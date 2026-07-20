@@ -1,5 +1,3 @@
-from importlib.metadata import PackageNotFoundError, version
-
 from app.auth import (
     AuthProvider,
     DatabaseApiKeyAuthProvider,
@@ -7,11 +5,7 @@ from app.auth import (
 )
 from app.factory import create_app
 from app.organization import CurrentOrganization
-
-try:
-    __version__ = version("votrix-managed-agents")
-except PackageNotFoundError:
-    __version__ = "0.0.0"
+from app.version import __version__
 
 __all__ = [
     "AuthProvider",

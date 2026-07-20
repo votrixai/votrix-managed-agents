@@ -80,6 +80,7 @@ steps:
           echo "Creating $$WORKER_SERVICE in bootstrap poll mode..."
           sed \
             -e "s|IMAGE_URL|$$IMAGE|" \
+            -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
             -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
             -e 's|value: "hybrid"|value: "poll"|' \
             "$$WORKER_SERVICE_CONFIG" | \
@@ -111,6 +112,7 @@ steps:
         echo "Deploying $$WORKER_SERVICE in hybrid mode..."
         sed \
           -e "s|IMAGE_URL|$$IMAGE|" \
+          -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
           -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
           "$$WORKER_SERVICE_CONFIG" | \
           gcloud run services replace \
@@ -122,6 +124,7 @@ steps:
         echo "Deploying ${_SERVICE_NAME} API service in hybrid mode..."
         sed \
           -e "s|IMAGE_URL|$$IMAGE|" \
+          -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
           -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
           "${_SERVICE_CONFIG}" | \
           gcloud run services replace \

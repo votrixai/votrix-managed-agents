@@ -10695,6 +10695,14 @@
             "const": "ok",
             "description": "Application health state."
           },
+          "version": {
+            "type": "string",
+            "description": "Installed VMA package version."
+          },
+          "build": {
+            "type": "string",
+            "description": "Public identifier for the deployed build."
+          },
           "db": {
             "type": "string",
             "const": "ok",
@@ -10705,6 +10713,8 @@
         "type": "object",
         "required": [
           "status",
+          "version",
+          "build",
           "db"
         ],
         "title": "DatabaseHealthResponse"
@@ -11167,12 +11177,22 @@
             "type": "string",
             "const": "ok",
             "description": "Application health state."
+          },
+          "version": {
+            "type": "string",
+            "description": "Installed VMA package version."
+          },
+          "build": {
+            "type": "string",
+            "description": "Public identifier for the deployed build."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "status"
+          "status",
+          "version",
+          "build"
         ],
         "title": "HealthResponse"
       },
