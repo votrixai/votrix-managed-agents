@@ -11,8 +11,10 @@ This queue is visible state for session execution. It does not mean local develo
 
 - User events enqueue a work item with `session_id`, trigger, attempt count, and queued timestamp.
 - `cloud` environments can be consumed inline in local mode. The checked-in
-  hosted profile uses the embedded durable consumer in the one Cloud Run
-  process.
+  hosted profile separates API instances from a private Cloud Run worker
+  service. Cloud Tasks sends one OIDC-authenticated request per turn, each
+  instance admits at most five concurrent turns, and a permanent PostgreSQL
+  reconciler recovers missed dispatches and expired leases.
 - `local` environments are an explicit development/test escape hatch and are also consumed inline.
 - `self_hosted` environments only enqueue work. Workers use the environment work routes to lease and report progress.
 - `GET /v1/environments/{environment_id}/work/poll` leases one queued item and
@@ -28,6 +30,8 @@ This queue is visible state for session execution. It does not mean local develo
 - Expired `leased` or `running` work can be recovered by a later poll from
   another worker, which receives a new lease ID/generation.
 - Transient runtime failures can mark work `rescheduling`; polling respects `retry_at` before leasing it again.
+- Execution attempts are capped in hosted configuration; exhausted work becomes
+  terminal instead of being recovered forever.
 - `POST /work/{work_id}/stop` marks it stopped.
 - `vma-worker` leases work before execution, heartbeats for the full turn, and
   passes its worker/lease/generation identity into execution, so the CLI and
@@ -36,13 +40,19 @@ This queue is visible state for session execution. It does not mean local develo
   completion, error, or stop releases it idempotently; queued/rescheduling work
   keeps its reservation.
 
-This is a durable public-beta queue with attempt fencing, not a complete
-multi-replica execution platform. The lease protects one work item and its
-terminal writes; it is not yet a distributed per-Session mutex covering every
-checkpoint and external provider side effect. Dead-letter policy, strong
-worker identity/RBAC, managed queue integration, and a cross-process preview
-broker remain future work. Keep the hosted service at one web process and
-`maxScale=1` until those boundaries are validated.
+This durable queue and the Session execution lease support the maintained
+multi-instance worker service. They fence stale terminal writes and share
+checkpoints through PostgreSQL, but they do not make provider, MCP, or sandbox
+side effects exactly-once. Hosted turns use named Cloud Tasks as wake-up and
+autoscaling signals; PostgreSQL remains the source of truth, and the permanent
+reconciler preserves progress when task creation or delivery fails. A separate
+dead-letter resource and stronger worker identity/RBAC remain future work.
+
+Live previews do not travel through work rows. Local mode defaults to the
+in-process preview bus, while checked-in hosted services publish bounded frames
+through PostgreSQL `pg_notify` so API SSE subscribers can observe turns running
+in another worker process. Preview delivery is best-effort and clients reconcile
+against durable Session events.
 
 ## Optional Self-Hosted Worker
 

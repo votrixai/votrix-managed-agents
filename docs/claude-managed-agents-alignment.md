@@ -135,10 +135,11 @@ A normal turn is expected to move through this sequence:
 The same agent revision and compatible graph topology must be used when resuming a checkpoint. Updating an agent must not mutate already pinned sessions.
 
 Durable work attempts now carry unique lease IDs and generations, heartbeat,
-recover after expiry, and fence stale terminal writes. The implementation still
-uses process-local Session/checkpoint ownership in places. A production
-multi-worker deployment needs a database advisory lock, Redis lock, or
-equivalent distributed per-Session ownership in addition to work-item leases.
+recover after expiry, and fence stale terminal writes. Session execution leases
+and shared PostgreSQL checkpoints support the maintained multi-instance worker
+fleet. This is not an exactly-once guarantee for provider, MCP, or sandbox side
+effects; those operations still need their own idempotency and cancellation
+semantics.
 
 ## Streaming alignment
 
@@ -149,7 +150,18 @@ Claude exposes persisted session events and live SSE. VMA has two related channe
 
 Deep Agents streams LangGraph tuples containing a subgraph namespace, stream mode, and data. VMA translates parent text, tool-call fragments, tool results, state updates, and interrupts instead of exposing those LangChain objects publicly.
 
-Today the preview bus is process-local. If execution runs in a worker process and SSE runs in a web process, clients receive durable database events but not true live deltas. Production needs a tenant-scoped broker with ordering, bounded backpressure, and reconnection behavior. See [known incompatibilities](./known-incompatibilities.md#live-streaming-and-process-topology).
+Local development defaults to the process-local preview bus. The checked-in
+hosted deployment uses PostgreSQL `pg_notify`: worker processes publish
+Organization/Session-scoped frames and API processes `LISTEN` and forward them
+to SSE subscribers. This preserves cross-instance typewriter delivery without
+changing public frame shapes. Preview frames remain best-effort and
+non-replayable, so clients reconcile with durable database events after a drop
+or reconnect. Hosted main and checkpoint traffic use the Supavisor transaction
+pooler on port `6543`; `VMA_LISTEN_DATABASE_URL` alone uses session mode on port
+`5432` for the dedicated listener and janitor lock. Budget one lifetime
+`LISTEN` connection per API process in addition to the bounded application
+pool. See
+[known incompatibilities](./known-incompatibilities.md#live-streaming-and-process-topology).
 
 ## Tool and approval alignment
 
@@ -210,7 +222,8 @@ See [Votrix core architecture](./votrix-core-architecture.md).
 Work should close gaps in this order:
 
 1. Preserve strict official-SDK contract tests for every changed public route.
-2. Add distributed session ownership and a cross-process preview broker.
+2. Strengthen idempotency and cancellation around external provider, MCP, and
+   sandbox side effects beyond the existing database leases.
 3. Ship or integrate a production remote sandbox with enforceable environment policy.
 4. Make interrupt persistence and custom-tool continuation restart-safe.
 5. Complete MCP connection lifecycle, OAuth refresh, and approval mapping.

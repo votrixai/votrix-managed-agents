@@ -1,4 +1,4 @@
-# Votrix documentation site
+# Votrix Managed Agents (VMA)
 
 This directory contains the Fumadocs application for Votrix Managed Agents.
 Narrative content remains in the repository-level `docs/` directory so product
@@ -41,6 +41,11 @@ keep the patch version aligned when upgrading `fumadocs-openapi`.
 
 `npm run build` writes a fully static site to `website/out/`. Deploy that
 directory to any static host or CDN; a Node.js service is not required.
+
+The production site is deployed as a Cloudflare Worker with static assets at
+`https://docs.vma.votrixai.com`. Run `npm run deploy:dry-run` to validate the
+artifact and `npm run deploy` to build and publish it. The Worker Custom Domain
+owns DNS and exact-host TLS for the documentation hostname.
 
 The build also materializes a Markdown representation for every page at
 `/docs/<path>.md` (the docs root is `/docs/index.md`). The older

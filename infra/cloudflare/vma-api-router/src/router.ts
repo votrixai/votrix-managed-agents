@@ -1,6 +1,6 @@
 const EXPECTED_PUBLIC_HOSTNAMES = {
-  staging: "staging-vma.votrixai.com",
-  production: "vma.votrixai.com",
+  staging: "staging-api.vma.votrixai.com",
+  production: "api.vma.votrixai.com",
 } as const;
 
 const HOP_BY_HOP_HEADERS = [
@@ -132,6 +132,17 @@ export function parseRouterConfiguration(
     publicHostname: expectedPublicHostname,
     origin,
   };
+}
+
+function isPublicEdgePath(pathname: string): boolean {
+  return (
+    pathname === "/" ||
+    pathname === "/openapi.json" ||
+    pathname === "/health" ||
+    pathname.startsWith("/health/") ||
+    pathname === "/v1" ||
+    pathname.startsWith("/v1/")
+  );
 }
 
 function isValidRequestId(value: string | null): value is string {
@@ -269,12 +280,23 @@ export async function routeRequest(
         `Rejected protocol: ${incomingUrl.protocol}`,
       );
     }
-    if (incomingUrl.hostname !== config.publicHostname || incomingUrl.port !== "") {
+    if (
+      incomingUrl.hostname !== config.publicHostname ||
+      incomingUrl.port !== ""
+    ) {
       throw new RouterFailure(
         "misdirected_request",
         421,
         "Request hostname is not served by this router.",
         `Rejected hostname: ${incomingUrl.host}`,
+      );
+    }
+    if (!isPublicEdgePath(incomingUrl.pathname)) {
+      throw new RouterFailure(
+        "not_found",
+        404,
+        "Not found.",
+        `Blocked non-public path at the public edge: ${incomingUrl.pathname}`,
       );
     }
 

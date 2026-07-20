@@ -9,11 +9,13 @@ import {
 
 const STAGING_ORIGIN =
   "https://votrix-managed-agents-staging-eqp3ofm5eq-uc.a.run.app";
+const STAGING_HOSTNAME = "staging-api.vma.votrixai.com";
+const STAGING_BASE_URL = `https://${STAGING_HOSTNAME}`;
 
 function stagingEnv(overrides: Partial<RouterBindings> = {}): RouterBindings {
   return {
     ENVIRONMENT: "staging",
-    PUBLIC_HOSTNAME: "staging-vma.votrixai.com",
+    PUBLIC_HOSTNAME: STAGING_HOSTNAME,
     ORIGIN_URL: STAGING_ORIGIN,
     ...overrides,
   };
@@ -39,7 +41,7 @@ describe("router configuration", () => {
   it("accepts the exact staging Cloud Run origin", () => {
     const config = parseRouterConfiguration(stagingEnv());
     expect(config.environment).toBe("staging");
-    expect(config.publicHostname).toBe("staging-vma.votrixai.com");
+    expect(config.publicHostname).toBe(STAGING_HOSTNAME);
     expect(config.origin.origin).toBe(STAGING_ORIGIN);
   });
 
@@ -62,7 +64,7 @@ describe("router configuration", () => {
   it("rejects a public hostname that does not match its environment", () => {
     expect(() =>
       parseRouterConfiguration(
-        stagingEnv({ PUBLIC_HOSTNAME: "vma.votrixai.com" }),
+        stagingEnv({ PUBLIC_HOSTNAME: "api.vma.votrixai.com" }),
       ),
     ).toThrow();
   });
@@ -87,7 +89,7 @@ describe("request proxying", () => {
     });
 
     const response = await routeRequest(
-      new Request("https://staging-vma.votrixai.com/v1/sessions?limit=2", {
+      new Request(`${STAGING_BASE_URL}/v1/sessions?limit=2`, {
         method: "POST",
         headers: {
           authorization: "Bearer test-token",
@@ -108,7 +110,7 @@ describe("request proxying", () => {
     expect(captured?.redirect).toBe("manual");
     expect(captured?.headers.get("authorization")).toBe("Bearer test-token");
     expect(captured?.headers.get("x-forwarded-host")).toBe(
-      "staging-vma.votrixai.com",
+      STAGING_HOSTNAME,
     );
     expect(captured?.headers.get("x-forwarded-proto")).toBe("https");
     expect(captured?.headers.get("request-id")).toBe("client-request-123");
@@ -134,7 +136,7 @@ describe("request proxying", () => {
       });
 
     const response = await routeRequest(
-      new Request("https://staging-vma.votrixai.com/v1/sessions/sess_123/events"),
+      new Request(`${STAGING_BASE_URL}/v1/sessions/sess_123/events`),
       stagingEnv(),
       fetchUpstream,
     );
@@ -156,12 +158,12 @@ describe("request proxying", () => {
   it.each([
     [
       `${STAGING_ORIGIN}/v1/sessions/sess_123`,
-      "https://staging-vma.votrixai.com/v1/sessions/sess_123",
+      `${STAGING_BASE_URL}/v1/sessions/sess_123`,
     ],
-    ["/health?from=origin", "https://staging-vma.votrixai.com/health?from=origin"],
+    ["/health?from=origin", `${STAGING_BASE_URL}/health?from=origin`],
   ])("rewrites same-origin Location %s", async (location, expected) => {
     const response = await routeRequest(
-      new Request("https://staging-vma.votrixai.com/start"),
+      new Request(`${STAGING_BASE_URL}/v1/start`),
       stagingEnv(),
       async () => new Response(null, { status: 307, headers: { location } }),
     );
@@ -170,7 +172,7 @@ describe("request proxying", () => {
 
   it("does not rewrite a cross-origin Location", async () => {
     const response = await routeRequest(
-      new Request("https://staging-vma.votrixai.com/start"),
+      new Request(`${STAGING_BASE_URL}/v1/start`),
       stagingEnv(),
       async () =>
         new Response(null, {
@@ -185,6 +187,50 @@ describe("request proxying", () => {
 });
 
 describe("fail-closed behavior", () => {
+  it.each([
+    "/internal",
+    "/internal/organizations",
+    "/internal/work/item",
+    "/docs",
+    "/redoc",
+    "/healthz",
+    "/v10",
+    "/arbitrary-path",
+  ])(
+    "returns 404 for non-public path %s without fetching upstream",
+    async (path) => {
+      let fetched = false;
+      const response = await routeRequest(
+        new Request(`${STAGING_BASE_URL}${path}`),
+        stagingEnv(),
+        async () => {
+          fetched = true;
+          return new Response("unexpected");
+        },
+      );
+
+      expect(response.status).toBe(404);
+      expect(await readErrorCode(response)).toBe("not_found");
+      expect(fetched).toBe(false);
+    },
+  );
+
+  it("rejects the retired API hostname without fetching upstream", async () => {
+    let fetched = false;
+    const response = await routeRequest(
+      new Request("https://staging-vma.votrixai.com/health"),
+      stagingEnv(),
+      async () => {
+        fetched = true;
+        return new Response("unexpected");
+      },
+    );
+
+    expect(response.status).toBe(421);
+    expect(await readErrorCode(response)).toBe("misdirected_request");
+    expect(fetched).toBe(false);
+  });
+
   it("rejects an unexpected hostname before fetching upstream", async () => {
     let fetched = false;
     const response = await routeRequest(
@@ -203,7 +249,7 @@ describe("fail-closed behavior", () => {
 
   it("rejects plaintext HTTP", async () => {
     const response = await routeRequest(
-      new Request("http://staging-vma.votrixai.com/health"),
+      new Request(`http://${STAGING_HOSTNAME}/health`),
       stagingEnv(),
       async () => new Response("unexpected"),
     );
@@ -213,10 +259,10 @@ describe("fail-closed behavior", () => {
 
   it("returns a structured 500 for the production placeholder", async () => {
     const response = await routeRequest(
-      new Request("https://vma.votrixai.com/health"),
+      new Request("https://api.vma.votrixai.com/health"),
       {
         ENVIRONMENT: "production",
-        PUBLIC_HOSTNAME: "vma.votrixai.com",
+        PUBLIC_HOSTNAME: "api.vma.votrixai.com",
         ORIGIN_URL: "https://REPLACE_WITH_PRODUCTION_CLOUD_RUN_URL.invalid",
       },
       async () => new Response("unexpected"),
@@ -227,7 +273,7 @@ describe("fail-closed behavior", () => {
 
   it("returns a structured 502 without exposing the upstream error", async () => {
     const response = await routeRequest(
-      new Request("https://staging-vma.votrixai.com/health"),
+      new Request(`${STAGING_BASE_URL}/health`),
       stagingEnv(),
       async () => {
         throw new Error("private transport detail");

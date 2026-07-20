@@ -1,139 +1,154 @@
 # VMA First-Release Architecture
 
-Internal only. Do not copy this document into the public documentation tree —
+Internal only. Do not copy this document into the public documentation tree.
 `docs/votrix-core-architecture.md` is the public, contract-level view;
 deployment topology, scaling limits, and connection budgets stay here.
 
-Status: this describes the **first-release architecture** — what ships when
-`PLAN-horizontal-scaling.md` (P1/P2/P2.5), `PLAN-p3-autoscale.md` (Stage A/B),
-`PLAN-amendment-A1-connection-modes.md`, and `PLAN-pre-launch-hardening.md`
-(W1/W2) have all landed. The system as deployed before that is a single
-combined Cloud Run instance (`maxScale=1`, embedded worker coroutines); the
-PLAN documents are the migration path. After launch, this file is the living
-architecture reference; the PLANs become history.
+Status as of 2026-07-19: the hosted API/worker split, PostgreSQL preview broker,
+Cloud Tasks hybrid dispatch, bounded replay, and Supavisor connection-mode
+split are deployed. Production is not the old single-process service: both the
+API and private worker currently run at `minScale=1 / maxScale=2`. The checked-in
+manifests are the source of truth. The W1 isolation matrix and W2 encryption-key
+rotation remain launch gates tracked in `PLAN-pre-launch-hardening.md` and
+`private-docs/pre-launch-checklist.md`; they do not change this topology.
 
 ## Topology
 
 ```text
-                        Cloudflare API router
-                                 |
-                       Cloud Run load balancer
-                                 |
-        +----------- API service (stateless) --------------------+
-        |  role=api · minScale 1 / maxScale 3 (request-driven)   |
-        |  FastAPI /v1 routes · SSE streams (durable-event poll  |
-        |  + preview frame replay) · rate limits & quotas as     |
-        |  Postgres counters · dispatches work, never runs it    |
-        +--------------------------+------------------------------+
-                                   |
-                 Supabase Postgres — the single source of truth
-                 |  sessions · append-only events · work queue  |
-                 |  LangGraph checkpoints · vault · usage       |
-                 |                                              |
-                 |  transaction pooler :6543                    |
-                 |    runtime CRUD, work queue, events,         |
-                 |    checkpoint pool (prepare_threshold=None)  |
-                 |  session mode :5432                          |
-                 |    preview LISTEN, janitor advisory lock,    |
-                 |    Alembic migration Job                     |
-                                   |
-   enqueue commits work item ──► Cloud Tasks queue (one named task per
-                                 turn — wake-up signal and scale driver
-                                 ONLY; deleting the queue loses no work)
-                                   |
-                   OIDC  POST /internal/work/{work_id}/execute
-                                   |
-        +----------- Worker service (turn execution) ------------+
-        |  role=worker · autoscales on in-flight turns           |
-        |  (containerConcurrency = per-instance turn bound)      |
-        |                                                        |
-        |  lease (lease_id + generation + heartbeat)             |
-        |    → attempt cap (counts executions, not leases)       |
-        |    → turn journal (crash-safe finalize)                |
-        |    → DeepAgents / LangGraph graph, one turn per run    |
-        |    → deterministic event ids, idempotent append        |
-        |  shared turn limiter across push handler + poller      |
-        |  slow poller = permanent reconciler (expired leases,   |
-        |    missed dispatches; the recovery path)               |
-        |  E2B sandbox 1:1 per Session (sealed at create,        |
-        |    explicit reconnect each turn) · model providers     |
-        |  preview frames → coalesced pg_notify → API listeners  |
-        +--------------------------------------------------------+
+              Cloudflare API router (api.vma.votrixai.com)
+                                  |
+             +--------- public API service ---------------------+
+             | role=api · minScale 1 / maxScale 2               |
+             | containerConcurrency 40 · no embedded worker     |
+             | FastAPI public/hosted routes · durable SSE poll  |
+             | + preview replay · governance · work dispatch    |
+             +--------------------+------------------------------+
+                                  |
+                 Supabase Postgres — source of truth
+                 | sessions · append-only events · work queue
+                 | LangGraph checkpoints · vault · usage
+                 |
+                 | transaction pooler :6543
+                 |   runtime CRUD, queue, event/preview publish,
+                 |   checkpoint pool (prepare_threshold=None)
+                 | session mode :5432
+                 |   preview LISTEN, janitor advisory lock
+                 | direct/session migration DSN
+                                  |
+   committed work row --------> Cloud Tasks named wake-up task
+                                  |
+                   OIDC POST /internal/work/{work_id}/execute
+                                  |
+             +--------- private worker service -----------------+
+             | role=worker · minScale 1 / maxScale 2            |
+             | containerConcurrency 5 · turn limit 5            |
+             | Cloud Tasks push + permanent slow reconciler     |
+             | lease/generation fencing · bounded attempt cap   |
+             | crash-safe turn journal · idempotent event append|
+             | DeepAgents/LangGraph · E2B sandbox 1:1/session   |
+             | preview coalescing -> pg_notify -> API listeners |
+             +--------------------------------------------------+
 ```
 
-## Load-bearing invariants (violating any of these is an incident)
+Staging mirrors the same split and `1..2` scaling envelope with separate
+Cloud Run services, queue, secrets, and database. Local development retains the
+`combined` compatibility role and does not define the production topology.
+
+## Load-bearing invariants
+
+Violating any of these is an incident.
 
 1. **Postgres is the only source of truth.** Cloud Tasks, preview frames, and
-   in-process state are all reconstructible or losable. The reconciler poller
-   alone must be able to run the whole system.
-2. **Lease fencing everywhere.** `(worker_id, lease_id, generation)` gates
-   execution, every event persist, usage recording, and finalization; a
-   superseded worker cannot write.
-3. **Lock ordering: session row first, then work row.** Never hold a work-row
-   `FOR UPDATE` while acquiring a session lock (deadlock inversion).
-4. **Bounded at-least-once turn execution.** A completed graph run is never
-   re-invoked (turn journal); replays dedupe events where identity is
-   derivable (deterministic ids); replay count is capped
-   (`VMA_WORK_MAX_ATTEMPTS`, execution-counted). External tool side effects
-   are NOT exactly-once — high-risk custom tools must be idempotent on the
-   caller's side (public-docs contract note at launch).
-5. **Session-scoped Postgres features never cross the transaction pooler**:
+   process-local state are reconstructible or losable. The reconciler alone
+   must be able to recover and run durable work.
+2. **Lease fencing applies to execution and writes.**
+   `(worker_id, lease_id, generation)` gates execution, event persistence,
+   usage recording, journal writes, and finalization. A superseded worker
+   cannot commit.
+3. **Lock session rows before work rows.** Never hold a work-row `FOR UPDATE`
+   lock while acquiring a Session lock; that inversion can deadlock.
+4. **Turn execution is bounded at-least-once.** A journaled completed graph run
+   is finalized without invoking the model again. Replays deduplicate events
+   where deterministic identity exists and the execution attempt count is
+   capped by `VMA_WORK_MAX_ATTEMPTS`. External tool side effects are not
+   exactly-once; high-risk tools must accept caller-provided idempotency.
+5. **Session-scoped PostgreSQL features never use the transaction pooler.**
    LISTEN/NOTIFY subscriptions and session advisory locks use the dedicated
-   `:5432` DSN; prepared statements stay off pooled paths.
-6. **Preview is best-effort by contract.** Dropped frames are reconciled by
-   durable events; nothing may ever depend on a preview frame arriving.
+   session DSN. Runtime and checkpoint traffic use transaction mode with
+   server-side prepared statements disabled.
+6. **Preview is best-effort.** Coalesced `pg_notify` frames preserve hosted
+   typewriter feedback, but clients reconcile against durable events and no
+   correctness path depends on a preview arriving.
+7. **Dispatch is a wake-up optimization.** A failed or deleted Cloud Tasks
+   queue must not lose committed work. The PostgreSQL reconciler remains the
+   recovery path permanently.
 
 ## Scaling model
 
-- **API plane**: classic stateless fleet behind the platform LB; scales on
-  request load; every instance can serve any request including SSE. Ceiling
-  per instance ≈ `containerConcurrency` (long-held SSE streams count).
-- **Worker plane**: turns are in-flight HTTP requests, so Cloud Run scales on
-  them directly and scale-in drains rather than kills executing turns
-  (residual interruption: infra SIGTERM/OOM — bounded by invariant 4).
-- **Three backpressure layers**, all derived from the connection/E2B/spend
-  budgets in `scaling-runbook.md`, never from intuition: worker `maxScale`,
-  per-instance turn limiter, queue `maxConcurrentDispatches`.
-- Overflow degrades to queue wait — never to failures.
+- The API plane is stateless and every instance may serve any request or SSE
+  stream. Long-held SSE streams consume request concurrency.
+- Worker turns are in-flight private HTTP requests, so Cloud Run scales on
+  actual execution demand and drains normal scale-in. Lease/journal recovery
+  covers infrastructure interruption.
+- Production currently provides five warm concurrent turns and can scale to
+  ten: `2 max worker instances × 5 turns per instance`. Accepted overflow
+  waits in the durable queue.
+- Worker `maxScale`, the per-instance turn limiter, and Cloud Tasks
+  `maxConcurrentDispatches` form three independent backpressure layers. Change
+  them only from the measured PostgreSQL, E2B, provider, and spend budgets in
+  `private-docs/scaling-runbook.md`.
+- Production currently permits at most two API and two worker instances. A
+  larger value requires updating the manifests, their test pins, the runbook's
+  connection arithmetic, and the staging load evidence together.
 
-## API surfaces (one app, four tiers)
+## API surfaces: one implementation, four contract tiers
 
-One FastAPI implementation exposes four surfaces with different audiences,
-authenticators, and — critically — different contract disciplines. The public
-tier is frozen; everything else may change freely.
+The FastAPI codebase exposes surfaces with different audiences,
+authenticators, visibility, and compatibility disciplines. A shared process or
+repository does not imply shared authorization.
 
-| Tier | Paths | Audience | Auth | Visibility | Contract |
-|---|---|---|---|---|---|
-| Public product API | `/v1/*` (GA allowlist in `app/public_surface.py`) | SDK/API integrators | Organization API key | fumadocs + filtered OpenAPI export | Frozen: fields, codes, event shapes never break; pinned by `tests/test_public_ga_surface.py` |
-| First-party app | `/v1/me/*` | VMA builder frontend | Supabase user JWT | `include_in_schema=False` | Changeable with the frontend |
-| Hosted operator | `/internal/organizations/*` | Operators | Supabase superadmin JWT (`require_super_admin` router dependency) | private-docs SOPs only | Changeable; never versioned |
-| Infrastructure M2M | `/internal/work/*` (P3, worker service only) | Cloud Tasks | Cloud Run IAM/OIDC; service is private | No schema at all | Changes with the deployment |
+| Tier | Paths | Audience | Authentication | Visibility and contract |
+|---|---|---|---|---|
+| Public product API | `/v1/...` on the GA allowlist in `app/public_surface.py` | SDK and API integrations | Organization API key | Filtered OpenAPI and Fumadocs; public fields, status codes, errors, IDs, and event shapes are compatibility surfaces pinned by tests |
+| First-party builder | `/v1/me/organizations` today; future first-party routes stay below `/v1/me/...` | VMA builder browser | Supabase user JWT | Excluded from OpenAPI; may evolve with `vma-developer-app` |
+| Hosted operator | `/internal/organizations/...` | VMA operators | Supabase superadmin JWT through `require_super_admin` | Private SOPs only; never an SDK surface |
+| Infrastructure M2M | `/internal/work/...` on the private worker service | Cloud Tasks and the reconciler | Cloud Run IAM/OIDC plus work lease fencing | No public schema; changes with deployment infrastructure |
 
-Domains: the naming plan, the hostname→path forwarding table, and the
-admin-host/origin-cloaking three-together rule live in
-`private-docs/domains.md`. Summary: `api.vma.votrixai.com` is the only
-hostname SDK users ever see (its Worker rejects `/internal/*`);
-`vma.votrixai.com` is the builder frontend; the Cloud Run `run.app` URL is the
-official operator entry behind superadmin JWT. Hostnames are routing, never
-the security boundary — the auth tiers above are the enforcement.
+The edge also admits exact utility paths `/`, `/openapi.json`, `/health`, and
+`/health/...`. The complete hostname-to-path table, permanent naming tree,
+certificate behavior, and coordinated cutover live in
+`private-docs/domains.md`.
+
+`api.vma.votrixai.com` is the only production hostname SDK users should see.
+Under the permanent domain contract, its Worker admits only `/`,
+`/openapi.json`, `/health[/...]`, and `/v1[/...]`, so `/internal/...` never
+reaches the API origin through that door.
+`vma.votrixai.com` is the builder frontend. The production Cloud Run `run.app`
+URL is the official operator door behind superadmin JWT unless the optional
+admin-host/origin-cloaking bundle in `private-docs/domains.md` is adopted.
+Hostnames remain routing; the authentication tiers above remain enforcement.
+`docs.vma.votrixai.com` is served as a Cloudflare Worker Static Assets site
+from the checked-in `website/wrangler.jsonc` deployment contract.
 
 Rules:
 
-- Every new non-public endpoint goes under `/internal/` (auto-exempt from the
-  GA middleware, never exported) or carries `include_in_schema=False`.
-- Auth tiers never cross: an Organization API key must not authenticate
-  `/internal` or `/v1/me`; a human JWT must not authenticate `/v1`
-  Organization resources. (Tier-crossing denial tests ride with the W1
-  isolation matrix.)
-- SDKs are generated/validated only against the filtered GA OpenAPI.
-- No separate internal service, no gRPC, no versioning of `/internal`.
+- Every new non-public endpoint goes under `/internal/...` or is explicitly
+  excluded from OpenAPI as a first-party route.
+- Authentication tiers never cross: an Organization API key does not
+  authenticate `/internal/...` or `/v1/me/...`; a user JWT does not
+  authenticate Organization API resources under `/v1/...`; superadmin JWTs do
+  not replace worker IAM/OIDC.
+- SDKs are generated and validated only against the filtered public OpenAPI.
+- `/internal/...` is not versioned and is never documented as a public API.
+- The public Worker's broad `/v1/...` edge allowlist does not override the
+  narrower application GA allowlist or any route authentication.
 
 ## Pointers
 
-- Operations: `private-docs/scaling-runbook.md` (capacity, budgets, manual
-  fallback mode), `private-docs/pre-launch-checklist.md` (launch gate).
-- Contract-level public view: `docs/votrix-core-architecture.md`; update
-  `docs/work-queue.md` at launch (it still describes the embedded
-  single-process consumer).
-- Deferred evolution: `TODO.md` (Redis/preview transport swap at much larger
-  scale, RLS defense-in-depth, event retention implementation).
+- Domain routing and cutover: `private-docs/domains.md`.
+- Capacity, connections, and operational fallback:
+  `private-docs/scaling-runbook.md`.
+- Launch gates: `private-docs/pre-launch-checklist.md`.
+- Durable work and public execution semantics: `docs/work-queue.md`.
+- Contract-level public topology: `docs/votrix-core-architecture.md`.
+- Deferred evolution: `TODO.md`.

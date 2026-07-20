@@ -2,7 +2,7 @@
 
 This is the canonical deployment path for Votrix Managed Agents. It mirrors the
 `votrix-backend` production/staging workflow while using a dedicated VMA runtime
-identity and a migration gate before every service rollout.
+identity and a migration gate before every API-and-worker rollout.
 
 ## Fixed layout
 
@@ -11,32 +11,47 @@ identity and a migration gate before every service rollout.
 | Project | `votrixai-480422` |
 | Region | `us-central1` |
 | Artifact Registry | `votrix` |
-| Production service | `votrix-managed-agents` |
-| Staging service | `votrix-managed-agents-staging` |
+| Production API service | `votrix-managed-agents` |
+| Production worker service | `votrix-managed-agents-worker` |
+| Staging API service | `votrix-managed-agents-staging` |
+| Staging worker service | `votrix-managed-agents-staging-worker` |
 | Runtime service account | `vma-runtime@votrixai-480422.iam.gserviceaccount.com` |
+| Production Cloud Tasks queue | `us-central1/vma-turns` |
+| Staging Cloud Tasks queue | `us-central1/vma-turns-staging` |
 
-Production and staging each run exactly one warm instance. Both revisions use
-one web worker plus five embedded durable-work consumers, keep CPU allocated,
-expose only the public-GA API surface, allow browser calls from the matching
-Votrix web application and the documentation origin, and run the same startup
-and database liveness probes. Each instance is pinned to one vCPU, 4 GiB memory,
-and 40 concurrent HTTP requests; this is a vertical public-beta baseline, not
-horizontal scale.
+Each environment is split into an API service and a worker service. API
+instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
+instances expose a private OIDC turn endpoint plus health endpoints. Each worker
+admits at most five in-flight turn requests and keeps one slow PostgreSQL
+reconciler for expired leases and failed task creation. Both roles keep CPU
+allocated, use one web process, and run the
+same startup and database liveness probes. Each instance is pinned to one vCPU
+and 4 GiB memory; API instances accept 40 concurrent HTTP requests while worker
+instances use `containerConcurrency=5`, equal to the process turn limiter.
+
+Production keeps one to three API instances and one to eight worker instances.
+Staging keeps one to two API instances and one to two worker instances. Only the
+API services disable the Cloud Run Invoker IAM check; the worker services stay
+private. Cloud Tasks push requests drive worker autoscaling, while PostgreSQL
+remains the source of truth and the reconciler preserves progress when dispatch
+is unavailable. API request autoscaling and Agent-turn capacity are independent.
 
 ## Prerequisites
 
 - Install and authenticate the Google Cloud CLI.
 - Ensure your account can enable APIs, edit IAM, submit builds, and manage Cloud
-  Run, Artifact Registry, Secret Manager, and Cloud Build triggers.
+  Run, Cloud Tasks, Artifact Registry, Secret Manager, and Cloud Build triggers.
 - Use managed PostgreSQL. SQLite is not durable or multi-instance safe on Cloud
   Run.
 - Keep development, staging, and production in three separate Supabase projects;
-  these environments must never share a database. Start with the Supavisor
-  session-mode endpoint on port `5432` and use its SQLAlchemy `asyncpg` URL for
-  `DATABASE_URL`. VMA derives LangGraph's `postgresql://` checkpoint DSN from
-  that value, so the standard deployment does not duplicate the connection
-  string or password. The local `.env` uses the development project; the two
-  Secret Manager files below use staging and production.
+  these environments must never share a database. Runtime SQLAlchemy and
+  LangGraph checkpoint traffic use the Supavisor transaction pooler on port
+  `6543`. The preview listener and janitor advisory lock use a separate
+  session-mode URL on port `5432`, while the migration Job receives its own
+  session/direct secret. A transaction-mode pooler cannot hold a lifetime
+  `LISTEN` connection or a session-scoped advisory lock. The local `.env` uses
+  the development project; the two Secret Manager files below use staging and
+  production.
 - Build the operator-owned `vma-hardened` template in the E2B account before
   creating an E2B-backed session.
 
@@ -52,6 +67,23 @@ This enables the required APIs, creates the Artifact Registry and dedicated
 runtime service account, and grants Cloud Build permission to deploy as that
 identity. Runtime access to secrets is granted per secret by the next step.
 
+Create the Cloud Tasks queues and grant the runtime identity permission to
+enqueue OIDC tasks:
+
+```bash
+./scripts/gcloud/8-setup-cloud-tasks.sh all
+```
+
+On the first run, the worker services do not exist yet, so the command configures
+the queues, Enqueuer role, the Cloud Tasks primary service-agent role, and both
+OIDC `iam.serviceAccounts.actAs` bindings, then reports that worker Invoker
+bindings are pending. This is expected. The deploy
+scripts create a missing worker once in `poll` mode, query its real Cloud Run
+URL, grant the runtime identity `roles/run.invoker` on that private service, and
+only then render the final `hybrid` worker and API revisions with that URL.
+Rerunning the setup command remains an idempotent IAM/queue repair path. No
+guessed URL or Secret Manager placeholder is used.
+
 Create the two untracked Secret Manager input files from the checked-in
 templates, then replace every placeholder:
 
@@ -64,6 +96,8 @@ Each unquoted `KEY=value` file contains exactly these required values:
 
 ```env
 DATABASE_URL=
+VMA_LISTEN_DATABASE_URL=
+DATABASE_URL_DIRECT=
 VMA_SUPABASE_URL=
 VMA_SUPABASE_PUBLISHABLE_KEY=
 VMA_ENCRYPTION_KEY=
@@ -87,6 +121,8 @@ only these names:
 | Environment variable | Production secret | Staging secret |
 |---|---|---|
 | `DATABASE_URL` | `vma-database-url` | `vma-database-url-staging` |
+| `VMA_LISTEN_DATABASE_URL` | `vma-listen-database-url` | `vma-listen-database-url-staging` |
+| `DATABASE_URL_DIRECT` | `vma-database-url-direct` | `vma-database-url-direct-staging` |
 | `VMA_SUPABASE_URL` | `vma-supabase-url` | `vma-supabase-url-staging` |
 | `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
@@ -96,9 +132,10 @@ only these names:
 | `S3_SECRET_ACCESS_KEY` | `vma-s3-secret-access-key` | `vma-s3-secret-access-key-staging` |
 | `S3_BUCKET_NAME` | `vma-s3-bucket-name` | `vma-s3-bucket-name-staging` |
 
-`VMA_CHECKPOINT_DATABASE_URL` remains an optional application setting for the
-unusual case where checkpoint tables intentionally live in another database.
-It is not part of the standard Cloud Run Secret Manager contract.
+The API and worker manifests set `VMA_CHECKPOINT_DATABASE_URL` explicitly from
+the same transaction-pooler secret as `DATABASE_URL`. They set
+`VMA_LISTEN_DATABASE_URL` from the session-mode secret. The migration Job alone
+maps `vma-database-url-direct[-staging]` to its `DATABASE_URL`.
 
 The Supabase URL and publishable key enable hosted owner and superadmin JWT
 authentication. They must match the Votrix web application in each environment;
@@ -122,34 +159,64 @@ Model API keys do not belong in Cloud Run environment variables, Secret
 Manager deployment inputs, or `VMA_MODEL_PROVIDERS`.
 
 The Cloud Run manifests pin these non-secret runtime settings rather than
-loading them from Secret Manager:
+loading them from Secret Manager. Both roles share the governance, Session,
+model, E2B, and storage settings. API-specific settings are:
 
 ```env
+VMA_SERVICE_ROLE=api
+VMA_EMBEDDED_WORKER_ENABLED=false
+VMA_DB_POOL_SIZE=4
+VMA_DB_MAX_OVERFLOW=2
+```
+
+Worker-specific settings are:
+
+```env
+VMA_SERVICE_ROLE=worker
 VMA_EMBEDDED_WORKER_ENABLED=true
-VMA_WORKER_CONCURRENCY=5
-VMA_WORKER_POLL_INTERVAL_SECONDS=0.5
+VMA_WORKER_TURN_LIMIT=5
+VMA_WORKER_CONCURRENCY=1
+VMA_WORKER_POLL_INTERVAL_SECONDS=20
 VMA_WORKER_LEASE_SECONDS=120
+VMA_WORK_MAX_ATTEMPTS=3
+VMA_CHECKPOINT_POOL_MAX_SIZE=3
+VMA_DB_POOL_SIZE=4
+VMA_DB_MAX_OVERFLOW=1
+```
+
+Shared hosted settings include:
+
+```env
 VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
+VMA_PREVIEW_BROKER=pg_notify
+VMA_WORK_DISPATCH_MODE=hybrid
+VMA_TASKS_QUEUE=vma-turns[-staging]
+VMA_TASKS_LOCATION=us-central1
+VMA_TASKS_SERVICE_ACCOUNT=vma-runtime@votrixai-480422.iam.gserviceaccount.com
+VMA_WORKER_URL=<discovered private Cloud Run worker URL>
 VMA_MAX_SESSION_INPUT_BYTES=67108864
-VMA_DB_POOL_SIZE=10
-VMA_DB_MAX_OVERFLOW=5
 VMA_DB_POOL_TIMEOUT_SECONDS=10
 VMA_DB_POOL_RECYCLE_SECONDS=300
 VMA_REQUESTS_PER_MINUTE=600
 VMA_MAX_ACTIVE_WORK=20
 VMA_ORGANIZATION_STORAGE_BYTES=5368709120
 VMA_PUBLIC_GA_ONLY=true
-VMA_CORS_ORIGINS=https://<matching-votrix-web-app>,https://docs.votrixai.com
+VMA_CORS_ORIGINS=https://<matching-vma-developer-app>,https://docs.vma.votrixai.com
 ```
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and
 one-time E2B injection. E2B turns resume from the sealed filesystem and do not
-rehydrate all inputs from R2. The PostgreSQL pool reuses connections for API,
-SSE, and embedded-worker traffic instead of opening a new database connection
-for every poll. Keep the combined pool ceiling within the selected Supabase
-plan's connection limit.
-The hosted Organization defaults admit bursts of up to 20 queued/running turns;
-five execute concurrently and the durable queue absorbs the remainder.
+rehydrate all inputs from R2. Runtime and checkpoint pools use transaction mode,
+so their client connections do not each pin a scarce Postgres backend. Every API
+process keeps one session-mode `LISTEN` connection, and a janitor leader holds a
+transient session-mode advisory-lock connection. Worker publishers use their
+existing SQLAlchemy pool and do not add a dedicated listener connection.
+PostgreSQL preview delivery is best-effort; SSE
+clients reconcile dropped or missed frames against durable Session events. The
+hosted Organization defaults admit bursts of up to 20 queued/running turns.
+Each worker admits five turns. Production starts with five warm execution slots
+and may scale to forty only after the production Supabase connection budget is
+measured and the release gate in the scaling runbook is satisfied.
 
 ## Manual deploys
 
@@ -192,10 +259,61 @@ Both scripts enforce the same sequence:
 1. Build and push a commit-tagged image.
 2. Deploy or update `<service>-migrate` with that exact image.
 3. execute `sh scripts/migrate.sh` as a Cloud Run Job and wait for success.
-4. Replace the Cloud Run service only after migrations succeed.
+4. If the worker does not exist, create it in `poll` mode and query the URL that
+   Cloud Run actually assigned.
+5. Grant the runtime OIDC identity `roles/run.invoker` on the private worker.
+6. Render and replace the private worker in `hybrid` mode with that URL.
+7. Render and replace the API service in `hybrid` mode only after the worker is
+   ready.
+
+After the first deployment of an environment, verify the final state:
+
+```bash
+./scripts/gcloud/preflight.sh staging
+```
+
+Use `production` for the production environment after its connection and load
+gates are cleared. Subsequent deploys discover the existing worker URL and need
+no bootstrap revision.
 
 The web entrypoint has no migration branch, so restarts never race to run
 Alembic themselves.
+
+## Scaling Agent-turn capacity
+
+The full capacity, connection-budget, rollout, rollback, and incident procedure
+is in the private [scaling runbook](../../private-docs/scaling-runbook.md). The
+summary below is sufficient only for routine worker-count adjustments.
+
+API capacity and Agent-turn capacity scale independently. Cloud Run scales the
+API service from HTTP/SSE request load. Named Cloud Tasks send one authenticated
+request per durable work item, so in-flight turn requests drive worker scale-out.
+The process limiter and Cloud Run concurrency use the same bound:
+
+```text
+turn execution capacity = worker instances × VMA_WORKER_TURN_LIMIT
+```
+
+The checked-in manifests use `VMA_WORKER_TURN_LIMIT=5`, `containerConcurrency=5`,
+and one slow reconciler coroutine per instance. Production keeps one warm worker
+and permits at most eight instances, for 5–40 turns. Staging permits one or two,
+for 5–10 turns. The production maximum is not permission to deploy blindly:
+the first production release remains blocked until the Supabase compute tier,
+pooler client ceiling, transaction-pool backend budget, and operational
+headroom are recorded in the scaling runbook.
+
+Cloud Tasks is never the work ledger. Task creation failure is logged and the
+20-second PostgreSQL reconciler eventually claims the queued item. Pausing or
+deleting a queue therefore slows dispatch but does not lose work. Queue retry
+policy is `maxAttempts=8`, 5–300 second backoff, and at most 25 concurrent
+dispatches. Each task sets its own 1,800-second dispatch deadline in application
+code; there is deliberately no queue-level deadline setting.
+
+Before raising `maxScale` or the per-instance turn limit, recalculate PostgreSQL,
+model-provider, E2B, CPU, memory, and spend budgets. A manual Cloud Run scaling
+change is temporary because the next manifest replacement restores the
+checked-in bounds. Validate changes with `scripts/performance_smoke.py` in
+staging and update the manifest, static tests, and runbook together.
 
 ## Staging acceptance gates
 
@@ -283,7 +401,10 @@ path.
 
 ## Automatic deploys
 
-Connect the GitHub repository under **Cloud Build > Triggers**, then run:
+The checked-in setup uses the regional 2nd-gen Cloud Build repository
+`us-central1/votrix-github/votrix-managed-agents`. The GitHub App installation
+must grant access to `votrixai/votrix-managed-agents`. Once that one-time host
+connection and repository link are complete, run:
 
 ```bash
 ./scripts/gcloud/4-setup-triggers.sh <github-owner> <repo-name>
@@ -295,9 +416,28 @@ This creates:
   required by default
 - `vma-deploy-staging`: `staging` → staging, deployed automatically
 
-The setup command is idempotent: it updates either named trigger when it already
-exists and creates it otherwise. If production should intentionally deploy
-without a human approval gate, make that unsafe policy change explicit:
+The setup command is idempotent: it imports the complete desired trigger state,
+patching either named trigger when it already exists and creating it otherwise.
+This avoids the provider-specific `update github` path, which cannot reconcile a
+2nd-gen `repositoryEventConfig`. The script also fails closed when the connection
+is not `COMPLETE` or the linked repository points at a different GitHub remote.
+Override the defaults only when intentionally migrating the Cloud Build source:
+
+```bash
+VMA_TRIGGER_REGION=us-central1 \
+VMA_CLOUD_BUILD_CONNECTION=votrix-github \
+VMA_CLOUD_BUILD_REPOSITORY=votrix-managed-agents \
+  ./scripts/gcloud/4-setup-triggers.sh votrixai votrix-managed-agents
+```
+
+Regional triggers explicitly use the project's Compute Engine default service
+account, matching the existing backend triggers and the IAM grants established
+by `0-setup-registry.sh`. Set `VMA_CLOUD_BUILD_SERVICE_ACCOUNT` to another
+service-account email only after granting the equivalent Artifact Registry,
+Cloud Run, build, logging, and runtime-identity permissions.
+
+If production should intentionally deploy without a human approval gate, make
+that unsafe policy change explicit:
 
 ```bash
 VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL=false \
@@ -315,17 +455,18 @@ as manual deployment.
 
 ## Public API access
 
-After both services exist:
+After both API services exist:
 
 ```bash
 ./scripts/gcloud/5-allow-public.sh
 ```
 
-The manifests already disable the Cloud Run Invoker IAM check. This command is
-an idempotent repair/verification step using the same recommended Cloud Run
-setting; it does not create an `allUsers` IAM binding. VMA still requires a
-database-backed Organization API key, so public ingress does not add an
-anonymous application path.
+The API manifests already disable the Cloud Run Invoker IAM check. This command
+is an idempotent repair/verification step using the same recommended Cloud Run
+setting; it does not create an `allUsers` IAM binding. The helper rejects any
+service name containing `worker`, and worker manifests do not disable the IAM
+check. VMA still requires a database-backed Organization API key, so public API
+ingress does not add an anonymous application path.
 
 ## Status
 
@@ -333,16 +474,19 @@ anonymous application path.
 ./scripts/gcloud/status.sh
 ```
 
-The command prints each service URL, ready revision, immutable image tag, and
-the image configured on each migration job.
+The command prints each API and worker service URL, ready revision, immutable
+image tag, migration-job image, and each Cloud Tasks queue's state, retry cap,
+and concurrent-dispatch bound.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `cloudbuild.yaml` | Build, push, migrate, then deploy |
-| `service.production.yaml` | Production Cloud Run service |
-| `service.staging.yaml` | Staging Cloud Run service |
+| `cloudbuild.yaml` | Build, push, migrate, then deploy API and worker |
+| `service.production.yaml` | Production API Cloud Run service |
+| `service.worker.production.yaml` | Production worker Cloud Run service |
+| `service.staging.yaml` | Staging API Cloud Run service |
+| `service.worker.staging.yaml` | Staging worker Cloud Run service |
 | `scripts/gcloud/config.sh` | Shared project and service names |
 | `scripts/gcloud/0-setup-registry.sh` | APIs, registry, runtime identity, IAM |
 | `scripts/gcloud/1-create-secrets.sh` | Allowlisted Secret Manager import |
@@ -352,5 +496,6 @@ the image configured on each migration job.
 | `scripts/gcloud/5-allow-public.sh` | Repair the public Invoker IAM-check setting |
 | `scripts/gcloud/6-bootstrap-operator.sh` | Securely bootstrap an operator API key to Secret Manager and Postgres |
 | `scripts/gcloud/7-run-acceptance.sh` | Provision the BYOK smoke Vault and run real R2/E2B/model acceptance |
+| `scripts/gcloud/8-setup-cloud-tasks.sh` | Idempotently configure queues and OIDC dispatch IAM |
 | `scripts/gcloud/preflight.sh` | Read-only GCP, IAM, secret metadata, manifest, and git readiness |
 | `scripts/gcloud/status.sh` | Deployed service and job status |

@@ -343,7 +343,8 @@ def main() -> None:
         "--api-key",
         default=(
             os.environ.get("VMA_SMOKE_API_KEY")
-            or os.environ.get("VOTRIX_API_KEY")
+            or os.environ.get("VMA_API_KEY")
+            or os.environ.get("VOTRIX_VMA_API_KEY")
         ),
     )
     parser.add_argument(
@@ -360,7 +361,8 @@ def main() -> None:
     args = parser.parse_args()
     if not args.api_key:
         parser.error(
-            "--api-key, VMA_SMOKE_API_KEY, or VOTRIX_API_KEY is required"
+            "--api-key, VMA_SMOKE_API_KEY, VMA_API_KEY, or "
+            "VOTRIX_VMA_API_KEY is required"
         )
     try:
         vault_ids = _resolve_vault_ids(

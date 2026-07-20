@@ -32,6 +32,16 @@ _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504, 529}
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
+def _environment_alias(primary: str, secondary: str, *, label: str) -> str | None:
+    primary_value = (os.getenv(primary) or "").strip()
+    secondary_value = (os.getenv(secondary) or "").strip()
+    if primary_value and secondary_value and primary_value != secondary_value:
+        raise ValueError(
+            f"{primary} and {secondary} are both set with different {label} values"
+        )
+    return primary_value or secondary_value or None
+
+
 class BinaryResponse:
     """A binary HTTP response with buffered and streaming consumption modes.
 
@@ -126,12 +136,37 @@ class AsyncVotrix:
         default_headers: Mapping[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        resolved_key = api_key or os.getenv("VOTRIX_API_KEY")
+        resolved_key = (
+            api_key.strip()
+            if api_key is not None
+            else _environment_alias(
+                "VMA_API_KEY",
+                "VOTRIX_VMA_API_KEY",
+                label="API key",
+            )
+        )
         if not resolved_key:
-            raise ValueError("api_key is required; pass it explicitly or set VOTRIX_API_KEY")
-        resolved_base_url = str(base_url or os.getenv("VOTRIX_BASE_URL") or "").strip()
+            raise ValueError(
+                "api_key is required; pass it explicitly or set VMA_API_KEY or "
+                "VOTRIX_VMA_API_KEY"
+            )
+        resolved_base_url = (
+            str(base_url).strip()
+            if base_url is not None
+            else (
+                _environment_alias(
+                    "VMA_BASE_URL",
+                    "VOTRIX_VMA_BASE_URL",
+                    label="base URL",
+                )
+                or ""
+            )
+        )
         if not resolved_base_url:
-            raise ValueError("base_url is required; pass it explicitly or set VOTRIX_BASE_URL")
+            raise ValueError(
+                "base_url is required; pass it explicitly or set VMA_BASE_URL or "
+                "VOTRIX_VMA_BASE_URL"
+            )
         if auth_scheme not in {"x-api-key", "bearer"}:
             raise ValueError("auth_scheme must be 'x-api-key' or 'bearer'")
         if max_retries < 0:
@@ -144,7 +179,7 @@ class AsyncVotrix:
         self.timeout = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout)
         self._default_headers = {
             "accept": "application/json",
-            "user-agent": f"votrix-python/{SDK_VERSION}",
+            "user-agent": f"votrix-managed-agents-python/{SDK_VERSION}",
             "x-votrix-sdk-version": SDK_VERSION,
             "votrix-managed-agents-beta": beta,
             **dict(default_headers or {}),

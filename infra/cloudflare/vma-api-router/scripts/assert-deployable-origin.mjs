@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 
 const expectedHostnames = {
-  staging: "staging-vma.votrixai.com",
-  production: "vma.votrixai.com",
+  staging: "staging-api.vma.votrixai.com",
+  production: "api.vma.votrixai.com",
 };
 
 function fail(message) {
@@ -16,7 +16,22 @@ if (!(environment in expectedHostnames)) {
 } else {
   const rawConfig = await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8");
   const config = JSON.parse(rawConfig);
-  const vars = config.env?.[environment]?.vars;
+  const environmentConfig = config.env?.[environment];
+  const vars = environmentConfig?.vars;
+  const routes = environmentConfig?.routes;
+
+  const hasExpectedRoute =
+    Array.isArray(routes) &&
+    routes.length === 1 &&
+    routes[0]?.pattern === expectedHostnames[environment] &&
+    routes[0]?.custom_domain === true &&
+    Object.keys(routes[0]).length === 2;
+
+  if (!hasExpectedRoute) {
+    fail(
+      `routes must contain exactly one Custom Domain for ${expectedHostnames[environment]}`,
+    );
+  }
 
   if (vars?.PUBLIC_HOSTNAME !== expectedHostnames[environment]) {
     fail(`PUBLIC_HOSTNAME must be ${expectedHostnames[environment]}`);

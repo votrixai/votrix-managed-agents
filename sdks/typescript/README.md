@@ -1,9 +1,9 @@
-# Votrix Managed Agents TypeScript SDK
+# Votrix Managed Agents (VMA)
 
-`@votrix/sdk` is the server-side TypeScript client for the native Votrix
-Managed Agents API. It provides typed resources, automatic cursor pagination,
-reconnecting server-sent events, streamed downloads, bounded retries, and
-typed Session funding and raw-usage helpers.
+`@votrix/managed-agents` is the server-side TypeScript client for the native
+Votrix Managed Agents API. It provides typed resources, automatic cursor
+pagination, reconnecting server-sent events, streamed downloads, bounded
+retries, and typed Session funding and raw-usage helpers.
 
 The package requires Node.js 22 or newer and ships both ESM and CommonJS
 entrypoints.
@@ -28,7 +28,7 @@ npm install /absolute/path/to/votrix-managed-agents/sdks/typescript
 After the first release, the published installation command will be:
 
 ```bash
-npm install @votrix/sdk
+npm install @votrix/managed-agents
 ```
 
 ## Client setup
@@ -36,11 +36,11 @@ npm install @votrix/sdk
 Pass the Organization API key and the URL of the same Votrix deployment:
 
 ```ts
-import Votrix from "@votrix/sdk";
+import Votrix from "@votrix/managed-agents";
 
 const client = new Votrix({
-  apiKey: process.env.VOTRIX_API_KEY,
-  baseURL: process.env.VOTRIX_BASE_URL,
+  apiKey: process.env.VMA_API_KEY,
+  baseURL: process.env.VMA_BASE_URL,
 });
 ```
 
@@ -48,15 +48,21 @@ const client = new Votrix({
 the process environment, the constructor can read them directly:
 
 ```bash
-export VOTRIX_API_KEY="vma_..."
-export VOTRIX_BASE_URL="https://managed-agents.example.com"
+export VMA_API_KEY="vma_live_..."
+export VMA_BASE_URL="https://api.vma.votrixai.com"
 ```
 
 ```ts
-import { Votrix } from "@votrix/sdk";
+import { Votrix } from "@votrix/managed-agents";
 
 const client = new Votrix();
 ```
+
+`VOTRIX_VMA_API_KEY` and `VOTRIX_VMA_BASE_URL` are supported aliases for the
+two canonical variables above. If a canonical variable and its alias are both
+set, their values must match; otherwise construction fails with a configuration
+error that does not reveal either value. Explicit `apiKey` and `baseURL`
+options take priority over environment variables.
 
 The default authentication scheme sends `x-api-key`. A deployment that
 explicitly accepts bearer authentication can use `authScheme: "bearer"`.
@@ -346,9 +352,12 @@ browser. Organization API keys must never be shipped to an end user's runtime.
   applications, source control, logs, or error messages.
 - Keep local, development, staging, and production credentials separate. A
   local client does not inherit a development credential automatically; its
-  `VOTRIX_API_KEY` and `VOTRIX_BASE_URL` must deliberately target the same
+  `VMA_API_KEY`/`VOTRIX_VMA_API_KEY` and
+  `VMA_BASE_URL`/`VOTRIX_VMA_BASE_URL` must deliberately target the same
   deployment.
-- `VOTRIX_API_KEY` is the SDK's only API-key environment variable. It does not
+- `VMA_API_KEY` and `VOTRIX_VMA_API_KEY` are the only API-key environment
+  variables read by this SDK. Generic Votrix credentials belong to the main
+  product and are intentionally ignored. These client credentials do not
   belong in the VMA service's `.env`; service configuration is separate.
 - Give each backend the least-privileged Organization key it needs and rotate
   it through `client.apiKeys`.
@@ -360,7 +369,7 @@ browser. Organization API keys must never be shipped to an end user's runtime.
 HTTP failures use typed subclasses of `APIStatusError`:
 
 ```ts
-import { APIStatusError, RateLimitError } from "@votrix/sdk";
+import { APIStatusError, RateLimitError } from "@votrix/managed-agents";
 
 try {
   await client.sessions.retrieve("session_missing");
@@ -412,8 +421,8 @@ An npm package owner must configure a Trusted Publisher for repository
 `votrixai/votrix-managed-agents`, workflow filename
 `typescript-sdk-publish.yml`, and GitHub environment `npm`. The workflow
 exchanges GitHub OIDC identity directly with npm and must not be given an
-`NPM_TOKEN`. Because `@votrix/sdk` does not exist on npm yet, an `@votrix`
-organization owner must perform the first interactive, 2FA-protected
+`NPM_TOKEN`. Because `@votrix/managed-agents` does not exist on npm yet, an
+`@votrix` organization owner must perform the first interactive, 2FA-protected
 `npm publish --access public`, then attach the Trusted Publisher; the tag
 workflow handles subsequent releases. Before enabling tags, create the `npm`
 GitHub environment with required reviewers and release-ref restrictions. This

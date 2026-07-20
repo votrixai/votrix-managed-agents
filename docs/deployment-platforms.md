@@ -12,50 +12,81 @@ Dockerfile
 cloudbuild.yaml
 service.production.yaml
 service.staging.yaml
+service.worker.production.yaml
+service.worker.staging.yaml
 scripts/gcloud/
 ```
 
 The operational walkthrough, one-time GCP setup, secret loading, manual deploys, CI/CD triggers, and status commands live in the [GCP operations guide](https://github.com/votrixai/votrix-managed-agents/tree/main/scripts/gcloud).
 
-## Cloud Run MVP topology
+## Cloud Run API/worker topology
 
-The current production manifest is intentionally constrained to one Cloud Run
-instance and one Uvicorn worker. That process hosts five embedded durable-work
-consumers:
+The maintained deployment separates public HTTP/SSE traffic from private Agent
+turn execution:
 
 ```text
-Cloud Run web/API + embedded durable worker (minScale=1, maxScale=1, WEB_CONCURRENCY=1)
-    |-- VMA-owned Postgres database/schema
-    |-- S3-compatible object storage
-    |-- model and MCP providers
-    `-- external E2B sandboxes
+Cloud Run API (production min=1, max=3; WEB_CONCURRENCY=1)
+    |-- HTTP/SSE and durable event replay
+    |                  ^
+    |                  `-- PostgreSQL NOTIFY previews
+    v                                      |
+VMA-owned PostgreSQL work/events ----> Cloud Run workers (min=1, max=8)
+                                           |-- five concurrent turns per instance
+                                           |-- model and MCP providers
+                                           `-- external E2B sandboxes
 ```
 
-Both production and staging keep one warm revision because the embedded worker
-polls durable work continuously. Work attempts use unique lease IDs and
-generations, heartbeat, recover after expiry, and fence stale terminal writes.
-Do not increase `WEB_CONCURRENCY` or `maxScale` until the remaining
-per-Session/checkpoint ownership and cross-process preview delivery have been
-validated under the same tenant-isolation contract. The single-instance shape
-is an explicit public-beta rollout constraint, not an availability guarantee.
+Production allows one to three API instances and one to eight worker instances;
+staging allows one to two of each. API instances scale from HTTP/SSE load.
+Cloud Tasks sends one private push request per turn, allowing worker instances
+to scale from queued work independently of API request load. A permanent
+single-consumer PostgreSQL reconciler remains active in each worker instance so
+a dispatch failure cannot lose durable work. Work attempts use unique lease IDs
+and generations, heartbeat, recover after expiry, and fence stale terminal
+writes.
 
-The checked-in vertical baseline uses one vCPU, 4 GiB memory,
-`containerConcurrency=40`, five turn consumers, a bounded 10+5 PostgreSQL
-application pool, one-second event polling, and a 64 MiB aggregate
-Session-input cap. The cap limits create-time materialization and one-time E2B
-injection; subsequent E2B turns use the persisted seal and hydrate only files
-explicitly referenced by the current model message.
+Each instance uses one vCPU, 4 GiB memory, and one Uvicorn process. API instances
+use `containerConcurrency=40` and a bounded 4+2 PostgreSQL application pool;
+workers expose only private health and execution routes, use
+`containerConcurrency=5`, a five-turn per-instance limiter, a 4+1 application
+pool, and a three-connection checkpoint pool. The fallback reconciler has one
+consumer and polls every 20 seconds. One-second event polling and a 64 MiB
+aggregate Session-input cap remain shared. The cap limits create-time
+materialization and one-time E2B injection; subsequent E2B turns use the
+persisted seal and hydrate only files explicitly referenced by the current
+model message.
+
+Hosted services set `VMA_PREVIEW_BROKER=pg_notify`. Worker instances publish
+coalesced typewriter/token and tool previews through PostgreSQL; each API process
+holds one dedicated `LISTEN` connection and forwards received frames to local
+SSE subscribers. The transport is best-effort and non-replayable, so clients
+reconcile with durable events. Main and checkpoint traffic use the Supavisor
+transaction-mode endpoint on port `6543`. Only `VMA_LISTEN_DATABASE_URL` uses
+the session-mode endpoint on port `5432`, because transaction mode cannot
+support the lifetime `LISTEN` connection or the janitor's session-scoped
+advisory lock. Budget one additional database connection per API process, plus
+the transient janitor lock connection. Local development retains
+`process_local` as the default and may use one direct URL for every purpose.
 
 The hosted Organization defaults admit 20 active queued/running turns and 600 API
-requests per minute, so a ten-Session burst queues behind the five consumers
-instead of failing at admission. These values support an initial trusted-user
-rollout; they are not an HA or unlimited-throughput claim.
+requests per minute. Production starts with one warm worker and five warm turn
+slots; Cloud Tasks can scale the worker service to eight instances. A larger
+burst remains durable in the queue rather than failing at admission.
+These values support an initial trusted-user rollout; they are not an
+unlimited-throughput or exactly-once side-effect claim.
 
 Cloud Run hosts the control plane and Deep Agents runtime. It does not host tenant shell sandboxes. With `VMA_SANDBOX_PROVIDER=e2b`, every cloud Session remains bound to its external E2B sandbox and reconnects that sandbox through the E2B API.
 
 ## Durable state
 
-Production and staging must each use durable Postgres. Give VMA its own database or, at minimum, its own schema and migration ownership; do not point it at the schema owned by `votrix-backend`. `DATABASE_URL` supplies control-plane persistence and, by default, the derived LangGraph checkpoint connection. `VMA_CHECKPOINT_DATABASE_URL` is an optional override only when checkpoints should use a different database.
+Production and staging must each use durable Postgres. Give VMA its own database
+or, at minimum, its own schema and migration ownership; do not point it at the
+schema owned by `votrix-backend`. Hosted `DATABASE_URL` and
+`VMA_CHECKPOINT_DATABASE_URL` explicitly use the transaction pooler on port
+`6543`; `VMA_LISTEN_DATABASE_URL` uses the session pooler on port `5432`.
+Alembic runs in a migration Job whose `DATABASE_URL` comes from a separate
+session/direct secret. Outside the hosted profile, the checkpoint and listener
+settings may remain empty and fall back to `DATABASE_URL`.
 
 Cloud Run's writable filesystem is ephemeral and must not hold authoritative
 session, event, file, Skill, or checkpoint state. Configure a private
@@ -77,9 +108,11 @@ The supported release sequence is:
 
 1. Cloud Build builds and pushes a commit-addressed image to Artifact Registry.
 2. A dedicated Cloud Run migration Job runs `scripts/migrate.sh` against the target VMA database and must complete successfully.
-3. Cloud Run applies the production or staging service manifest with the same image.
-4. Traffic moves only after the service health checks pass.
-5. Before promoting staging, run `scripts/pilot_acceptance.py` against its public
+3. Cloud Run replaces the API service with that image.
+4. Cloud Run replaces the worker service with the same image only after the
+   migration Job succeeds.
+5. Traffic moves only after the service health checks pass.
+6. Before promoting staging, run `scripts/pilot_acceptance.py` against its public
    URL with staging credentials. This provisions and deletes one real E2B
    Session while verifying Postgres, R2, model execution, append-only files,
    pause/resume, generated outputs, scoped listing, and download.
@@ -87,7 +120,7 @@ The supported release sequence is:
    its latency/failure summary with the release evidence.
 
 ```bash
-VMA_SMOKE_BASE_URL=https://staging-vma.votrixai.com \
+VMA_SMOKE_BASE_URL=https://staging-api.vma.votrixai.com \
 VMA_SMOKE_API_KEY=... \
 VMA_SMOKE_VAULT_IDS=vault_... \
 uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
@@ -97,7 +130,7 @@ Then run the concurrent gate with a staging Vault that already contains the
 model Credential:
 
 ```bash
-VMA_PERF_BASE_URL=https://staging-vma.votrixai.com \
+VMA_PERF_BASE_URL=https://staging-api.vma.votrixai.com \
 VMA_PERF_API_KEY=... \
 VMA_PERF_VAULT_IDS=vault_... \
 uv run python scripts/performance_smoke.py
@@ -105,18 +138,20 @@ uv run python scripts/performance_smoke.py
 
 Migrations are a once-per-release operation. They are not an implicit side effect of every web container start.
 
-## Optional workers and schedules
+## Optional external workers and schedules
 
 `scripts/start-worker.sh` and the `self_hosted` Environment work protocol remain supported product capabilities. Here, `self_hosted` describes where an Agent Session's work executes; it does not describe where the VMA control plane is deployed. The GCP-only hosted decision therefore does not remove self-hosted Environment APIs or worker behavior.
 
-The hosted manifests enable the embedded durable worker for queued Session
-execution. Scheduled Deployment resources remain outside the public GA surface;
-no production scheduler invokes their due-schedule tick.
+The hosted API manifests explicitly disable embedded workers. The dedicated
+worker-service manifests enable five embedded durable consumers for queued
+Session execution and expose only private health routes. Scheduled Deployment
+resources remain outside the public GA surface; no production scheduler invokes
+their due-schedule tick.
 
 ## Process commands
 
 | Process | Command | Cloud Run use |
 | --- | --- | --- |
-| Web | `scripts/start-web.sh` | Main Cloud Run service; keep one process. |
+| API/worker Uvicorn process | `entrypoint.sh` (`scripts/start-web.sh` is a wrapper) | Both hosted services; `VMA_SERVICE_ROLE` selects the API or worker surface. Keep one process per instance. |
 | Migration | `scripts/migrate.sh` | Dedicated release migration Job. |
-| Worker | `scripts/start-worker.sh` | Optional consumer for `self_hosted` Environment work, not an E2B sandbox. |
+| External worker CLI | `scripts/start-worker.sh` | Optional consumer for `self_hosted` Environment work; this is not the hosted worker-role service or an E2B sandbox. |

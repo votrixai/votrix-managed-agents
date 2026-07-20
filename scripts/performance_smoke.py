@@ -250,7 +250,7 @@ async def run_smoke(
                         metadata={
                             "created_by": "scripts/performance_smoke.py",
                             "smoke_run_id": run_id,
-                            "smoke_index": result.index,
+                            "smoke_index": str(result.index),
                         },
                         vault_ids=list(config.vault_ids),
                         idempotency_key=f"{run_id}-session-{result.index}",
@@ -668,13 +668,19 @@ def _parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Set the API credential with VMA_PERF_API_KEY (preferred), "
-            "VMA_SMOKE_API_KEY, or VOTRIX_API_KEY. It is intentionally not accepted "
+            "VMA_SMOKE_API_KEY, VMA_API_KEY, or VOTRIX_VMA_API_KEY. It is "
+            "intentionally not accepted "
             "as a command-line argument."
         ),
     )
     parser.add_argument(
         "--base-url",
-        default=_first_env("VMA_PERF_BASE_URL", "VMA_SMOKE_BASE_URL", "VOTRIX_BASE_URL"),
+        default=_first_env(
+            "VMA_PERF_BASE_URL",
+            "VMA_SMOKE_BASE_URL",
+            "VMA_BASE_URL",
+            "VOTRIX_VMA_BASE_URL",
+        ),
     )
     parser.add_argument(
         "--vault-id",
@@ -746,11 +752,22 @@ def _format_ms(value: float | None) -> str:
 
 
 async def _main_async(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    api_key = _first_env("VMA_PERF_API_KEY", "VMA_SMOKE_API_KEY", "VOTRIX_API_KEY")
+    api_key = _first_env(
+        "VMA_PERF_API_KEY",
+        "VMA_SMOKE_API_KEY",
+        "VMA_API_KEY",
+        "VOTRIX_VMA_API_KEY",
+    )
     if not api_key:
-        parser.error("VMA_PERF_API_KEY, VMA_SMOKE_API_KEY, or VOTRIX_API_KEY is required")
+        parser.error(
+            "VMA_PERF_API_KEY, VMA_SMOKE_API_KEY, VMA_API_KEY, or "
+            "VOTRIX_VMA_API_KEY is required"
+        )
     if not args.base_url:
-        parser.error("--base-url, VMA_PERF_BASE_URL, VMA_SMOKE_BASE_URL, or VOTRIX_BASE_URL is required")
+        parser.error(
+            "--base-url, VMA_PERF_BASE_URL, VMA_SMOKE_BASE_URL, VMA_BASE_URL, "
+            "or VOTRIX_VMA_BASE_URL is required"
+        )
     try:
         _validate_base_url(args.base_url, allow_insecure_http=args.allow_insecure_http)
     except ValueError as exc:

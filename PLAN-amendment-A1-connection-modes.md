@@ -6,6 +6,9 @@ only needs to read THIS file. **Where this file conflicts with the base
 documents, this file wins.** Apply these deltas in whichever commit implements
 the section they amend.
 
+**Status (2026-07-17):** Implemented. Real hosted load and connection-budget
+measurement remain first-release gates rather than implementation work.
+
 ## Why
 
 Supavisor **session mode pins one Postgres backend connection per client** for
@@ -92,10 +95,10 @@ DSN.
 
 ## Acceptance additions
 
-- [ ] Runtime + checkpoint traffic runs on the transaction pooler; LISTEN and
+- [x] Runtime + checkpoint traffic runs on the transaction pooler; LISTEN and
       the janitor lock run on the session DSN; the migration Job uses its own
       direct secret.
-- [ ] `prepare_threshold=None` on the checkpoint pool; no server-side prepared
+- [x] `prepare_threshold=None` on the checkpoint pool; no server-side prepared
       statements cross the transaction pooler.
-- [ ] Pool pins match this amendment's table; env examples and gcloud README
+- [x] Pool pins match this amendment's table; env examples and gcloud README
       no longer instruct all-traffic-on-5432.

@@ -112,7 +112,7 @@ function apiKeyResponse(secret?: string): Record<string, unknown> {
     type: "api_key",
     organization_id: "org_test",
     name: "CI",
-    prefix: "vma_key_1",
+    prefix: "vma_test_key_1",
     scopes: ["api"],
     expires_at: null,
     created_by: "key_admin",
@@ -177,7 +177,7 @@ describe("public resources", () => {
 
   it("routes every root resource and public subresource with wire-format payloads", async () => {
     const responses: unknown[] = [
-      apiKeyResponse("vma_once"),
+      apiKeyResponse("vma_test_once"),
       { id: "agt_created", type: "agent" },
       { id: "agt_retrieved", type: "agent" },
       {
@@ -274,7 +274,7 @@ describe("public resources", () => {
     await client.modelProviders.retrieve("anthropic/custom");
 
     expect(requests).toHaveLength(14);
-    expect(createdKey.secret).toBe("vma_once");
+    expect(createdKey.secret).toBe("vma_test_once");
     expect(createdKey).not.toHaveProperty("unexpected_secret_material");
     expect(credential).not.toHaveProperty("api_key");
     expect(credential).not.toHaveProperty("auth");

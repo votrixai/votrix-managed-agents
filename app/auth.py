@@ -111,7 +111,8 @@ class CompositeAuthProvider(DatabaseApiKeyAuthProvider):
     async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentOrganization:
         bearer = _bearer_token(credentials.authorization)
         # Supabase access tokens are JWTs. Preserve support for legacy opaque
-        # bearer API keys as well as the canonical vma_ format.
+        # bearer API keys as well as canonical vma_live_/vma_test_ keys and
+        # legacy pre-contract vma_ keys during their rotation window.
         if credentials.x_api_key or not bearer or bearer.count(".") != 2:
             return await super().authenticate(request, credentials)
         return await HostedUserAuthProvider().authenticate(request, credentials)

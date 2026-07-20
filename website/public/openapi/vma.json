@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Votrix Managed Agents",
-    "description": "Build and operate long-running agents through a durable, Organization-scoped REST API. This reference is generated from the same FastAPI application that serves production traffic, so request fields and response models stay aligned with the code.\n\n> **Base URL** `https://vma.votrixai.com`\n\nEvery `/v1` request requires the current `votrix-managed-agents-beta: votrix-managed-agents-2026-04-01` header plus either an `x-api-key` header or the same key as a Bearer token. Choose an endpoint to inspect its schema, copy a code sample, or send a request.",
+    "title": "Votrix Managed Agents (VMA)",
+    "description": "Build and operate long-running agents through a durable, Organization-scoped REST API. This reference is generated from the same FastAPI application that serves production traffic, so request fields and response models stay aligned with the code.\n\n> **Base URL** `https://api.vma.votrixai.com`\n\nEvery `/v1` request requires the current `votrix-managed-agents-beta: votrix-managed-agents-2026-04-01` header plus either an `x-api-key` header or the same key as a Bearer token. Choose an endpoint to inspect its schema, copy a code sample, or send a request.",
     "version": "0.1.0"
   },
   "paths": {
@@ -771,19 +771,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/agents' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"name\":\"Research assistant\",\"model\":{\"id\":\"gpt-5.5\"},\"system\":\"Research the request and cite the sources you use.\",\"description\":\"A research agent for account questions.\",\"metadata\":{\"team\":\"support\"}}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/agents' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"name\":\"Research assistant\",\"model\":{\"id\":\"gpt-5.5\"},\"system\":\"Research the request and cite the sources you use.\",\"description\":\"A research agent for account questions.\",\"metadata\":{\"team\":\"support\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'name': 'Research assistant',\n 'model': {'id': 'gpt-5.5'},\n 'system': 'Research the request and cite the sources you use.',\n 'description': 'A research agent for account questions.',\n 'metadata': {'team': 'support'}}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/agents',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'name': 'Research assistant',\n 'model': {'id': 'gpt-5.5'},\n 'system': 'Research the request and cite the sources you use.',\n 'description': 'A research agent for account questions.',\n 'metadata': {'team': 'support'}}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/agents',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"name\": \"Research assistant\",\n  \"model\": {\n    \"id\": \"gpt-5.5\"\n  },\n  \"system\": \"Research the request and cite the sources you use.\",\n  \"description\": \"A research agent for account questions.\",\n  \"metadata\": {\n    \"team\": \"support\"\n  }\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/agents\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"name\": \"Research assistant\",\n  \"model\": {\n    \"id\": \"gpt-5.5\"\n  },\n  \"system\": \"Research the request and cite the sources you use.\",\n  \"description\": \"A research agent for account questions.\",\n  \"metadata\": {\n    \"team\": \"support\"\n  }\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/agents\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -1456,19 +1456,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request PATCH \\\n  --url 'https://vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"version\":1,\"system\":\"Answer concisely and cite every external source.\"}'"
+            "source": "curl --request PATCH \\\n  --url 'https://api.vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"version\":1,\"system\":\"Answer concisely and cite every external source.\"}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'version': 1, 'system': 'Answer concisely and cite every external source.'}\n\nresponse = requests.request(\n    'PATCH',\n    'https://vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'version': 1, 'system': 'Answer concisely and cite every external source.'}\n\nresponse = requests.request(\n    'PATCH',\n    'https://api.vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"version\": 1,\n  \"system\": \"Answer concisely and cite every external source.\"\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef\", {\n  method: \"PATCH\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"version\": 1,\n  \"system\": \"Answer concisely and cite every external source.\"\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef\", {\n  method: \"PATCH\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -1621,19 +1621,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"version\":1,\"system\":\"Answer concisely and cite every external source.\"}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"version\":1,\"system\":\"Answer concisely and cite every external source.\"}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'version': 1, 'system': 'Answer concisely and cite every external source.'}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'version': 1, 'system': 'Answer concisely and cite every external source.'}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"version\": 1,\n  \"system\": \"Answer concisely and cite every external source.\"\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"version\": 1,\n  \"system\": \"Answer concisely and cite every external source.\"\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/agents/agt_1234567890abcdef1234567890abcdef\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       }
@@ -1893,19 +1893,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/environments' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"name\":\"production-cloud\",\"description\":\"Cloud sandbox for production agent sessions.\",\"config\":{\"type\":\"cloud\"},\"metadata\":{\"region\":\"us-east\"},\"scope\":\"organization\"}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/environments' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"name\":\"production-cloud\",\"description\":\"Cloud sandbox for production agent sessions.\",\"config\":{\"type\":\"cloud\"},\"metadata\":{\"region\":\"us-east\"},\"scope\":\"organization\"}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'name': 'production-cloud',\n 'description': 'Cloud sandbox for production agent sessions.',\n 'config': {'type': 'cloud'},\n 'metadata': {'region': 'us-east'},\n 'scope': 'organization'}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/environments',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'name': 'production-cloud',\n 'description': 'Cloud sandbox for production agent sessions.',\n 'config': {'type': 'cloud'},\n 'metadata': {'region': 'us-east'},\n 'scope': 'organization'}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/environments',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"name\": \"production-cloud\",\n  \"description\": \"Cloud sandbox for production agent sessions.\",\n  \"config\": {\n    \"type\": \"cloud\"\n  },\n  \"metadata\": {\n    \"region\": \"us-east\"\n  },\n  \"scope\": \"organization\"\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/environments\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"name\": \"production-cloud\",\n  \"description\": \"Cloud sandbox for production agent sessions.\",\n  \"config\": {\n    \"type\": \"cloud\"\n  },\n  \"metadata\": {\n    \"region\": \"us-east\"\n  },\n  \"scope\": \"organization\"\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/environments\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -2347,19 +2347,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request PATCH \\\n  --url 'https://vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"description\":\"Cloud sandbox for support automation.\",\"metadata\":{\"region\":\"us-east\"}}'"
+            "source": "curl --request PATCH \\\n  --url 'https://api.vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"description\":\"Cloud sandbox for support automation.\",\"metadata\":{\"region\":\"us-east\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'description': 'Cloud sandbox for support automation.',\n 'metadata': {'region': 'us-east'}}\n\nresponse = requests.request(\n    'PATCH',\n    'https://vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'description': 'Cloud sandbox for support automation.',\n 'metadata': {'region': 'us-east'}}\n\nresponse = requests.request(\n    'PATCH',\n    'https://api.vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"description\": \"Cloud sandbox for support automation.\",\n  \"metadata\": {\n    \"region\": \"us-east\"\n  }\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef\", {\n  method: \"PATCH\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"description\": \"Cloud sandbox for support automation.\",\n  \"metadata\": {\n    \"region\": \"us-east\"\n  }\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef\", {\n  method: \"PATCH\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -2510,19 +2510,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"description\":\"Cloud sandbox for support automation.\",\"metadata\":{\"region\":\"us-east\"}}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"description\":\"Cloud sandbox for support automation.\",\"metadata\":{\"region\":\"us-east\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'description': 'Cloud sandbox for support automation.',\n 'metadata': {'region': 'us-east'}}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'description': 'Cloud sandbox for support automation.',\n 'metadata': {'region': 'us-east'}}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"description\": \"Cloud sandbox for support automation.\",\n  \"metadata\": {\n    \"region\": \"us-east\"\n  }\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"description\": \"Cloud sandbox for support automation.\",\n  \"metadata\": {\n    \"region\": \"us-east\"\n  }\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/environments/env_1234567890abcdef1234567890abcdef\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -2925,19 +2925,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/sessions' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"agent\":{\"type\":\"agent\",\"id\":\"agt_1234567890abcdef1234567890abcdef\",\"version\":1},\"environment_id\":\"env_1234567890abcdef1234567890abcdef\",\"title\":\"Investigate an account request\",\"metadata\":{\"account_id\":\"acct_example\"}}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/sessions' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"agent\":{\"type\":\"agent\",\"id\":\"agt_1234567890abcdef1234567890abcdef\",\"version\":1},\"environment_id\":\"env_1234567890abcdef1234567890abcdef\",\"title\":\"Investigate an account request\",\"metadata\":{\"account_id\":\"acct_example\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'agent': {'type': 'agent', 'id': 'agt_1234567890abcdef1234567890abcdef', 'version': 1},\n 'environment_id': 'env_1234567890abcdef1234567890abcdef',\n 'title': 'Investigate an account request',\n 'metadata': {'account_id': 'acct_example'}}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/sessions',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'agent': {'type': 'agent', 'id': 'agt_1234567890abcdef1234567890abcdef', 'version': 1},\n 'environment_id': 'env_1234567890abcdef1234567890abcdef',\n 'title': 'Investigate an account request',\n 'metadata': {'account_id': 'acct_example'}}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/sessions',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"agent\": {\n    \"type\": \"agent\",\n    \"id\": \"agt_1234567890abcdef1234567890abcdef\",\n    \"version\": 1\n  },\n  \"environment_id\": \"env_1234567890abcdef1234567890abcdef\",\n  \"title\": \"Investigate an account request\",\n  \"metadata\": {\n    \"account_id\": \"acct_example\"\n  }\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/sessions\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"agent\": {\n    \"type\": \"agent\",\n    \"id\": \"agt_1234567890abcdef1234567890abcdef\",\n    \"version\": 1\n  },\n  \"environment_id\": \"env_1234567890abcdef1234567890abcdef\",\n  \"title\": \"Investigate an account request\",\n  \"metadata\": {\n    \"account_id\": \"acct_example\"\n  }\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/sessions\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -3612,19 +3612,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request PATCH \\\n  --url 'https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"title\":\"Investigate the Acme request\",\"metadata\":{\"priority\":\"high\"}}'"
+            "source": "curl --request PATCH \\\n  --url 'https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"title\":\"Investigate the Acme request\",\"metadata\":{\"priority\":\"high\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'title': 'Investigate the Acme request', 'metadata': {'priority': 'high'}}\n\nresponse = requests.request(\n    'PATCH',\n    'https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'title': 'Investigate the Acme request', 'metadata': {'priority': 'high'}}\n\nresponse = requests.request(\n    'PATCH',\n    'https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"title\": \"Investigate the Acme request\",\n  \"metadata\": {\n    \"priority\": \"high\"\n  }\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef\", {\n  method: \"PATCH\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"title\": \"Investigate the Acme request\",\n  \"metadata\": {\n    \"priority\": \"high\"\n  }\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef\", {\n  method: \"PATCH\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -3790,19 +3790,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"title\":\"Investigate the Acme request\",\"metadata\":{\"priority\":\"high\"}}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"title\":\"Investigate the Acme request\",\"metadata\":{\"priority\":\"high\"}}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'title': 'Investigate the Acme request', 'metadata': {'priority': 'high'}}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'title': 'Investigate the Acme request', 'metadata': {'priority': 'high'}}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"title\": \"Investigate the Acme request\",\n  \"metadata\": {\n    \"priority\": \"high\"\n  }\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"title\": \"Investigate the Acme request\",\n  \"metadata\": {\n    \"priority\": \"high\"\n  }\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -4416,19 +4416,19 @@
             "id": "curl",
             "lang": "bash",
             "label": "cURL",
-            "source": "curl --request POST \\\n  --url 'https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef/events' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VOTRIX_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"events\":[{\"type\":\"user.message\",\"content\":\"Summarize the Acme account.\"}]}'"
+            "source": "curl --request POST \\\n  --url 'https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef/events' \\\n  --header \"Content-Type: application/json\" \\\n  --header \"x-api-key: $VMA_API_KEY\" \\\n  --header \"votrix-managed-agents-beta: votrix-managed-agents-2026-04-01\" \\\n  --data '{\"events\":[{\"type\":\"user.message\",\"content\":\"Summarize the Acme account.\"}]}'"
           },
           {
             "id": "python",
             "lang": "python",
             "label": "Python",
-            "source": "import os\n\nimport requests\n\npayload = {'events': [{'type': 'user.message', 'content': 'Summarize the Acme account.'}]}\n\nresponse = requests.request(\n    'POST',\n    'https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef/events',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VOTRIX_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
+            "source": "import os\n\nimport requests\n\npayload = {'events': [{'type': 'user.message', 'content': 'Summarize the Acme account.'}]}\n\nresponse = requests.request(\n    'POST',\n    'https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef/events',\n    headers={\n        'Content-Type': 'application/json',\n        'x-api-key': os.environ['VMA_API_KEY'],\n        'votrix-managed-agents-beta': 'votrix-managed-agents-2026-04-01',\n    },\n    json=payload,\n)\nresponse.raise_for_status()\nprint(response.json())"
           },
           {
             "id": "js",
             "lang": "javascript",
             "label": "JavaScript",
-            "source": "const payload = {\n  \"events\": [\n    {\n      \"type\": \"user.message\",\n      \"content\": \"Summarize the Acme account.\"\n    }\n  ]\n};\n\nconst response = await fetch(\"https://vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef/events\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VOTRIX_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+            "source": "const payload = {\n  \"events\": [\n    {\n      \"type\": \"user.message\",\n      \"content\": \"Summarize the Acme account.\"\n    }\n  ]\n};\n\nconst response = await fetch(\"https://api.vma.votrixai.com/v1/sessions/sess_1234567890abcdef1234567890abcdef/events\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": process.env.VMA_API_KEY,\n    \"votrix-managed-agents-beta\": \"votrix-managed-agents-2026-04-01\"\n  },\n  body: JSON.stringify(payload)\n});\n\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
           }
         ]
       },
@@ -14006,8 +14006,8 @@
   },
   "servers": [
     {
-      "url": "https://vma.votrixai.com",
-      "description": "Votrix Managed Agents API"
+      "url": "https://api.vma.votrixai.com",
+      "description": "Votrix Managed Agents (VMA) API"
     }
   ],
   "tags": [

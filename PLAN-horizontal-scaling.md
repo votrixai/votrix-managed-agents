@@ -1,17 +1,34 @@
-# VMA Horizontal Scaling — Implementation Handoff (P1 + P2)
+# VMA Horizontal Scaling — Implementation Record (P1 + P2 + P2.5)
 
-Self-contained spec for a coding agent. No conversation context is assumed. Follow it in order; P1 and P2 are independently shippable.
+Self-contained implementation record for the horizontal-scaling release. P1 is
+independently shippable; P2 and P2.5 are one release unit because the API/worker
+split must preserve hosted token-level preview streaming.
+
+**Status (2026-07-17):** P1, P2, and P2.5 are implemented. This file retains the
+original task-level detail for review and regression work. Hosted P2.5 delivery
+was exercised through real Supabase `LISTEN/NOTIFY` between two OS processes: a
+worker-role publisher sent an `event_start` plus token deltas, and an API-role
+listener received three coalesced frames, including two `event_delta` frames.
+This verifies the real cross-process PostgreSQL transport without claiming that
+the complete public SSE endpoint was part of that broker-level smoke.
 
 ## Mission
 
-Make the VMA control plane safe to run on multiple Cloud Run instances (P1), then split it into an API service and a worker service with a fixed, manually-scaled worker fleet (P2), while preserving token-level preview streaming across instances with a Postgres `pg_notify` broker (P2.5).
+Make the VMA control plane safe to run on multiple Cloud Run instances (P1),
+then split it into an API service and a worker service with a warm, manually
+bounded worker fleet (P2), while preserving token-level preview streaming across
+instances with a PostgreSQL `pg_notify` broker (P2.5). P2.5 is mandatory whenever
+P2 is deployed in the maintained hosted topology.
 
 **Explicitly out of scope (do NOT build):**
-- Cloud Tasks / Pub/Sub / Redis / any new external infrastructure **within this doc's commits**. P3 (Stage A turn-replay safety + Stage B Cloud Tasks dispatch) is now specced in the companion `PLAN-p3-autoscale.md` and ships pre-launch, but strictly as separate commits AFTER everything in this doc is implemented and green. Do not interleave. Note: `PLAN-p3-autoscale.md` Stage A.3 amends this doc's P1.1 attempt semantics (attempts count executions, not leases) — if implementing both docs in one pass, apply the amendment directly.
+- Cloud Tasks / Pub/Sub / Redis / any new external infrastructure **within this doc's commits**. P3 (Stage A turn-replay safety + Stage B Cloud Tasks dispatch) is now specced in the companion `PLAN-p3-autoscale.md` and ships pre-launch, but strictly as separate commits AFTER everything in this doc is implemented and green. Do not interleave. Note: `PLAN-p3-autoscale.md` Stage A.3 amends this doc's P1.1 attempt semantics (attempts count admitted graph executions, not leases or deferred outcomes) — if implementing both docs in one pass, apply the amendment directly.
 - Any change to the public API surface, OpenAPI schema, event shapes, or SDK-facing behavior. (P2.5 changes only the internal transport of preview frames; the `event_deltas` parameter, frame format, and SSE reconciliation stay byte-identical.)
 - Any change to `app/runtime/deepagents_engine.py` or the lease algorithm in `app/runtime/runner.py`. `app/runtime/vma_preview_bus.py` also stays unchanged — P2.5 adds a wrapper module around it, and the only `runner.py` edit allowed is the one-line `emit_preview` import swap specified there.
 
-## Current architecture (verified facts — do not re-derive, do not "fix")
+## Pre-implementation baseline (historical verified facts)
+
+The following facts describe the system before this plan was implemented. They
+explain why each change was required; they are not the current hosted topology.
 
 - One Cloud Run service (`service.production.yaml`, `service.staging.yaml` at repo root) runs the FastAPI API **and** an embedded worker: the lifespan in `app/factory.py` spawns `vma_worker_concurrency` copies of `run_worker()` (`app/worker.py`) plus an E2B janitor task. Production pins `minScale=1 / maxScale=1`, `VMA_EMBEDDED_WORKER_ENABLED=true`, `VMA_WORKER_CONCURRENCY=5`.
 - Work queue = Postgres rows (`resource_type="environment_work"`) in `app/runtime/work_queue.py`. Leases carry `worker_id + lease_id + generation` with heartbeat and expiry; takeover of expired leases happens via `_lease_next_work` → `lease_work` (bumps `attempt` and `generation`).
@@ -253,7 +270,12 @@ Create `service.worker.production.yaml` and `service.worker.staging.yaml` by cop
 | `VMA_DB_POOL_SIZE` / `VMA_DB_MAX_OVERFLOW` | keep current | keep | **`5` / `2`** | `5` / `2` |
 | Everything else (image, SA, secrets `vma-*`, probes, resources, `WEB_CONCURRENCY=1`, timeout) | unchanged | unchanged | copy from API | copy from staging API |
 
-The worker service must never receive a public invoker binding: `scripts/gcloud/5-allow-public.sh` stays API-only — add a guard that exits with an error if pointed at a `*worker*` service.
+The worker service must never receive a public invoker binding:
+`scripts/gcloud/5-allow-public.sh` stays API-only and exits with an error if
+pointed at a `*worker*` service. Production's checked-in worker range is two to
+three instances: two are always warm, while operators deliberately raise the
+guaranteed fleet when needed. PostgreSQL queue depth does not automatically
+drive Cloud Run worker scaling.
 
 ## P2.3 — Deploy pipeline
 
@@ -274,7 +296,7 @@ New `tests/test_factory_roles.py`:
 - role=`api` → business routes mounted, lifespan spawns no worker/janitor tasks even with `VMA_EMBEDDED_WORKER_ENABLED=true`.
 - role=`combined` (default) → current behavior (routers + workers), guarding local/test parity.
 
-## P2.5 — Cross-instance preview broker (Postgres `pg_notify`)
+## P2.5 — Mandatory cross-instance preview broker (PostgreSQL `pg_notify`)
 
 Preserves token-level `event_deltas` streaming after the split: workers publish preview frames through Postgres `NOTIFY`; API instances `LISTEN` and feed received frames into their local `vma_preview_bus`, so the SSE code path needs zero changes. `NOTIFY` is fire-and-forget, which matches the existing best-effort preview contract exactly — durable events still reconcile any dropped frame. Ship this in the same release as P2 so hosted typewriter streaming never regresses.
 
@@ -331,14 +353,15 @@ Constants: `_CHANNEL = "vma_preview"`; `PREVIEW_INSTANCE_ID = uuid4().hex` (proc
 
 ## Acceptance checklist
 
-- [ ] 4th lease of a failing work item → work `error/max_attempts_exceeded`, session terminated with `session.error` + `session.status_terminated` events, quota released; cap=0 disables.
-- [ ] No transaction ever holds a work-row lock while acquiring a session-row lock (review the exhaustion path specifically).
-- [ ] One `AsyncPostgresSaver` + one connection pool per process; `setup()` once; lifespan closes it; SQLite/memory paths untouched.
-- [ ] Janitor runs at most once concurrently across connections; non-Postgres unaffected.
-- [ ] Worker poll loop survives transient exceptions (`once=True` still propagates).
-- [ ] `combined` role is byte-for-byte today's behavior; test suite needed no fixture changes for it.
-- [ ] Worker app exposes only health endpoints; API app runs no background execution.
-- [ ] Manifests match the matrix; `test_cloud_run_config.py` updated and green; migration job still gates both replaces; worker never gets public invoker.
-- [ ] README runbook documents manual scaling; no new external infrastructure introduced anywhere.
-- [ ] With `pg_notify`, an SSE client on instance X receives preview frames for a turn executed on instance Y; same-instance delivery is never duplicated (loopback suppression); worker role runs no listener; NOTIFY rate is bounded by coalescing.
-- [ ] Public OpenAPI byte-identical; no changes under `app/runtime/deepagents_engine.py` or `vma_preview_bus.py`; `runner.py` changes limited to the P2.5 `emit_preview` import swap; lease logic untouched.
+- [x] 4th lease of a failing work item → work `error/max_attempts_exceeded`, session terminated with `session.error` + `session.status_terminated` events, quota released; cap=0 disables.
+- [x] No transaction holds a work-row lock while acquiring a session-row lock; the exhaustion path commits the work-row transaction before opening the Session transaction.
+- [x] One `AsyncPostgresSaver` + one connection pool per process; `setup()` once; lifespan closes it; SQLite/memory paths remain fresh per call.
+- [x] A non-persistent development Supabase smoke held the janitor advisory lock on one connection, verified that a competing cleanup skipped, released it, and verified that the next cleanup ran. Non-Postgres behavior also has focused coverage.
+- [x] Worker poll loop survives transient exceptions (`once=True` still propagates).
+- [x] `combined` role preserves local/test behavior with routers and workers.
+- [x] Worker app exposes only health endpoints; API app runs no worker or janitor tasks.
+- [x] Manifests match the matrix; deployment tests pin both services, migration gates both replacements, and worker public-invoker use is rejected.
+- [x] The operator runbook documents bounded manual scaling; no new external infrastructure was introduced.
+- [x] A real Supabase `LISTEN/NOTIFY` smoke used separate worker-role and API-role OS processes and delivered three preview frames, including two coalesced `event_delta` frames with complete text. Unit coverage also verifies loopback suppression, worker-no-listener behavior, coalescing, ordering, and bounded payloads.
+- [ ] A complete worker-role → API-role → public SSE endpoint smoke remains an external release gate unless separately recorded; do not infer it from the broker-level two-process smoke.
+- [x] Public OpenAPI remains unchanged; `deepagents_engine.py`, `vma_preview_bus.py`, and runner lease logic are unchanged, while `runner.py` only swaps preview publication to the broker wrapper.

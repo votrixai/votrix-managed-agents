@@ -1,4 +1,4 @@
-# Votrix Managed Agents
+# Votrix Managed Agents (VMA)
 
 Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control plane for long-running agents. It targets the public resource, lifecycle, and SDK shape of [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) while running agents with [Deep Agents 0.6.12](https://github.com/langchain-ai/deepagents) and LangGraph.
 
@@ -38,6 +38,9 @@ Supported in the Votrix core:
 - Append-only session events, monotonic sequence numbers, SSE replay, and
   durable work records with unique leases, generations, heartbeats, expired
   lease recovery, and stale-worker fencing.
+- A deployment-selectable preview transport: local development defaults to the
+  in-process bus, while the checked-in Cloud Run services use PostgreSQL
+  `pg_notify` to preserve live token/tool deltas across API and worker instances.
 - Tenant request-rate, active-work, daily model-token, and stored-byte quotas;
   append-only audit and raw-usage ledgers; and tenant idempotency used by
   Session creation. Event submission retains its dedicated transactional
@@ -52,12 +55,14 @@ Supported in the Votrix core:
 
 Important deployment and feature constraints:
 
-- Streaming previews are process-local; separate web and worker processes need Redis Streams, NATS, or another tenant-scoped broker. Durable work fencing does not remove this topology constraint.
+- Streaming previews are intentionally best-effort. PostgreSQL `NOTIFY` preserves
+  hosted cross-instance typewriter delivery but does not make ephemeral frames
+  replayable; clients always reconcile against durable Session events.
 - The safe default has checkpointed file state but no shell execution. Isolated execution requires the optional E2B provider or an operator-supplied `VMA_SANDBOX_FACTORY`.
 - MCP connections, restart-safe custom-tool/approval resume, skills, seeded memory files, and synchronous subagents are mapped to Deep Agents but do not yet reproduce every Claude semantic.
-- Organization RBAC/SSO, Postgres RLS, a multi-replica preview broker and
-  complete per-Session/checkpoint ownership, enterprise audit export/retention,
-  deployment scheduling, webhook delivery, and OAuth refresh remain deferred.
+- Organization RBAC/SSO, Postgres RLS, exactly-once external side effects,
+  enterprise audit export/retention, deployment scheduling, webhook delivery,
+  and OAuth refresh remain deferred.
 - Raw provider/model token usage is recorded per Organization and Session for
   quota enforcement and analysis. Operator-provisioned platform keys can power
   trials, but price books, authoritative monetary balances/reservations,
@@ -69,17 +74,17 @@ Important deployment and feature constraints:
 AsyncVotrix native SDK / AsyncAnthropic compatibility / HTTP client
                               |
                               v
-FastAPI compatibility and control plane
-  |         |             |
-  |         |             +-- private S3-compatible files and skill archives
-  |         +---------------- Postgres/SQLite resources, events, work, quotas, ledgers
-  +-------------------------- durable session/revision lookup
-            |
-            v
-Deep Agents 0.6.12 + LangGraph checkpoints
-  |                 |                 |
-  v                 v                 v
-model provider   remote MCP       sandbox backend
+FastAPI API/control plane ----> Postgres resources, events, work, quotas, ledgers
+         ^                                      |
+         |                                      v
+         +---- pg_notify previews ---- Deep Agents worker + LangGraph checkpoints
+                                              |       |       |
+                                              v       v       v
+                                           model   remote   sandbox
+                                          provider   MCP    backend
+
+Private S3-compatible storage supplies Files and Skill archives to the control
+plane and one-time Session sandbox bootstrap.
 ```
 
 The control plane owns public IDs, Organization isolation, immutable revisions, session state, durable events, and compatibility translation. Deep Agents owns the in-process agent loop, model/tool middleware, compaction, checkpoint integration, and synchronous delegation. The sandbox—not the model or middleware—is the security boundary for tenant code.
@@ -134,25 +139,28 @@ uv run python -m scripts.bootstrap_api_key \
 
 The command writes one JSON object containing the plaintext secret exactly
 once; send it directly to the intended secret manager. Local and development
-clients may supply that Organization secret as `VOTRIX_API_KEY`, while the VMA
-service itself reads authentication keys only from the database. Subsequent key
-creation, rotation, and revocation should use the authenticated `/v1/api_keys`
-lifecycle.
+clients may supply that Organization secret as `VMA_API_KEY` (or the namespaced
+alias `VOTRIX_VMA_API_KEY`), while the VMA service itself reads authentication
+keys only from the database. Subsequent key creation, rotation, and revocation
+should use the authenticated `/v1/api_keys` lifecycle.
+
+New production credentials use the `vma_live_` prefix. Staging, development,
+local, and test credentials use `vma_test_`.
 
 For the local SDK or pilot script, place the returned plaintext in the client
-environment as `VOTRIX_API_KEY` (not in the VMA service `.env`). In the API
+environment as `VMA_API_KEY` (not in the VMA service `.env`). In the API
 Playground, enter the same value in the `x-api-key` authentication field. Raw
 HTTP clients may use either supported header:
 
 ```bash
-export VOTRIX_API_KEY='<secret from bootstrap output>'
+export VMA_API_KEY='<secret from bootstrap output>'
 curl http://127.0.0.1:8080/v1/capabilities \
-  --header "x-api-key: $VOTRIX_API_KEY" \
+  --header "x-api-key: $VMA_API_KEY" \
   --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
 
 # Equivalent authentication header:
 curl http://127.0.0.1:8080/v1/capabilities \
-  --header "Authorization: Bearer $VOTRIX_API_KEY" \
+  --header "Authorization: Bearer $VMA_API_KEY" \
   --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
 ```
 
@@ -251,10 +259,12 @@ Use `deepseek-chat` with the current runtime. VMA marks `deepseek-reasoner` as n
 
 ## Run with Postgres and object storage
 
-For a durable deployment, configure at least:
+For a durable hosted Supavisor deployment, configure at least:
 
 ```dotenv
-DATABASE_URL=postgresql+asyncpg://user:password@host:5432/votrix_managed_agents
+DATABASE_URL=postgresql+asyncpg://user:password@pooler-host:6543/votrix_managed_agents
+VMA_CHECKPOINT_DATABASE_URL=postgresql+asyncpg://user:password@pooler-host:6543/votrix_managed_agents
+VMA_LISTEN_DATABASE_URL=postgresql+asyncpg://user:password@pooler-host:5432/votrix_managed_agents
 S3_ENDPOINT_URL=https://...
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
@@ -267,9 +277,12 @@ serves downloads through the authenticated Files API; neither
 presign/complete upload routes remain outside the public GA surface, so public
 beta clients use the bounded authenticated upload route.
 
-VMA derives the LangGraph checkpoint connection from `DATABASE_URL`. Set the
-optional `VMA_CHECKPOINT_DATABASE_URL` only when checkpoints intentionally use
-a different database.
+For hosted Supavisor deployments, main and LangGraph checkpoint traffic use the
+transaction pooler on port `6543`; the dedicated preview listener and janitor
+advisory lock use `VMA_LISTEN_DATABASE_URL` on session-mode port `5432`. The
+migration Job receives a separate session/direct URL through the deployment
+pipeline. Local or direct-Postgres installations may omit both VMA-specific
+URLs and let them fall back to `DATABASE_URL`.
 
 Run migrations once per release. Production must use a VMA-owned Postgres database or schema rather than sharing the `votrix-backend` schema. Google Cloud Run is the only maintained hosted deployment target; follow the [Cloud Run deployment guide](scripts/gcloud/README.md) and the [deployment topology notes](docs/deployment-platforms.md).
 
@@ -302,16 +315,37 @@ priced billing ledger.
 
 The checked-in hosted configuration targets GCP Cloud Run exclusively. It provides production and staging service manifests, a Cloud Build pipeline, Artifact Registry setup, Secret Manager integration, and release scripts under [`scripts/gcloud`](scripts/gcloud/README.md). Other hosted platforms are not maintained.
 
-The current Cloud Run MVP deliberately runs one web process in at most one service instance. Durable work leases fence stale workers, but live preview delivery and parts of per-Session/checkpoint ownership are still process-local, so increasing `WEB_CONCURRENCY` or Cloud Run `maxScale` would introduce correctness gaps until shared ownership and a preview broker exist. This is a public-beta deployment shape, not an HA claim.
+The checked-in Cloud Run topology separates HTTP/SSE API instances from a
+private worker fleet. Production allows one to three API instances and one to
+eight workers; staging allows one to two of each. API instances scale from
+request load. Cloud Tasks sends private per-turn push requests so the worker
+service scales independently from queued Agent work. A single-consumer
+PostgreSQL reconciler remains active in every worker as the durable fallback
+when task dispatch fails.
 
-Within that single process, the hosted performance baseline runs five embedded
-turn consumers with one vCPU/4 GiB, 40 HTTP concurrency, a bounded PostgreSQL
-pool, one-second event polling, and a 64 MiB aggregate Session-input cap. Run
-the ten-Session performance smoke documented in the Cloud Run guide before
-promoting staging. Hosted Organization defaults admit 20 queued/running turns, so
-a ten-turn burst queues behind the five consumers instead of being rejected.
+Each process uses one Uvicorn worker, bounded PostgreSQL pools, one-second
+durable-event polling, and a 64 MiB aggregate Session-input cap. API instances
+use a 4+2 application pool; workers use `containerConcurrency=5`, a five-turn
+limiter, a 4+1 application pool, and a three-connection checkpoint pool. The
+fallback reconciler polls every 20 seconds with concurrency one. Hosted
+services set `VMA_PREVIEW_BROKER=pg_notify`: workers publish coalesced preview
+frames and each API process holds one dedicated PostgreSQL `LISTEN` connection.
+Main and checkpoint traffic uses the Supavisor transaction pooler on port
+`6543`; only the listener and janitor advisory lock use the session-mode URL on
+port `5432`. Delivery remains best-effort, and complete durable events are the
+source of truth after reconnect or frame loss. Local development keeps the
+`process_local` default.
+Run the ten-Session performance smoke documented in the Cloud Run guide before
+promoting staging. Hosted Organization defaults admit 20 queued/running turns;
+production starts with one warm worker and five warm turn slots, then can scale
+to eight worker instances while excess work remains durable in the queue.
 
-Each release runs Alembic once through a dedicated Cloud Run migration Job before the new service revision receives traffic. The web service connects to durable Postgres and object storage; it must not rely on Cloud Run's ephemeral filesystem for control-plane state. When E2B is enabled, the sandboxes remain external E2B resources—Cloud Run hosts only the VMA control plane.
+Each release runs Alembic once through a dedicated Cloud Run migration Job
+before replacing either service with the same immutable image. API and worker
+services connect to durable Postgres and object storage; neither may rely on
+Cloud Run's ephemeral filesystem for control-plane state. When E2B is enabled,
+the sandboxes remain external E2B resources—Cloud Run hosts only the VMA control
+plane and Deep Agents workers.
 
 The optional worker remains part of the product protocol for `self_hosted` environments. That environment type is independent of VMA's own hosted deployment platform and is not removed by the GCP-only decision. Scheduled Deployment resources and the idempotent scheduler tick also remain available, but the repository does not yet operate a production scheduler that invokes the tick.
 
@@ -394,8 +428,8 @@ Until then, install the project directly from `sdks/python`.
 from votrix import AsyncVotrix
 
 client = AsyncVotrix(
-    api_key="vma_...",
-    base_url="https://vma.votrixai.com",
+    api_key="vma_live_...",
+    base_url="https://api.vma.votrixai.com",
 )
 
 providers = [provider async for provider in client.model_providers.list()]
@@ -426,11 +460,11 @@ npm install /absolute/path/to/votrix-managed-agents/sdks/typescript
 ```
 
 ```ts
-import Votrix from "@votrix/sdk";
+import Votrix from "@votrix/managed-agents";
 
 const client = new Votrix({
-  apiKey: process.env.VOTRIX_API_KEY,
-  baseURL: "https://vma.votrixai.com",
+  apiKey: process.env.VMA_API_KEY,
+  baseURL: "https://api.vma.votrixai.com",
 });
 
 const providers = await client.modelProviders.list();

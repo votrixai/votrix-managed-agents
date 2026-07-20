@@ -13,10 +13,6 @@ of `PLAN-p3-autoscale.md`.
 ### 1. Tenant isolation audit  (owner: Codex — `PLAN-pre-launch-hardening.md` W1)
 - [ ] Denial matrix suite merged and green (every resource × direct-ID /
       pagination / streaming / sub-resource traversal / write-spoofing).
-- [ ] Auth tier-crossing denials included (Organization API key →
-      `/internal/*` and `/v1/me/*` rejected; user JWT → `/v1` Organization
-      resources rejected) — see the API-surfaces table in
-      `private-docs/architecture.md`.
 - [ ] Any failing cell fixed at the query layer and documented.
 
 Why pre-launch: a cross-tenant leak after launch is a trust event that no fix
@@ -28,8 +24,8 @@ undoes; before launch it is a test-writing exercise.
       deploys, sweep, drop old key).
 
 Why pre-launch: today `vma_encryption_key` is a single key with no rotation
-path (verified in `app/secret_cipher.py`); once customer BYOK credentials
-accumulate, any key incident forces re-onboarding every customer.
+path (verified in `app/secret_cipher.py`); once Organization BYOK credentials
+accumulate, any key incident forces re-onboarding every affected Organization.
 
 ### 3. Backup / PITR + restore drill  (owner: operator)
 - [ ] PITR (or equivalent continuous backup) enabled on the **production**
@@ -56,7 +52,7 @@ work queue, vault). Nothing in the repo or scripts currently mentions backups.
 
 ### 5. Region / data residency  (owner: operator; record the decision)
 - [ ] Confirm the stack's regions (Cloud Run `us-central1`, Supabase AWS
-      region, R2, E2B) against target-customer expectations, or explicitly
+      region, R2, E2B) against target-account requirements, or explicitly
       record "no residency commitment at launch": ______
 
 Why pre-launch: moving regions later is a full data migration with downtime —
@@ -68,43 +64,22 @@ a one-way door in practice.
       and keep usage records append-only (usage attribution is already
       idempotent per work item). Post-launch metering fixes are revenue
       disputes.
-- [ ] **Canonical domains** (decided 2026-07-19; full plan and execution
-      checklist in `private-docs/domains.md`): `api.vma.votrixai.com` =
-      public API, `vma.votrixai.com` = builder frontend,
-      `docs.vma.votrixai.com` = VMA docs, `staging[-api].vma.votrixai.com`
-      mirrors; bare `api./docs./app.votrixai.com` stay reserved for the main
-      product; operator entry = the Cloud Run `run.app` URL behind superadmin
-      JWT (`admin.vma` is conditional, bound to origin cloaking — the
-      three-together rule in `domains.md`). Permanent once the first external
-      client integrates.
-      - [ ] `domains.md` execution checklist completed (Cloudflare, Worker
-            `/internal` 404 rule, repo strings, CORS + test pins, frontend
-            repo).
+- [x] **Canonical domains** (decided and cut over 2026-07-19; status, exact path allowlist,
+      certificate rules, and ordered cutover are in
+      `private-docs/domains.md`): `api.vma.votrixai.com` is the production API,
+      `vma.votrixai.com` is the builder frontend,
+      `docs.vma.votrixai.com` is VMA documentation, and
+      `staging-api.vma.votrixai.com` / `staging.vma.votrixai.com` mirror the
+      API/frontend split. Bare `api.votrixai.com` and `docs.votrixai.com`
+      remain reserved for the umbrella/main product. The Cloud Run `run.app`
+      URL remains the operator entry behind superadmin JWT; `admin.vma` exists
+      only if the complete Access + admin route + origin-cloaking bundle ships.
+      - [ ] Complete the remaining operator acceptance item in
+            `private-docs/domains.md`: authenticated browser/SDK/SSE and
+            real-turn checks on the permanent domains.
 - [ ] **Deletion semantics**: the schema soft-deletes (`deleted_at`); define
-      the hard-delete path (DB rows + R2 objects + E2B teardown) for customer
-      data-deletion requests before there is real customer data.
-- [ ] **Supabase compute tier + connection-mode split**: production compute
-      tier recorded in `scaling-runbook.md`; Amendment A1 (transaction pooler
-      for runtime/checkpoints, session DSN for LISTEN/janitor/migrations)
-      deployed; backend usage under ~60% of the tier's direct-connection
-      limit at target `maxScale`.
-- [ ] **Public docs consistency pass + launch pages**. Fix what implementation
-      makes stale, and add the contract-level pages integrators need. Topology,
-      instance counts, and connection budgets stay OUT of public docs — the
-      internal view lives in `private-docs/architecture.md`.
-      - [ ] Update `docs/work-queue.md` (still says the hosted profile runs
-            "the embedded durable consumer in the one Cloud Run process").
-      - [ ] Reliability & execution semantics page: turn lifecycle/statuses,
-            `rescheduling`/`retry_at`, attempt cap, bounded at-least-once tool
-            side effects (recommend `tool_use_id` idempotency keys for
-            high-risk custom tools), full `requires_action` handshake.
-      - [x] Streaming guide (`docs/streaming.md`, shipped 2026-07-18).
-      - [x] Rate limits & quotas reference (`docs/rate-limits.md`, shipped
-            2026-07-18).
-      - [x] Errors reference (`docs/errors.md`, shipped 2026-07-18).
-      - [x] Limits table (`docs/limits.md`, shipped 2026-07-18).
-      - [ ] Nice-to-have: quickstart (if `index.mdx` isn't one), custom-tools
-            walkthrough, idempotency page.
+      the hard-delete path (DB rows + R2 objects + E2B teardown) for Organization
+      data-deletion requests before there is real Organization data.
 
 ## Explicitly NOT launch blockers
 

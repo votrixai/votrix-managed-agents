@@ -14,6 +14,7 @@ SECRET_BASES = {
     "database-url",
     "e2b-api-key",
     "encryption-key",
+    "listen-database-url",
     "s3-access-key-id",
     "s3-bucket-name",
     "s3-endpoint-url",
@@ -43,15 +44,19 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         "cloudbuild.yaml",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/config.sh",
         "scripts/gcloud/0-setup-registry.sh",
         "scripts/gcloud/1-create-secrets.sh",
         "scripts/gcloud/2-deploy-production.sh",
         "scripts/gcloud/3-deploy-staging.sh",
         "scripts/gcloud/4-setup-triggers.sh",
+        "scripts/gcloud/trigger.yaml.in",
         "scripts/gcloud/5-allow-public.sh",
         "scripts/gcloud/6-bootstrap-operator.sh",
         "scripts/gcloud/7-run-acceptance.sh",
+        "scripts/gcloud/8-setup-cloud-tasks.sh",
         "scripts/gcloud/preflight.sh",
         "scripts/gcloud/status.sh",
     ):
@@ -71,14 +76,24 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         )
 
 
-def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> None:
+def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
+    api_max_scale = {"production": "2", "staging": "2"}
+    worker_scale = {
+        "production": ("1", "2"),
+        "staging": ("1", "2"),
+    }
+
     for environment in ("production", "staging"):
         manifest = _read(f"service.{environment}.yaml")
         flat = _flatten(manifest)
 
         assert "kind: Service" in manifest
-        assert re.search(r'autoscaling\.knative\.dev/maxScale:\s*["\']?1["\']?', manifest)
+        assert re.search(
+            rf'autoscaling\.knative\.dev/maxScale:\s*["\']?{api_max_scale[environment]}["\']?',
+            manifest,
+        )
         assert re.search(r'run\.googleapis\.com/cpu-throttling:\s*["\']?false["\']?', manifest)
+        assert 'run.googleapis.com/invoker-iam-disabled: "true"' in manifest
         assert "serviceAccountName: vma-runtime@" in manifest
         assert re.search(r"containerConcurrency:\s*40", manifest)
         assert "containerPort: 8080" in manifest
@@ -88,6 +103,39 @@ def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> No
         assert "livenessProbe:" in manifest and "path: /health/db" in manifest
         assert "name: WEB_CONCURRENCY" in manifest
         assert re.search(r'name:\s*WEB_CONCURRENCY\s+value:\s*["\']?1["\']?', flat)
+        assert re.search(r'name:\s*VMA_SERVICE_ROLE\s+value:\s*["\']?api["\']?', flat)
+        assert re.search(r'name:\s*VMA_PREVIEW_BROKER\s+value:\s*["\']?pg_notify["\']?', flat)
+        assert re.search(
+            r'name:\s*VMA_EMBEDDED_WORKER_ENABLED\s+value:\s*["\']?false["\']?',
+            flat,
+        )
+        expected_queue = "vma-turns" if environment == "production" else "vma-turns-staging"
+        expected_dispatch_values = {
+            "VMA_WORK_DISPATCH_MODE": "hybrid",
+            "VMA_TASKS_QUEUE": expected_queue,
+            "VMA_TASKS_LOCATION": "us-central1",
+            "VMA_TASKS_SERVICE_ACCOUNT": (
+                "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
+            ),
+            "VMA_WORKER_URL": "__VMA_WORKER_URL__",
+        }
+        expected_api_values = {
+            **expected_dispatch_values,
+            "VMA_DB_POOL_SIZE": "4",
+            "VMA_DB_MAX_OVERFLOW": "2",
+        }
+        for name, value in expected_api_values.items():
+            assert re.search(
+                rf'name:\s*{name}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                flat,
+            )
+        for worker_only_name in (
+            "VMA_WORKER_CONCURRENCY",
+            "VMA_WORKER_POLL_INTERVAL_SECONDS",
+            "VMA_WORKER_LEASE_SECONDS",
+            "VMA_WORK_MAX_ATTEMPTS",
+        ):
+            assert f"name: {worker_only_name}" not in manifest
         assert "name: RUN_MIGRATIONS" not in manifest
         assert "VMA_RUNTIME_BACKEND" not in manifest
         assert "sqlite" not in manifest.lower()
@@ -97,28 +145,76 @@ def test_cloud_run_manifests_enforce_one_warm_instance_and_health_probes() -> No
             manifest,
         )
 
+        worker = _read(f"service.worker.{environment}.yaml")
+        worker_flat = _flatten(worker)
+        min_scale, max_scale = worker_scale[environment]
+        expected_name = (
+            "votrix-managed-agents-worker"
+            if environment == "production"
+            else "votrix-managed-agents-staging-worker"
+        )
+        assert re.search(rf"metadata:\s+name:\s*{expected_name}", worker_flat)
+        assert "kind: Service" in worker
+        assert re.search(
+            rf'autoscaling\.knative\.dev/minScale:\s*["\']?{min_scale}["\']?',
+            worker,
+        )
+        assert re.search(
+            rf'autoscaling\.knative\.dev/maxScale:\s*["\']?{max_scale}["\']?',
+            worker,
+        )
+        assert re.search(r'run\.googleapis\.com/cpu-throttling:\s*["\']?false["\']?', worker)
+        assert "run.googleapis.com/invoker-iam-disabled" not in worker
+        assert "serviceAccountName: vma-runtime@" in worker
+        assert re.search(r"containerConcurrency:\s*5", worker)
+        assert "startupProbe:" in worker and "path: /health" in worker
+        assert "livenessProbe:" in worker and "path: /health/db" in worker
+        assert re.search(r'name:\s*WEB_CONCURRENCY\s+value:\s*["\']?1["\']?', worker_flat)
+        assert re.search(r'name:\s*VMA_SERVICE_ROLE\s+value:\s*["\']?worker["\']?', worker_flat)
+        assert re.search(
+            r'name:\s*VMA_PREVIEW_BROKER\s+value:\s*["\']?pg_notify["\']?',
+            worker_flat,
+        )
+        assert re.search(
+            r'name:\s*VMA_EMBEDDED_WORKER_ENABLED\s+value:\s*["\']?true["\']?',
+            worker_flat,
+        )
+        expected_worker_values = {
+            **expected_dispatch_values,
+            "VMA_WORKER_TURN_LIMIT": "5",
+            "VMA_WORKER_CONCURRENCY": "1",
+            "VMA_WORKER_POLL_INTERVAL_SECONDS": "20",
+            "VMA_WORKER_LEASE_SECONDS": "120",
+            "VMA_WORK_MAX_ATTEMPTS": "3",
+            "VMA_CHECKPOINT_POOL_MAX_SIZE": "3",
+            "VMA_DB_POOL_SIZE": "4",
+            "VMA_DB_MAX_OVERFLOW": "1",
+        }
+        for name, value in expected_worker_values.items():
+            assert re.search(
+                rf'name:\s*{name}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                worker_flat,
+            )
+
 
 def test_cloud_run_secret_names_are_isolated_from_votrix_backend() -> None:
     for environment in ("production", "staging"):
-        manifest = _read(f"service.{environment}.yaml")
-        names = _secret_ref_names(manifest)
-        assert names, f"service.{environment}.yaml must use Secret Manager"
-        assert all(name.startswith("vma-") for name in names), names
         suffix = "-staging" if environment == "staging" else ""
         expected_names = {f"vma-{base}{suffix}" for base in SECRET_BASES}
-        assert set(names) == expected_names
+        api_names = _secret_ref_names(_read(f"service.{environment}.yaml"))
+        worker_names = _secret_ref_names(_read(f"service.worker.{environment}.yaml"))
+        assert api_names, f"service.{environment}.yaml must use Secret Manager"
+        assert all(name.startswith("vma-") for name in api_names), api_names
+        assert set(api_names) == expected_names
+        assert set(worker_names) == expected_names
+        assert set(worker_names) == set(api_names)
 
 
 def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
-    expected = {
-        "VMA_EMBEDDED_WORKER_ENABLED": "true",
-        "VMA_WORKER_CONCURRENCY": "5",
-        "VMA_WORKER_POLL_INTERVAL_SECONDS": "0.5",
-        "VMA_WORKER_LEASE_SECONDS": "120",
+    shared = {
+        "VMA_PREVIEW_BROKER": "pg_notify",
         "VMA_EVENT_POLL_INTERVAL_SECONDS": "1.0",
         "VMA_MAX_SESSION_INPUT_BYTES": "67108864",
-        "VMA_DB_POOL_SIZE": "10",
-        "VMA_DB_MAX_OVERFLOW": "5",
         "VMA_DB_POOL_TIMEOUT_SECONDS": "10",
         "VMA_DB_POOL_RECYCLE_SECONDS": "300",
         "VMA_REQUESTS_PER_MINUTE": "600",
@@ -127,28 +223,25 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
         "VMA_PUBLIC_GA_ONLY": "true",
     }
     for environment in ("production", "staging"):
-        flat = _flatten(_read(f"service.{environment}.yaml"))
-        for name, value in expected.items():
-            assert re.search(
-                rf'name:\s*{re.escape(name)}\s+value:\s*["\']?{re.escape(value)}["\']?',
-                flat,
-            ), f"{name} is not pinned for {environment}"
+        for role_path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            flat = _flatten(_read(role_path))
+            for name, value in shared.items():
+                assert re.search(
+                    rf'name:\s*{re.escape(name)}\s+value:\s*["\']?{re.escape(value)}["\']?',
+                    flat,
+                ), f"{name} is not pinned for {role_path}"
 
-        builder_origin = (
-            "https://vma-builder-app-staging.vercel.app"
+        developer_origin = (
+            "https://staging.vma.votrixai.com"
             if environment == "staging"
-            else "https://vma-builder-app.vercel.app"
+            else "https://vma.votrixai.com"
         )
-        browser_origin = (
-            "https://staging-app.votrix.ai"
-            if environment == "staging"
-            else "https://app.votrix.ai"
-        )
-        expected_cors = f"{builder_origin},{browser_origin},https://docs.votrixai.com"
-        assert re.search(
-            rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
-            flat,
-        )
+        expected_cors = f"{developer_origin},https://docs.vma.votrixai.com"
+        for role_path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            assert re.search(
+                rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',
+                _flatten(_read(role_path)),
+            )
 
 
 def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() -> None:
@@ -157,6 +250,8 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
         ".env.staging.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
         "scripts/gcloud/README.md",
     )
@@ -175,16 +270,18 @@ def test_hosted_auth_bootstraps_database_keys_without_shared_api_key_secret() ->
     assert "--redact-secret" in operator_script
     assert "vma-operator-api-key" in operator_script
     assert "--set-secrets" not in operator_script
+    assert operator_script.count('APP_ENV="$TARGET" uv run') == 2
 
 
 def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:
     for environment in ("production", "staging"):
         suffix = "-staging" if environment == "staging" else ""
-        manifest = _read(f"service.{environment}.yaml")
-        assert "name: VMA_SUPABASE_URL" in manifest
-        assert f"name: vma-supabase-url{suffix}" in manifest
-        assert "name: VMA_SUPABASE_PUBLISHABLE_KEY" in manifest
-        assert f"name: vma-supabase-publishable-key{suffix}" in manifest
+        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            manifest = _read(path)
+            assert "name: VMA_SUPABASE_URL" in manifest
+            assert f"name: vma-supabase-url{suffix}" in manifest
+            assert "name: VMA_SUPABASE_PUBLISHABLE_KEY" in manifest
+            assert f"name: vma-supabase-publishable-key{suffix}" in manifest
 
     importer = _read("scripts/gcloud/1-create-secrets.sh")
     assert "VMA_SUPABASE_URL|vma-supabase-url" in importer
@@ -194,31 +291,32 @@ def test_hosted_user_auth_uses_environment_specific_supabase_secrets() -> None:
 
 def test_cloud_model_registry_is_valid_and_server_controlled() -> None:
     for environment in ("production", "staging"):
-        manifest = _read(f"service.{environment}.yaml")
-        assert re.search(
-            r'- name: VMA_DEFAULT_MODEL_PROVIDER\s+value: ["\']openrouter["\']',
-            manifest,
-        )
-        match = re.search(
-            r"- name: VMA_MODEL_PROVIDERS\s+value: '([^']+)'",
-            manifest,
-        )
-        assert match is not None
-        registry = json.loads(match.group(1))
-        assert set(registry) == {"openrouter"}
-        assert registry["openrouter"]["api_key_env"] == "OPENROUTER_API_KEY"
-        assert registry["openrouter"]["adapter"] == "openrouter"
-        assert registry["openrouter"]["default_model"] == "deepseek/deepseek-v4-pro"
-        assert registry["openrouter"]["model_kwargs"] == {
-            "openrouter_provider": {
-                "order": ["fireworks", "together"],
-                "only": ["fireworks", "together"],
-                "allow_fallbacks": True,
-                "require_parameters": True,
-                "data_collection": "deny",
-            },
-        }
-        assert all("api_key" not in config for config in registry.values())
+        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            manifest = _read(path)
+            assert re.search(
+                r'- name: VMA_DEFAULT_MODEL_PROVIDER\s+value: ["\']openrouter["\']',
+                manifest,
+            )
+            match = re.search(
+                r"- name: VMA_MODEL_PROVIDERS\s+value: '([^']+)'",
+                manifest,
+            )
+            assert match is not None
+            registry = json.loads(match.group(1))
+            assert set(registry) == {"openrouter"}
+            assert registry["openrouter"]["api_key_env"] == "OPENROUTER_API_KEY"
+            assert registry["openrouter"]["adapter"] == "openrouter"
+            assert registry["openrouter"]["default_model"] == "deepseek/deepseek-v4-pro"
+            assert registry["openrouter"]["model_kwargs"] == {
+                "openrouter_provider": {
+                    "order": ["fireworks", "together"],
+                    "only": ["fireworks", "together"],
+                    "allow_fallbacks": True,
+                    "require_parameters": True,
+                    "data_collection": "deny",
+                },
+            }
+            assert all("api_key" not in config for config in registry.values())
 
 
 def test_hosted_runtime_has_no_platform_model_api_key() -> None:
@@ -227,6 +325,8 @@ def test_hosted_runtime_has_no_platform_model_api_key() -> None:
         ".env.staging.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
         "scripts/gcloud/README.md",
     )
@@ -245,13 +345,14 @@ def test_hosted_runtime_has_no_platform_model_api_key() -> None:
 
 def test_cloud_e2b_template_resources_match_the_built_profile() -> None:
     for environment in ("production", "staging"):
-        manifest = _read(f"service.{environment}.yaml")
-        match = re.search(
-            r"- name: VMA_E2B_TEMPLATE_RESOURCES\s+value: '([^']+)'",
-            manifest,
-        )
-        assert match is not None
-        assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
+        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+            manifest = _read(path)
+            match = re.search(
+                r"- name: VMA_E2B_TEMPLATE_RESOURCES\s+value: '([^']+)'",
+                manifest,
+            )
+            assert match is not None
+            assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
 
 
 def test_e2b_cost_estimate_defaults_are_pinned_consistently() -> None:
@@ -273,23 +374,35 @@ def test_e2b_cost_estimate_defaults_are_pinned_consistently() -> None:
     for name, value in expected.items():
         assert re.search(rf"^{name}={re.escape(value)}$", dotenv, re.MULTILINE)
         for environment in ("production", "staging"):
-            manifest = _read(f"service.{environment}.yaml")
-            assert re.search(
-                rf'- name: {name}\s+value: ["\']{re.escape(value)}["\']',
-                manifest,
-            )
+            for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
+                manifest = _read(path)
+                assert re.search(
+                    rf'- name: {name}\s+value: ["\']{re.escape(value)}["\']',
+                    manifest,
+                )
 
 
 def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:
     cloudbuild = _flatten(_read("cloudbuild.yaml"))
     migration_deploy = cloudbuild.find("gcloud run jobs deploy")
     migration_execute = cloudbuild.find("gcloud run jobs execute")
-    service_deploy = cloudbuild.find("gcloud run services replace")
+    service_deploys = [
+        match.start() for match in re.finditer("gcloud run services replace", cloudbuild)
+    ]
 
     assert migration_deploy >= 0
     assert migration_execute > migration_deploy
-    assert "--wait" in cloudbuild[migration_execute:service_deploy]
-    assert service_deploy > migration_execute
+    assert len(service_deploys) == 3
+    assert "--wait" in cloudbuild[migration_execute:service_deploys[0]]
+    assert all(service_deploy > migration_execute for service_deploy in service_deploys)
+    assert cloudbuild.find('Creating $$WORKER_SERVICE in bootstrap poll mode') >= 0
+    assert cloudbuild.find('value: "hybrid"|value: "poll"') >= 0
+    assert cloudbuild.find('Deploying $$WORKER_SERVICE in hybrid mode') < cloudbuild.find(
+        'Deploying ${_SERVICE_NAME} API service in hybrid mode'
+    )
+    assert cloudbuild.count("__VMA_WORKER_URL__") == 3
+    assert 'WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"' in cloudbuild
+    assert 'DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"' in cloudbuild
 
 
 def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() -> None:
@@ -310,36 +423,71 @@ def test_manual_deploys_use_honest_git_image_tags_and_keep_the_migration_gate() 
     for script in (production, staging):
         migration_deploy = script.find("gcloud run jobs deploy")
         migration_execute = script.find("gcloud run jobs execute")
-        service_deploy = script.find("gcloud run services replace")
+        service_deploys = [
+            match.start() for match in re.finditer("gcloud run services replace", script)
+        ]
         assert migration_deploy >= 0
         assert migration_execute > migration_deploy
-        assert "--wait" in script[migration_execute:service_deploy]
-        assert service_deploy > migration_execute
+        assert len(service_deploys) == 3
+        assert "--wait" in script[migration_execute:service_deploys[0]]
+        assert all(service_deploy > migration_execute for service_deploy in service_deploys)
+        assert 'value: "hybrid"|value: "poll"' in script
+        assert "in bootstrap poll mode" in script
+        assert "worker service in hybrid mode" in script
+        assert "API service in hybrid mode" in script
+        assert script.find("worker service in hybrid mode") < script.find(
+            "API service in hybrid mode"
+        )
+
+    assert 'DATABASE_SECRET="vma-database-url-direct"' in production
+    assert 'DATABASE_SECRET="vma-database-url-direct-staging"' in staging
 
 
 def test_cloud_build_trigger_setup_is_safe_idempotent_and_ignores_docs_only_changes() -> None:
     script = _read("scripts/gcloud/4-setup-triggers.sh")
+    template = _read("scripts/gcloud/trigger.yaml.in")
 
     assert '"^main$"' in script
     assert '"^staging$"' in script
     assert "^beta$" not in script
     assert "gcloud builds triggers describe" in script
-    assert "gcloud builds triggers update github" in script
-    assert "gcloud builds triggers create github" in script
-    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
-    assert 'PRODUCTION_APPROVAL_FLAG="--require-approval"' in script
-    assert "--no-require-approval" in script
+    assert "gcloud builds triggers import" in script
+    assert "gcloud builds triggers update github" not in script
+    assert "gcloud builds connections describe" in script
+    assert "gcloud builds repositories describe" in script
+    assert 'VMA_TRIGGER_REGION:-$REGION' in script
+    assert 'VMA_CLOUD_BUILD_CONNECTION:-votrix-github' in script
     assert (
-        'IGNORED_FILES="docs/**,website/**,sdks/**,infra/cloudflare/**,'
-        'README.md,CHANGELOG.md"' in script
+        "VMA_CLOUD_BUILD_SERVICE_ACCOUNT:-${PROJECT_NUMBER}-"
+        "compute@developer.gserviceaccount.com" in script
     )
-    assert script.count('--ignored-files="$IGNORED_FILES"') == 2
+    assert "__SOURCE_REPOSITORY__" in template
+    assert "__SERVICE_ACCOUNT__" in template
+    assert "repositoryEventConfig:" in template
+    assert "--repo-name" not in script
+    assert "--repo-owner" not in script
+    assert 'VMA_PRODUCTION_TRIGGER_REQUIRE_APPROVAL:-true' in script
+    assert "PRODUCTION_APPROVAL_REQUIRED=true" in script
+    for ignored_path in (
+        "docs/**",
+        "website/**",
+        "sdks/**",
+        "infra/cloudflare/**",
+        "README.md",
+        "CHANGELOG.md",
+    ):
+        assert f"  - {ignored_path}" in template
+    assert 'VMA_TRIGGER_REGION:-$REGION' in _read("scripts/gcloud/status.sh")
 
 
 def test_public_access_helper_uses_the_manifest_invoker_check_mode() -> None:
     script = _read("scripts/gcloud/5-allow-public.sh")
 
-    assert script.count("--no-invoker-iam-check") == 2
+    assert script.count("--no-invoker-iam-check") == 1
+    assert 'allow_public_api "$PRODUCTION_SERVICE"' in script
+    assert 'allow_public_api "$STAGING_SERVICE"' in script
+    assert "*worker*)" in script
+    assert "Refusing to make a VMA worker service public" in script
     assert "allUsers" not in script
     assert "add-iam-policy-binding" not in script
 
@@ -351,39 +499,156 @@ def test_preflight_is_read_only_and_checks_both_environment_secret_sets() -> Non
     assert "secrets versions list" in script
     assert "roles/secretmanager.secretAccessor" in script
     assert "roles/iam.serviceAccountUser" in script
+    assert "roles/cloudtasks.enqueuer" in script
+    assert "roles/cloudtasks.serviceAgent" in script
+    assert "roles/run.invoker" in script
+    assert "gcp-sa-cloudtasks.iam.gserviceaccount.com" in script
+    assert "cloudtasks.googleapis.com" in script
+    assert 'check_tasks_environment "$PRODUCTION_TASKS_QUEUE"' in script
+    assert 'check_tasks_environment "$STAGING_TASKS_QUEUE"' in script
+    assert "retryConfig.maxAttempts" in script
+    assert "rateLimits.maxConcurrentDispatches" in script
+    assert '[ "$QUEUE_MAX_CONCURRENT" = 25 ]' in script
     assert "value(format)" in script
     assert "value(disabled)" in script
     assert "--dry-run" in script
     assert 'check_environment_secrets ""' in script
     assert 'check_environment_secrets "-staging"' in script
+    assert "database-url-direct" in script
+    assert "listen-database-url" in script
+    for manifest in (
+        "service.production.yaml",
+        "service.worker.production.yaml",
+        "service.staging.yaml",
+        "service.worker.staging.yaml",
+    ):
+        assert f"check_manifest {manifest}" in script
+    assert "check_worker_manifest_is_private" in script
     assert "ls-remote --exit-code --heads origin staging" in script
 
 
 def test_status_reports_missing_resources_instead_of_being_silent() -> None:
     script = _read("scripts/gcloud/status.sh")
 
-    assert script.count("Status: not deployed") == 2
+    assert "Status: not deployed" in script
+    assert '"$PRODUCTION_SERVICE"' in script
+    assert '"$PRODUCTION_WORKER_SERVICE"' in script
+    assert '"$STAGING_SERVICE"' in script
+    assert '"$STAGING_WORKER_SERVICE"' in script
     assert "vma-deploy-production vma-deploy-staging" in script
+    assert '"$PRODUCTION_TASKS_QUEUE"' in script
+    assert '"$STAGING_TASKS_QUEUE"' in script
+    assert "retryConfig.maxAttempts" in script
+    assert "rateLimits.maxConcurrentDispatches" in script
     assert "Status: not configured" in script
 
 
-def test_checkpoint_database_url_is_an_optional_application_override() -> None:
-    deployment_files = (
-        "cloudbuild.yaml",
-        "service.production.yaml",
-        "service.staging.yaml",
-        "scripts/gcloud/1-create-secrets.sh",
+def test_cloud_tasks_setup_is_idempotent_and_keeps_task_deadline_in_runtime() -> None:
+    setup = _read("scripts/gcloud/8-setup-cloud-tasks.sh")
+    registry = _read("scripts/gcloud/0-setup-registry.sh")
+    config = _read("scripts/gcloud/config.sh")
+
+    assert "cloudtasks.googleapis.com" in registry
+    assert 'PRODUCTION_TASKS_QUEUE="vma-turns"' in config
+    assert 'STAGING_TASKS_QUEUE="vma-turns-staging"' in config
+    assert 'TASKS_LOCATION="$REGION"' in config
+    assert "gcloud tasks queues describe" in setup
+    assert "gcloud tasks queues create" in setup
+    assert "gcloud tasks queues update" in setup
+    assert "gcloud tasks queues resume" in setup
+    assert "--max-attempts=8" in setup
+    assert "--min-backoff=5s" in setup
+    assert "--max-backoff=300s" in setup
+    assert "--max-concurrent-dispatches=25" in setup
+    assert "dispatch-deadline" not in setup.lower()
+    assert "dispatchDeadline" not in setup
+    assert "roles/cloudtasks.enqueuer" in setup
+    assert "roles/cloudtasks.serviceAgent" in setup
+    assert "roles/iam.serviceAccountUser" in setup
+    assert "roles/run.invoker" in setup
+    assert "gcloud beta services identity create" in setup
+    assert "gcp-sa-cloudtasks.iam.gserviceaccount.com" in setup
+    assert "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" in setup
+    assert "Worker service is not deployed yet" in setup
+    assert "deploy flow grants Invoker after bootstrap" in setup
+
+
+def test_production_worker_max_scale_is_conservatively_bounded_by_connection_budget() -> None:
+    runbook = _read("private-docs/scaling-runbook.md")
+    production_deploy = _read("scripts/gcloud/2-deploy-production.sh")
+    cloudbuild = _read("cloudbuild.yaml")
+    preflight = _read("scripts/gcloud/preflight.sh")
+
+    assert "2×7 + 2×8 = 30" in runbook
+    assert "Production maxScale=2 release record" in runbook
+    assert "Status: MEASURED" in runbook
+    assert "conservative maxScale=2" in runbook
+    assert "below 60% of the direct/backend" in runbook
+    assert "Any increase above `maxScale=2`" in runbook
+    assert "Status: UNMEASURED" not in runbook
+    assert "Status: UNMEASURED" in production_deploy
+    assert "Status: UNMEASURED" in cloudbuild
+    assert "check_production_connection_gate" in preflight
+
+
+def test_deploy_paths_grant_worker_invoker_before_enabling_hybrid() -> None:
+    cloudbuild = _read("cloudbuild.yaml")
+    invoker = cloudbuild.find("gcloud run services add-iam-policy-binding")
+    hybrid_worker = cloudbuild.find("Deploying $$WORKER_SERVICE in hybrid mode")
+    hybrid_api = cloudbuild.find(
+        "Deploying ${_SERVICE_NAME} API service in hybrid mode"
+    )
+    assert 0 <= invoker < hybrid_worker < hybrid_api
+
+    for script_name in (
         "scripts/gcloud/2-deploy-production.sh",
         "scripts/gcloud/3-deploy-staging.sh",
-    )
-    for relative_path in deployment_files:
-        content = _read(relative_path)
-        assert "VMA_CHECKPOINT_DATABASE_URL" not in content
-        assert "vma-checkpoint-database-url" not in content
+    ):
+        script = _read(script_name)
+        invoker = script.find("gcloud run services add-iam-policy-binding")
+        hybrid_worker = script.find("worker service in hybrid mode")
+        hybrid_api = script.find("API service in hybrid mode")
+        assert 0 <= invoker < hybrid_worker < hybrid_api
 
-    example = _read(".env.example")
-    assert "VMA_CHECKPOINT_DATABASE_URL=" in example
-    assert "derive" in example.lower()
+
+def test_hosted_database_urls_use_the_required_connection_modes() -> None:
+    for environment in ("production", "staging"):
+        suffix = "-staging" if environment == "staging" else ""
+        transaction_secret = f"vma-database-url{suffix}"
+        listen_secret = f"vma-listen-database-url{suffix}"
+        for path in (
+            f"service.{environment}.yaml",
+            f"service.worker.{environment}.yaml",
+        ):
+            manifest = _read(path)
+            assert re.search(
+                rf"- name: VMA_CHECKPOINT_DATABASE_URL\s+valueFrom:\s+"
+                rf"secretKeyRef:\s+key: latest\s+name: {transaction_secret}",
+                manifest,
+            )
+            assert re.search(
+                rf"- name: VMA_LISTEN_DATABASE_URL\s+valueFrom:\s+"
+                rf"secretKeyRef:\s+key: latest\s+name: {listen_secret}",
+                manifest,
+            )
+            assert "vma-checkpoint-database-url" not in manifest
+
+        example = _read(f".env.{environment}.example")
+        assert re.search(r"^DATABASE_URL=.*:6543/postgres$", example, re.MULTILINE)
+        assert re.search(
+            r"^VMA_LISTEN_DATABASE_URL=.*:5432/postgres$", example, re.MULTILINE
+        )
+        assert re.search(
+            r"^DATABASE_URL_DIRECT=.*:5432/postgres$", example, re.MULTILINE
+        )
+
+    importer = _read("scripts/gcloud/1-create-secrets.sh")
+    assert "DATABASE_URL|vma-database-url" in importer
+    assert "VMA_LISTEN_DATABASE_URL|vma-listen-database-url" in importer
+    assert "DATABASE_URL_DIRECT|vma-database-url-direct" in importer
+    assert "DATABASE_URL:postgresql+asyncpg://*:6543/*" in importer
+    assert "VMA_LISTEN_DATABASE_URL:postgresql+asyncpg://*:5432/*" in importer
+    assert "DATABASE_URL_DIRECT:postgresql+asyncpg://*:5432/*" in importer
 
 
 def test_object_storage_has_no_public_bucket_url_configuration() -> None:
@@ -395,6 +660,8 @@ def test_object_storage_has_no_public_bucket_url_configuration() -> None:
         ".env.staging.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/1-create-secrets.sh",
     )
     for relative_path in deployment_files:
@@ -417,6 +684,9 @@ def test_env_examples_separate_required_values_from_optional_overrides() -> None
         required_at = example.index(f"REQUIRED FOR THE STANDARD {environment.upper()} CLOUD RUN PROFILE")
         optional_at = example.index("# OPTIONAL")
         assert required_at < optional_at
+        assert example.index("DATABASE_URL=") < optional_at
+        assert example.index("VMA_LISTEN_DATABASE_URL=") < optional_at
+        assert example.index("DATABASE_URL_DIRECT=") < optional_at
         assert "\nVMA_CHECKPOINT_DATABASE_URL=" not in example
 
 
@@ -436,6 +706,8 @@ def test_storage_quota_uses_only_the_organization_setting() -> None:
         ".env.example",
         "service.production.yaml",
         "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
         "scripts/gcloud/README.md",
     ):
         content = _read(relative_path)

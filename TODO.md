@@ -42,9 +42,11 @@ target, not a promise to clone every current or future Claude beta feature.
 
 This is a BYOK-first public-beta baseline with optional operator-provisioned
 Organization platform keys, not production HA or enterprise readiness.
-Multi-replica previews/Session ownership, Postgres RLS, Organization RBAC/SSO,
+Exactly-once external side effects, Postgres RLS, Organization RBAC/SSO,
 enterprise audit export/retention, and webhook delivery remain open. Platform
-funding does not yet constitute a commercial billing system.
+funding does not yet constitute a commercial billing system. The maintained
+Cloud Run topology now separates API and worker services and uses PostgreSQL
+`pg_notify` for best-effort cross-instance previews.
 
 ### Native Python SDK and provider BYOK
 
@@ -114,23 +116,27 @@ the current production caller and target SDK both pass the consumer suite.
 - [x] Fence terminal Session events/status and work completion with
   `(work_id, lease_id, run_generation)`, so a stale worker cannot finalize a
   recovered attempt.
-- [ ] Replace process-local per-Session ownership with database or equivalent
-  fencing before raising Cloud Run above one worker/instance.
+- [x] Validate database-backed work and Session execution leases across API and
+  worker replicas before raising Cloud Run above one instance.
 - [x] Recover expired leased/running attempts with a new generation and make
   terminal completion/error/stop release the active-work reservation
   idempotently.
-- [ ] Deliver ordered token/tool previews across processes, or persist bounded
-  batched deltas that SSE clients can tail by sequence. Addressed by P2.5 in
-  `PLAN-horizontal-scaling.md`: a Postgres `pg_notify` preview broker
-  (`VMA_PREVIEW_BROKER=pg_notify`) that publishes coalesced preview frames from
-  workers and replays them on API instances, keeping `event_deltas` typewriter
-  streaming across the API/worker split with no public-API change.
+- [x] Deliver ordered token/tool previews across hosted processes through a
+  bounded PostgreSQL `pg_notify` transport (`VMA_PREVIEW_BROKER=pg_notify`).
+  P2.5 coalesces worker frames and forwards them on API instances, preserving
+  `event_deltas` typewriter streaming across the API/worker split with no
+  public-API change. Durable event reconciliation remains required because
+  preview frames are best-effort and non-replayable.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
 
-Pilot boundary: `minScale=1`, `maxScale=1`, and one Uvicorn worker may be used
-for a controlled Votrix-only pilot, but that is not the scalable production
-gate and must remain visible in operations documentation.
+Hosted boundary: API instances autoscale independently. Private workers use
+OIDC-authenticated Cloud Tasks turn requests with `minScale=1`; the permanent
+PostgreSQL reconciler remains the correctness fallback. The checked-in staging
+bound is `maxScale=2`. Production also starts at `maxScale=2`, backed by the
+conservative measured connection record in the scaling runbook. Raising it
+above two remains blocked until the exact Supabase pool size and the larger
+fleet load-test gates are recorded.
 
 ### P0-2 — Dynamic files and generated artifacts
 
@@ -388,7 +394,7 @@ broken or misconfigured queue degrades to today's polling instead of losing
 work:
 
     user turn → Postgres work item (durable, exists today)
-             → named Cloud Task (`wk-{work_id}-a{attempt}`)
+             → named Cloud Task (`wk-{sha1[:8]}-{work_id}-a{attempt}`)
              → OIDC `POST /internal/work/{id}/execute` on the worker service
              → existing lease-fenced `execute_work_item`
              → Cloud Run scales worker instances on in-flight turns
@@ -417,35 +423,42 @@ Absorbs the open P0-1 item "Prevent duplicate model execution, event emission,
 and raw usage attribution". The honest contract is bounded at-least-once, not
 exactly-once (issued E2B commands cannot be rolled back):
 
-- [ ] A turn whose graph run completed is never re-executed: make finalization
-  crash-safe so a crash between run completion and the finalize commit cannot
-  replay the whole turn on retry (detect via the durable checkpoint state for
-  the already-consumed input seq).
-- [ ] Replaying an interrupted superstep does not duplicate already-persisted
+- [x] A turn whose graph run completed is never re-executed: write a versioned
+  completion marker in the terminal LangGraph checkpoint before the database
+  turn journal, then finalize from the matching marker/journal after any crash.
+  The journal must preserve `final_text`, `events_persisted`, its schema
+  `version`, and the remaining `RuntimeResult` fields needed for recovery.
+- [x] Replaying an interrupted superstep does not duplicate already-persisted
   events where identity is derivable, and every retried attempt appends a
   visible retry-marker event so operators and clients can see the takeover.
 - [x] Model-usage attribution is already work-fenced via the
   `model_tokens:{work_id}` idempotency key.
-- [ ] Replay count is bounded by `VMA_WORK_MAX_ATTEMPTS` (ships with P1.1).
+- [x] Replay count is bounded by `VMA_WORK_MAX_ATTEMPTS` (ships with P1.1),
+  with the P3 admission amendment: leases and deferred/no-input paths consume
+  no attempt; only a turn admitted immediately before graph execution counts.
 
 #### Stage B — Cloud Tasks push dispatch (~3–5 days, purely additive after P2)
 
-- [ ] Dispatcher module creating named tasks (`wk-{work_id}-a{attempt}`) after
+- [x] Dispatcher module creating named tasks
+  (`wk-{sha1(work_id)[:8]}-{work_id}-a{attempt}`) after
   commit; creation is idempotent (ALREADY_EXISTS swallowed).
-- [ ] OIDC-authenticated `POST /internal/work/{id}/execute` on the worker
+- [x] OIDC-authenticated `POST /internal/work/{id}/execute` on the worker
   service calling `execute_work_item`.
-- [ ] Explicit execute-outcome → HTTP status mapping table — the one
+- [x] Explicit execute-outcome → HTTP status mapping table — the one
   design-sensitive piece: infrastructure retries must never consume
-  `VMA_WORK_MAX_ATTEMPTS` (only attempts that actually acquire a lease count);
+  `VMA_WORK_MAX_ATTEMPTS` (lease acquisition alone does not count; only turns
+  that pass the runner admission boundary and begin graph execution count);
   terminal outcomes return 200; only transient failures return 5xx.
-- [ ] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
+- [x] Embedded poller demoted to a 15–30s reconciler — it stays forever: it is
   the recovery path for expired leases and missed dispatches. Push is an
   optimization over poll, never a replacement.
-- [ ] Queue + IAM setup script; autoscaling manifest pins with
+- [x] Queue + IAM setup script; autoscaling manifest pins with
   `containerConcurrency` as the per-instance turn bound; `maxScale` derived
   from the connection/E2B/spend budgets in the scaling runbook (never from
-  intuition); `minScale ≥ 1`.
-- [ ] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
+  intuition); `minScale ≥ 1`. The checked-in production `maxScale=2` is the
+  measured conservative bound; a larger fleet remains blocked by the
+  runbook's Supabase connection and load-test gates.
+- [x] Race and mapping tests: push-vs-poller contention, duplicate dispatch,
   retry storms, reconciler pickup of undispatched work.
 
 Demand signals that raise this roadmap's priority (informational now, no
@@ -464,7 +477,7 @@ migrations keep session/direct connections (`:5432`); per-instance pools
 shrink (API 4+2, worker 4+1, checkpoint 3). Authoritative spec:
 `PLAN-amendment-A1-connection-modes.md` (standalone amendment — the base PLAN
 documents are intentionally unmodified); budget math:
-`private-docs/scaling-runbook.md`. Caught during the Codex connection review;
+`private-docs/scaling-runbook.md`. Caught during the connection review;
 `app/db/engine.py` already sets `statement_cache_size=0`, so the main engine
 is transaction-mode compatible as-is. Key trap encoded in the specs:
 session-scoped advisory locks and psycopg `prepare_threshold=0` both break
@@ -473,9 +486,10 @@ silently through transaction pooling.
 ### Pre-launch gate
 
 The first production deploy is gated by `private-docs/pre-launch-checklist.md`:
-the three engineering plans (`PLAN-horizontal-scaling.md`,
-`PLAN-p3-autoscale.md`, `PLAN-pre-launch-hardening.md` — the last adds the
-tenant-isolation denial matrix and encryption key rotation), the four
+the engineering plans (`PLAN-horizontal-scaling.md`,
+`PLAN-p3-autoscale.md`, `PLAN-amendment-A1-connection-modes.md`, and
+`PLAN-pre-launch-hardening.md` — the last adds the tenant-isolation denial
+matrix and encryption key rotation), the four
 load-test scenarios, and the checklist's Tier 1 operator items (PITR restore
 drill, API versioning/event-retention decisions, region/residency decision).
 

@@ -2,7 +2,7 @@
 
 Self-contained spec for a coding agent. Companion to `PLAN-horizontal-scaling.md` and `PLAN-p3-autoscale.md`, but **independent of both**: these two workstreams touch neither the work queue nor dispatch and can be built in parallel with, before, or after the scaling sequence — the only constraint is that both MUST be merged and green before the first production deploy (see `private-docs/pre-launch-checklist.md` for the full launch gate). Keep W1 and W2 as separate commits.
 
-Rationale: these close the two pre-launch gaps whose post-launch failure modes are unrecoverable — a cross-tenant data leak (trust), and an encryption key that cannot be rotated once customer BYOK credentials accumulate (forced re-onboarding of every customer on any key incident).
+Rationale: these close the two pre-launch gaps whose post-launch failure modes are unrecoverable — a cross-tenant data leak (trust), and an encryption key that cannot be rotated once Organization BYOK credentials accumulate (forced re-onboarding of every affected Organization on any key incident).
 
 ---
 
@@ -45,7 +45,7 @@ Fixtures: two Organizations (`org_iso_a`, `org_iso_b`), each with its own API ke
 
 ### Current state (verified)
 
-`app/secret_cipher.py` encrypts Vault credential values (customer BYOK model keys) with a single `vma_encryption_key` (AES-GCM, `enc:v1:` prefix, nonce+ciphertext base64). There is no multi-key support: rotating the key today makes every stored credential undecryptable. `vma_allow_plaintext_secrets_local` governs the local plaintext fallback and stays unchanged.
+`app/secret_cipher.py` encrypts Vault credential values (Organization BYOK model keys) with a single `vma_encryption_key` (AES-GCM, `enc:v1:` prefix, nonce+ciphertext base64). There is no multi-key support: rotating the key today makes every stored credential undecryptable. `vma_allow_plaintext_secrets_local` governs the local plaintext fallback and stays unchanged.
 
 ### Changes
 

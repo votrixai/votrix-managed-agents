@@ -16,7 +16,7 @@ def make_client(body: str):
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_sse",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,
@@ -38,8 +38,31 @@ async def test_stream_exposes_cma_style_event_attributes():
     assert event.id == "event_7"
     assert event.sse_id == "7"
     assert event.event == "agent.message"
+    assert event.sse_event == "agent.message"
     assert event.future is True
     assert event.data["content"] == "hello"
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_accepts_structured_preview_frames():
+    sdk, http_client = make_client(
+        'event: event_start\ndata: {"type":"event_start","event":{"type":"agent.message","id":"event_7"}}\n\n'
+        'event: event_delta\ndata: {"type":"event_delta","event_id":"event_7","delta":{"type":"content_delta","index":0,"content":{"type":"text","text":"hello"}}}\n\n'
+    )
+    async with await sdk.sessions.events.stream(
+        "session_1",
+        event_deltas=["agent.message"],
+    ) as stream:
+        events = [event async for event in stream]
+
+    assert [event.type for event in events] == ["event_start", "event_delta"]
+    assert events[0].event == {"type": "agent.message", "id": "event_7"}
+    assert events[0].sse_event == "event_start"
+    assert events[1].event == "event_delta"
+    assert events[1].sse_event == "event_delta"
+    assert events[1].event_id == "event_7"
+    assert events[1].delta["content"]["text"] == "hello"
     await http_client.aclose()
 
 
@@ -74,7 +97,7 @@ async def test_stream_reconnects_with_last_event_id_and_deduplicates():
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_sse",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,
@@ -112,7 +135,7 @@ async def test_stream_cancellation_closes_the_http_response():
         )
     )
     sdk = AsyncVotrix(
-        api_key="vma_test",
+        api_key="vma_test_sse",
         base_url="https://vma.test",
         max_retries=0,
         http_client=http_client,

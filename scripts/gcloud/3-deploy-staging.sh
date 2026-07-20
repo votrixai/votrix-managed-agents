@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build, migrate, and deploy the staging Cloud Run service.
+# Build, migrate, and deploy the staging API and worker Cloud Run services.
 
 set -eu
 
@@ -46,9 +46,10 @@ for arg in "$@"; do
 done
 
 REGION="${REGION_OVERRIDE:-$REGION}"
-MANIFEST="${REPO_ROOT}/service.staging.yaml"
+API_MANIFEST="${REPO_ROOT}/service.staging.yaml"
+WORKER_MANIFEST="${REPO_ROOT}/service.worker.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
-DATABASE_SECRET="vma-database-url-staging"
+DATABASE_SECRET="vma-database-url-direct-staging"
 
 if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   echo "Staging deploys must run from a git checkout with a commit." >&2
@@ -102,12 +103,63 @@ gcloud run jobs execute "$MIGRATION_JOB" \
   --wait \
   --quiet
 
-echo "Deploying ${STAGING_SERVICE}..."
-sed "s|IMAGE_URL|${IMAGE}|" "$MANIFEST" | \
+WORKER_URL=$(gcloud run services describe "$STAGING_WORKER_SERVICE" \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --format='value(status.url)' 2>/dev/null || true)
+
+if [ -z "$WORKER_URL" ]; then
+  echo "Creating ${STAGING_WORKER_SERVICE} in bootstrap poll mode..."
+  sed \
+    -e "s|IMAGE_URL|${IMAGE}|" \
+    -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
+    -e 's|value: "hybrid"|value: "poll"|' \
+    "$WORKER_MANIFEST" | \
+    gcloud run services replace \
+      --project="$PROJECT_ID" \
+      --region="$REGION" \
+      /dev/stdin \
+      --quiet
+
+  WORKER_URL=$(gcloud run services describe "$STAGING_WORKER_SERVICE" \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    --format='value(status.url)')
+fi
+
+if [ -z "$WORKER_URL" ]; then
+  echo "Cloud Run did not report a worker service URL." >&2
+  exit 1
+fi
+
+echo "Allowing Cloud Tasks to invoke ${STAGING_WORKER_SERVICE}..."
+gcloud run services add-iam-policy-binding "$STAGING_WORKER_SERVICE" \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --member="serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+  --role="roles/run.invoker" \
+  --quiet
+
+echo "Deploying ${STAGING_WORKER_SERVICE} worker service in hybrid mode..."
+sed \
+  -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
+  "$WORKER_MANIFEST" | \
   gcloud run services replace \
     --project="$PROJECT_ID" \
     --region="$REGION" \
     /dev/stdin \
     --quiet
 
-echo "Staging deployed: ${IMAGE}"
+echo "Deploying ${STAGING_SERVICE} API service in hybrid mode..."
+sed \
+  -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
+  "$API_MANIFEST" | \
+  gcloud run services replace \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    /dev/stdin \
+    --quiet
+
+echo "Staging API and worker deployed: ${IMAGE}"

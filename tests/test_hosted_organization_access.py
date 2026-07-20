@@ -147,7 +147,7 @@ async def test_superadmin_creates_organization_owner_and_api_key(client, monkeyp
         json={"name": "Builder", "scopes": ["api"]},
     )
     assert response.status_code == 201
-    assert response.json()["secret"].startswith("vma_")
+    assert response.json()["secret"].startswith("vma_test_")
     assert response.json()["scopes"] == ["api"]
     key_id = response.json()["id"]
 

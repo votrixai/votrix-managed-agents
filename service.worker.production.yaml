@@ -1,0 +1,191 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: votrix-managed-agents-worker
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "2"
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      serviceAccountName: vma-runtime@votrixai-480422.iam.gserviceaccount.com
+      containerConcurrency: 5
+      timeoutSeconds: 3600
+      containers:
+        - image: IMAGE_URL
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              memory: 4Gi
+              cpu: "1"
+          startupProbe:
+            httpGet:
+              path: /health
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health/db
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          env:
+            - name: APP_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: WEB_CONCURRENCY
+              value: "1"
+            - name: VMA_SERVICE_ROLE
+              value: "worker"
+            - name: VMA_PREVIEW_BROKER
+              value: "pg_notify"
+            - name: VMA_EMBEDDED_WORKER_ENABLED
+              value: "true"
+            - name: VMA_WORK_DISPATCH_MODE
+              value: "hybrid"
+            - name: VMA_TASKS_QUEUE
+              value: "vma-turns"
+            - name: VMA_TASKS_LOCATION
+              value: "us-central1"
+            - name: VMA_TASKS_SERVICE_ACCOUNT
+              value: "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
+            - name: VMA_WORKER_URL
+              value: "__VMA_WORKER_URL__"
+            - name: VMA_WORKER_TURN_LIMIT
+              value: "5"
+            - name: VMA_WORKER_CONCURRENCY
+              value: "1"
+            - name: VMA_WORKER_POLL_INTERVAL_SECONDS
+              value: "20"
+            - name: VMA_WORKER_LEASE_SECONDS
+              value: "120"
+            - name: VMA_WORK_MAX_ATTEMPTS
+              value: "3"
+            - name: VMA_CHECKPOINT_POOL_MAX_SIZE
+              value: "3"
+            - name: VMA_EVENT_POLL_INTERVAL_SECONDS
+              value: "1.0"
+            - name: VMA_MAX_SESSION_INPUT_BYTES
+              value: "67108864"
+            - name: VMA_DB_POOL_SIZE
+              value: "4"
+            - name: VMA_DB_MAX_OVERFLOW
+              value: "1"
+            - name: VMA_DB_POOL_TIMEOUT_SECONDS
+              value: "10"
+            - name: VMA_DB_POOL_RECYCLE_SECONDS
+              value: "300"
+            - name: VMA_PUBLIC_GA_ONLY
+              value: "true"
+            - name: VMA_GOVERNANCE_ENABLED
+              value: "true"
+            - name: VMA_REQUESTS_PER_MINUTE
+              value: "600"
+            - name: VMA_MAX_ACTIVE_WORK
+              value: "20"
+            - name: VMA_DAILY_MODEL_TOKENS
+              value: "1000000"
+            - name: VMA_ORGANIZATION_STORAGE_BYTES
+              value: "5368709120"
+            - name: VMA_CORS_ORIGINS
+              value: "https://vma.votrixai.com,https://docs.vma.votrixai.com"
+            - name: VMA_DEFAULT_MODEL_PROVIDER
+              value: "openrouter"
+            - name: VMA_MODEL_PROVIDERS
+              value: '{"openrouter":{"adapter":"openrouter","api_key_env":"OPENROUTER_API_KEY","base_url":"https://openrouter.ai/api/v1","default_model":"deepseek/deepseek-v4-pro","model_kwargs":{"openrouter_provider":{"order":["fireworks","together"],"only":["fireworks","together"],"allow_fallbacks":true,"require_parameters":true,"data_collection":"deny"}},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":false,"reasoning":true,"native_structured_output":false}}}'
+            - name: VMA_SANDBOX_PROVIDER
+              value: "e2b"
+            - name: VMA_E2B_TEMPLATE
+              value: "vma-hardened"
+            - name: VMA_E2B_TEMPLATE_RESOURCES
+              value: '{"cpu":2,"memory_mb":2048}'
+            - name: VMA_E2B_COST_ESTIMATION_ENABLED
+              value: "true"
+            - name: VMA_E2B_VCPU_SECOND_USD
+              value: "0.000014"
+            - name: VMA_E2B_GIB_SECOND_USD
+              value: "0.0000045"
+            - name: VMA_E2B_WORKDIR
+              value: "/workspace"
+            - name: VMA_E2B_GUEST_USER
+              value: "user"
+            - name: VMA_E2B_TIMEOUT_SECONDS
+              value: "900"
+            - name: VMA_E2B_AUTO_PAUSE
+              value: "true"
+            - name: VMA_E2B_AUTO_RESUME
+              value: "false"
+            - name: VMA_E2B_KEEP_MEMORY
+              value: "true"
+            - name: VMA_E2B_PAUSE_ON_EXIT
+              value: "true"
+            - name: VMA_E2B_ALLOW_PUBLIC_TRAFFIC
+              value: "false"
+            - name: VMA_ALLOW_PLAINTEXT_SECRETS_LOCAL
+              value: "false"
+            - name: VMA_REQUIRE_BETA_HEADER
+              value: "true"
+            - name: VMA_REQUIRE_ANTHROPIC_VERSION_HEADER
+              value: "true"
+            - name: S3_REGION
+              value: "auto"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-database-url
+            - name: VMA_CHECKPOINT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-database-url
+            - name: VMA_LISTEN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-listen-database-url
+            - name: VMA_SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-supabase-url
+            - name: VMA_SUPABASE_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-supabase-publishable-key
+            - name: VMA_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-encryption-key
+            - name: E2B_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-e2b-api-key
+            - name: S3_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-s3-endpoint-url
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-s3-access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-s3-secret-access-key
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-s3-bucket-name

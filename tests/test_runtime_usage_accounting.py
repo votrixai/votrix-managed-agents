@@ -6,7 +6,7 @@ from app.db.queries import resources as res_q
 from app.runtime.contracts import RuntimeResult
 from app.runtime.deepagents_engine import _merge_usage
 from app.runtime.runner import _model_usage_dimensions
-from app.runtime.work_queue import execute_work_item
+from app.runtime.work_queue import WorkExecutionLease, execute_work_item
 from tests.conftest import TEST_HEADERS
 
 
@@ -57,10 +57,27 @@ def test_stream_usage_merge_accumulates_nested_dimensions():
 
 async def test_worker_records_fenced_model_usage_once(client, monkeypatch):
     import app.runtime.runner as runner
+    work_id = ""
 
-    async def fake_execute(*_args, **_kwargs):
-        return RuntimeResult(
+    async def fake_execute(
+        version,
+        history,
+        *_args,
+        admit_execution=None,
+        organization_id=None,
+        session_id=None,
+        **_kwargs,
+    ):
+        if admit_execution is not None:
+            await admit_execution()
+        result = RuntimeResult(
             final_text="metered",
+            run_state={
+                "backend": "deepagents",
+                "last_input_event_seq": max(
+                    event.seq for event in history if event.type == "user.message"
+                ),
+            },
             usage={
                 "input_tokens": 30,
                 "output_tokens": 12,
@@ -68,6 +85,27 @@ async def test_worker_records_fenced_model_usage_once(client, monkeypatch):
                 "input_token_details": {"cache_read": 9},
             },
         )
+        async with session_scope() as db:
+            work = await res_q.get_work_item_for_worker(db, work_id)
+            assert work is not None
+            lease_data = dict((work.data or {}).get("lease") or {})
+            work_lease = WorkExecutionLease(
+                work_id=work.id,
+                worker_id=str(lease_data["worker_id"]),
+                lease_id=str(lease_data["lease_id"]),
+                generation=int(lease_data["generation"]),
+                attempt=int((work.data or {}).get("attempt") or 0),
+            )
+        for _ in range(2):
+            assert await runner._record_model_usage_after_result(
+                session_id=str(session_id),
+                organization_id=str(organization_id),
+                effective_version=version,
+                history=history,
+                result=result,
+                work_lease=work_lease,
+            )
+        return result
 
     monkeypatch.setattr(runner, "_execute", fake_execute)
 

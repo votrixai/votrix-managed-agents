@@ -40,6 +40,10 @@ operator-provisioned Organization platform funding.
   increasing generations, automatic execution heartbeats, expired-lease
   recovery, stale-worker terminal-write fencing, and idempotent active-work
   quota release.
+- A deployment-selectable live-preview transport. Local development keeps the
+  in-process default; hosted API/worker services use bounded PostgreSQL
+  `pg_notify` delivery with loopback suppression and durable-event
+  reconciliation.
 - A public-beta capability manifest and GA-only OpenAPI filter for API keys,
   Agents, Environments, Sessions, Files, Skills, Vaults/native model
   Credentials, and Model Providers.
@@ -61,7 +65,7 @@ operator-provisioned Organization platform funding.
   SSE with `Last-Event-ID`, bounded replay-safe retries, typed request IDs and
   stable error codes, API-key administration, and automatic Session/event
   idempotency keys.
-- A server-side `@votrix/sdk` TypeScript client with Anthropic-style
+- A server-side `@votrix/managed-agents` TypeScript client with Anthropic-style
   `APIPromise` and `PagePromise` ergonomics, all public native resources,
   multipart uploads, streaming binary downloads, reconnecting/deduplicating
   SSE, secret-safe responses, ESM/CommonJS builds, resource/transport tests,
@@ -74,6 +78,11 @@ operator-provisioned Organization platform funding.
 
 ### Changed
 
+- The external product contract is now explicitly Votrix Managed Agents (VMA):
+  the TypeScript package is `@votrix/managed-agents`, client credentials use
+  `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use
+  `vma_live_` in production or `vma_test_` everywhere else. Generic main-product
+  Votrix SDK and credential names are no longer consumed by VMA clients.
 - **Pre-launch breaking reset:** the top-level tenant is now Organization,
   identified by `organization_id` and `org_*` IDs. Legacy tenant names,
   fields, CLI flags, defaults, and compatibility aliases were removed. Existing
@@ -85,10 +94,11 @@ operator-provisioned Organization platform funding.
   storage. Only files referenced by the current model message are hydrated;
   append-only `resources.add` downloads only the new file, while legacy
   bindings perform one compatibility hydration before persisting a descriptor.
-- The single-instance Cloud Run beta profile now runs five embedded turn
-  consumers with one vCPU/4 GiB, 40 HTTP concurrency, one-second event polling,
-  a 64 MiB aggregate Session-input cap, and Organization defaults sized to admit
-  a ten-Session burst without quota rejection.
+- The Cloud Run beta profile now separates public API instances from a private,
+  Cloud Tasks-driven worker service. Production keeps one warm worker, permits
+  up to eight, and limits each instance to five concurrent turns; staging keeps
+  one warm worker and permits two. A permanent PostgreSQL reconciler recovers
+  missed dispatches and expired leases independently of API request scaling.
 - PostgreSQL control-plane traffic now uses a bounded, configurable SQLAlchemy
   application pool by default; SQLite keeps `NullPool`, and
   `VMA_DB_POOL_SIZE=0` is the explicit PostgreSQL opt-out.
@@ -99,8 +109,10 @@ operator-provisioned Organization platform funding.
 - External HTTP workers now use tenant-bound database API keys with `worker`
   scope through the standard `x-api-key` or Bearer schemes; the separate static
   worker-authentication secret was removed.
-- Hosted execution uses embedded durable consumers while the reference Cloud
-  Run topology remains one warm instance, one web process, and `maxScale=1`.
+- Hosted execution uses private worker-role services with database-backed
+  leases, shared PostgreSQL checkpoints, bounded retry attempts, and a
+  connection-scoped advisory lock for janitor cleanup. API-role services expose
+  HTTP/SSE without running Agent turns.
 - Object storage is private. VMA serves authenticated downloads and requires no
   `S3_PUBLIC_URL`, R2 public development URL, or public custom domain.
 - Public GA hides presign/complete file uploads, Environment worker routes,
@@ -127,12 +139,19 @@ operator-provisioned Organization platform funding.
 - Cloud Build ignores Cloudflare-router-only changes as well as documentation
   and SDK-only changes, so an edge routing update cannot unnecessarily rebuild
   the API image or run database migrations.
+- Cloud Build deployment triggers now use the regional 2nd-gen GitHub
+  connection and verify both its completed installation state and exact linked
+  repository before creating or updating staging and production automation.
 - The one-binding-per-Session multiagent MVP now rejects mixed-provider rosters
   at Session creation. Keyless `fake` and `ollama` providers bind with source
   `none`.
 
 ### Fixed
 
+- Native Python SDK SSE decoding now accepts structured `event_start` preview
+  descriptors while preserving string event names for durable events.
+- The deployed performance smoke now emits string-valued Session metadata as
+  required by the public API contract.
 - Runtime event-history loading now paginates to the end instead of silently
   stopping after the first 500 events.
 - Recovered work can no longer be finalized by an older lease held by the same
@@ -170,9 +189,9 @@ operator-provisioned Organization platform funding.
 
 ### Deferred
 
-- Cross-process live-preview delivery and complete distributed
-  per-Session/checkpoint ownership. The checked-in `maxScale=1` constraint must
-  remain until both exist.
+- Exactly-once provider/MCP/sandbox side effects and queue-driven push dispatch
+  or automatic worker scaling. The current multi-instance worker fleet polls
+  PostgreSQL and is scaled manually.
 - Postgres RLS; Organization memberships, human/service-account RBAC, SSO,
   and SCIM.
 - Enterprise audit export, automated retention, legal hold, external tamper
@@ -197,6 +216,9 @@ operator-provisioned Organization platform funding.
   leases and runtime-history pagination, outbound network restrictions,
   Session-create idempotency, public-GA OpenAPI schemas, and native SDK sync and
   async surfaces.
+- Added service-role, multi-instance deployment, capped retry, shared checkpoint,
+  janitor lock, resilient worker polling, and cross-instance PostgreSQL preview
+  broker coverage.
 - Added deterministic E2B estimate formula/configuration tests and lifecycle
   tests for open/close interval accumulation, idempotent closure, pause/resume,
   delete, disabling, and non-E2B providers; no external E2B call is required.
