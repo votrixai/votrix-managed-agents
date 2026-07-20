@@ -10,8 +10,7 @@ after that point.
 The permanent names below became the live production and staging entry points
 on 2026-07-19. The API Workers, Cloud Run CORS configuration, Vercel frontends,
 Supabase Auth site URLs, and hosted documentation all use this contract. The
-execution checklist records the evidence and the two remaining Cloudflare
-inventory cleanup actions.
+execution checklist records the cutover and cleanup evidence.
 
 | Surface | Retired entry point | Permanent live entry point |
 |---|---|---|
@@ -23,10 +22,14 @@ inventory cleanup actions.
 | Hosted operator API | Production Cloud Run `run.app` URL | Unchanged |
 
 The old custom frontend aliases have been detached from their Vercel
-deployments and removed from CORS. Their remaining Cloudflare CNAME records
-resolve to unassigned Vercel targets and return 404; delete those DNS records
-as the final account-level cleanup. The automatically assigned `vercel.app`
-project domains are provider identifiers, not supported VMA entry points.
+deployments, removed from CORS, and deleted from Cloudflare DNS. They no longer
+resolve. The automatically assigned `vercel.app` project domains are provider
+identifiers, not supported VMA entry points.
+
+The final Cloudflare certificate inventory was verified on 2026-07-20. Active
+Advanced packs cover only `docs.vma.votrixai.com`, `api.vma.votrixai.com`, and
+`staging-api.vma.votrixai.com`; the zone's normal Universal SSL pack remains.
+No retired Worker Custom Domain certificate pack exists.
 
 ## The naming system
 
@@ -232,9 +235,9 @@ The frontend repository is `../vma-developer-app`.
 - [x] After the new API door is healthy and consumers no longer depend on the
       old API hostname, detach `vma.votrixai.com` and
       `staging-vma.votrixai.com` from the API Workers.
-- [ ] Delete the detached Workers Custom Domains' unused Advanced Certificates
-      only after confirming no remaining Cloudflare route uses those
-      hostnames.
+- [x] Inspect the final certificate-pack inventory after detaching the old
+      Workers Custom Domains. No retired pack remained to delete; active
+      Advanced packs cover only the documentation and two canonical API hosts.
 - [x] Attach `vma.votrixai.com` and `staging.vma.votrixai.com` to the correct
       Vercel projects, create the DNS records Vercel specifies without the
       Cloudflare proxy, wait for Vercel TLS issuance, and verify both browser
@@ -242,10 +245,10 @@ The frontend repository is `../vma-developer-app`.
 - [x] Remove `vmaapp.votrixai.com`, `staging-vmaapp.votrixai.com`, and Vercel
       deployment domains from CORS after the new frontend domains pass
       preflight checks. Detach both old custom frontend aliases from Vercel.
-- [ ] Delete the two now-dangling Cloudflare CNAME records for
-      `vmaapp.votrixai.com` and `staging-vmaapp.votrixai.com`. Both names return
-      404 and are no longer accepted by CORS; this requires a Cloudflare token
-      with DNS edit permission or an operator action in the dashboard.
+- [x] Delete the two dangling Cloudflare CNAME records for
+      `vmaapp.votrixai.com` and `staging-vmaapp.votrixai.com`. Verify both are
+      absent from the Cloudflare API, both authoritative nameservers, and the
+      `1.1.1.1` resolver after their 60-second TTL expires.
 
 ### 5. Move the documentation hostname
 
@@ -270,10 +273,9 @@ The frontend repository is `../vma-developer-app`.
       that neither Vercel nor Cloudflare has an unexpected redirect loop.
 - [x] Confirm old Worker Custom Domains, stale CORS origins, and temporary
       dual-domain Worker logic are removed. Record the final domain inventory.
-- [ ] Delete the detached Workers Custom Domains' unused Advanced Certificates
-      and the two stale frontend CNAME records after obtaining the required
-      Cloudflare account permissions. Neither residual item routes accepted
-      application traffic.
+- [x] Confirm no retired Advanced Certificate pack exists, delete both stale
+      frontend CNAME records, and verify every canonical API, frontend, and
+      documentation endpoint remains healthy.
 
 ## What does not change
 

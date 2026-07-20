@@ -74,10 +74,9 @@ a one-way door in practice.
       remain reserved for the umbrella/main product. The Cloud Run `run.app`
       URL remains the operator entry behind superadmin JWT; `admin.vma` exists
       only if the complete Access + admin route + origin-cloaking bundle ships.
-      - [ ] Complete the remaining operator acceptance and Cloudflare inventory
-            items in `private-docs/domains.md`: authenticated browser/SDK/SSE
-            and real-turn checks on the permanent domains, stale frontend CNAME
-            deletion, and unused Advanced Certificate cleanup.
+      - [ ] Complete the remaining operator acceptance item in
+            `private-docs/domains.md`: authenticated browser/SDK/SSE and
+            real-turn checks on the permanent domains.
 - [ ] **Deletion semantics**: the schema soft-deletes (`deleted_at`); define
       the hard-delete path (DB rows + R2 objects + E2B teardown) for Organization
       data-deletion requests before there is real Organization data.
