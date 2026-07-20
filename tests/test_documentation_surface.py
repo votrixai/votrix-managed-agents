@@ -49,7 +49,7 @@ def test_documentation_uses_the_current_votrixai_domain():
         DEFAULT_OUTPUT.parents[2] / "components" / "api-page.tsx"
     ).read_text(encoding="utf-8")
 
-    assert DEFAULT_SERVER_URL == "https://vma.votrixai.com"
+    assert DEFAULT_SERVER_URL == "https://api.vma.votrixai.com"
     assert "votrix" + ".ai" not in committed
     assert "votrix-managed-agents-openapi-v2-" in api_page
 

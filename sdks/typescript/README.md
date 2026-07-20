@@ -49,7 +49,7 @@ the process environment, the constructor can read them directly:
 
 ```bash
 export VMA_API_KEY="vma_live_..."
-export VMA_BASE_URL="https://vma.votrixai.com"
+export VMA_BASE_URL="https://api.vma.votrixai.com"
 ```
 
 ```ts

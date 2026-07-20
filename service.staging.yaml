@@ -83,7 +83,7 @@ spec:
             - name: VMA_ORGANIZATION_STORAGE_BYTES
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
-              value: "https://staging-vmaapp.votrixai.com,https://vma-developer-app-staging.vercel.app,https://staging-app.votrix.ai,https://docs.votrixai.com"
+              value: "https://staging.vma.votrixai.com,https://docs.vma.votrixai.com"
             - name: VMA_DEFAULT_MODEL_PROVIDER
               value: "openrouter"
             - name: VMA_MODEL_PROVIDERS

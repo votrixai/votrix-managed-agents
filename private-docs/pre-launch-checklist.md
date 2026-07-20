@@ -64,9 +64,20 @@ a one-way door in practice.
       and keep usage records append-only (usage attribution is already
       idempotent per work item). Post-launch metering fixes are revenue
       disputes.
-- [ ] **Canonical API domain**: CORS currently mixes `votrix.ai` and
-      `votrixai.com` roots. Pick the permanent API hostname before any client
-      SDK configuration points at it: ______
+- [x] **Canonical domains** (decided and cut over 2026-07-19; status, exact path allowlist,
+      certificate rules, and ordered cutover are in
+      `private-docs/domains.md`): `api.vma.votrixai.com` is the production API,
+      `vma.votrixai.com` is the builder frontend,
+      `docs.vma.votrixai.com` is VMA documentation, and
+      `staging-api.vma.votrixai.com` / `staging.vma.votrixai.com` mirror the
+      API/frontend split. Bare `api.votrixai.com` and `docs.votrixai.com`
+      remain reserved for the umbrella/main product. The Cloud Run `run.app`
+      URL remains the operator entry behind superadmin JWT; `admin.vma` exists
+      only if the complete Access + admin route + origin-cloaking bundle ships.
+      - [ ] Complete the remaining operator acceptance and Cloudflare inventory
+            items in `private-docs/domains.md`: authenticated browser/SDK/SSE
+            and real-turn checks on the permanent domains, stale frontend CNAME
+            deletion, and unused Advanced Certificate cleanup.
 - [ ] **Deletion semantics**: the schema soft-deletes (`deleted_at`); define
       the hard-delete path (DB rows + R2 objects + E2B teardown) for Organization
       data-deletion requests before there is real Organization data.

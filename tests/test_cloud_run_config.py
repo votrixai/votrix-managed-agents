@@ -232,24 +232,11 @@ def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:
                 ), f"{name} is not pinned for {role_path}"
 
         developer_origin = (
-            "https://vma-developer-app-staging.vercel.app"
+            "https://staging.vma.votrixai.com"
             if environment == "staging"
-            else "https://vma-developer-app.vercel.app"
+            else "https://vma.votrixai.com"
         )
-        custom_developer_origin = (
-            "https://staging-vmaapp.votrixai.com"
-            if environment == "staging"
-            else "https://vmaapp.votrixai.com"
-        )
-        browser_origin = (
-            "https://staging-app.votrix.ai"
-            if environment == "staging"
-            else "https://app.votrix.ai"
-        )
-        expected_cors = (
-            f"{custom_developer_origin},{developer_origin},"
-            f"{browser_origin},https://docs.votrixai.com"
-        )
+        expected_cors = f"{developer_origin},https://docs.vma.votrixai.com"
         for role_path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
             assert re.search(
                 rf'name:\s*VMA_CORS_ORIGINS\s+value:\s*["\']{re.escape(expected_cors)}["\']',

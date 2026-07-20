@@ -1,0 +1,48 @@
+/docs/*.md
+  Content-Type: text/markdown; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/llms.mdx/docs/*/content.md
+  Content-Type: text/markdown; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/llms.txt
+  Content-Type: text/markdown; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/llms-full.txt
+  Content-Type: text/markdown; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/.well-known/llms.txt
+  Content-Type: text/markdown; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/.well-known/llms-full.txt
+  Content-Type: text/markdown; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/openapi/*.json
+  Content-Type: application/json; charset=utf-8
+  Link: </llms.txt>; rel="llms-txt", </llms-full.txt>; rel="llms-full-txt"
+  X-Content-Type-Options: nosniff
+  X-Llms-Txt: /llms.txt
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet

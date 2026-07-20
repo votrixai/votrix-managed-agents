@@ -14,7 +14,7 @@ import '@fontsource/dm-sans/latin-700-italic.css';
 import './global.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://docs.votrixai.com'),
+  metadataBase: new URL('https://docs.vma.votrixai.com'),
   title: {
     default: 'Votrix Managed Agents (VMA)',
     template: '%s | Votrix Managed Agents (VMA)',

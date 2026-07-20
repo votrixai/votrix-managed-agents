@@ -120,7 +120,7 @@ The supported release sequence is:
    its latency/failure summary with the release evidence.
 
 ```bash
-VMA_SMOKE_BASE_URL=https://staging-vma.votrixai.com \
+VMA_SMOKE_BASE_URL=https://staging-api.vma.votrixai.com \
 VMA_SMOKE_API_KEY=... \
 VMA_SMOKE_VAULT_IDS=vault_... \
 uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
@@ -130,7 +130,7 @@ Then run the concurrent gate with a staging Vault that already contains the
 model Credential:
 
 ```bash
-VMA_PERF_BASE_URL=https://staging-vma.votrixai.com \
+VMA_PERF_BASE_URL=https://staging-api.vma.votrixai.com \
 VMA_PERF_API_KEY=... \
 VMA_PERF_VAULT_IDS=vault_... \
 uv run python scripts/performance_smoke.py

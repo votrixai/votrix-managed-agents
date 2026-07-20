@@ -429,7 +429,7 @@ from votrix import AsyncVotrix
 
 client = AsyncVotrix(
     api_key="vma_live_...",
-    base_url="https://vma.votrixai.com",
+    base_url="https://api.vma.votrixai.com",
 )
 
 providers = [provider async for provider in client.model_providers.list()]
@@ -464,7 +464,7 @@ import Votrix from "@votrix/managed-agents";
 
 const client = new Votrix({
   apiKey: process.env.VMA_API_KEY,
-  baseURL: "https://vma.votrixai.com",
+  baseURL: "https://api.vma.votrixai.com",
 });
 
 const providers = await client.modelProviders.list();

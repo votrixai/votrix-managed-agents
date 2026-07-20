@@ -201,7 +201,7 @@ VMA_REQUESTS_PER_MINUTE=600
 VMA_MAX_ACTIVE_WORK=20
 VMA_ORGANIZATION_STORAGE_BYTES=5368709120
 VMA_PUBLIC_GA_ONLY=true
-VMA_CORS_ORIGINS=https://<matching-votrix-web-app>,https://docs.votrixai.com
+VMA_CORS_ORIGINS=https://<matching-vma-developer-app>,https://docs.vma.votrixai.com
 ```
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and
