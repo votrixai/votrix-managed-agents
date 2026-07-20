@@ -12,6 +12,7 @@ class AuthenticatedUser:
     id: str
     email: str | None
     app_metadata: dict[str, Any]
+    email_verified: bool = False
 
     @property
     def is_super_admin(self) -> bool:
@@ -43,6 +44,9 @@ async def authenticate_user(access_token: str) -> AuthenticatedUser:
         id=user_id,
         email=payload.get("email"),
         app_metadata=metadata if isinstance(metadata, dict) else {},
+        # Supabase `confirmed_at` may represent a confirmed phone number. Only
+        # the email-specific timestamp is strong enough for an emailed invite.
+        email_verified=bool(payload.get("email_confirmed_at")),
     )
 
 

@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy import event
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
@@ -61,6 +62,47 @@ class OrganizationOwner(TimestampMixin, Base):
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320))
     granted_by: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class OrganizationInvitation(TimestampMixin, Base):
+    __tablename__ = "organization_invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "role = 'owner'",
+            name="ck_organization_invitations_role_owner",
+        ),
+        Index(
+            "uq_organization_invitations_pending_email",
+            "organization_id",
+            "email",
+            unique=True,
+            postgresql_where=text("accepted_at IS NULL AND revoked_at IS NULL"),
+            sqlite_where=text("accepted_at IS NULL AND revoked_at IS NULL"),
+        ),
+        Index("ix_organization_invitations_organization_id", "organization_id"),
+        Index("ix_organization_invitations_email", "email"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id("invite")
+    )
+    organization_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="owner",
+        server_default="owner",
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    invited_by_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class OrganizationBillingAccount(TimestampMixin, Base):

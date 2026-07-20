@@ -86,6 +86,12 @@ spec:
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
               value: "https://staging.vma.votrixai.com,https://docs.vma.votrixai.com"
+            - name: VMA_CONSOLE_BASE_URL
+              value: "https://staging.vma.votrixai.com"
+            - name: VMA_EMAIL_FROM
+              value: "Votrix <no-reply@mail.votrixai.com>"
+            - name: VMA_ORGANIZATION_INVITE_TTL_DAYS
+              value: "14"
             - name: VMA_DEFAULT_MODEL_PROVIDER
               value: "openrouter"
             - name: VMA_MODEL_PROVIDERS
@@ -151,6 +157,11 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-supabase-publishable-key-staging
+            - name: VMA_RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-resend-api-key-staging
             - name: VMA_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

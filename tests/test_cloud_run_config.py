@@ -10,7 +10,7 @@ from app.config import Settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SECRET_BASES = {
+SHARED_SECRET_BASES = {
     "database-url",
     "e2b-api-key",
     "encryption-key",
@@ -22,6 +22,7 @@ SECRET_BASES = {
     "supabase-publishable-key",
     "supabase-url",
 }
+API_ONLY_SECRET_BASES = {"resend-api-key"}
 
 
 def _read(relative_path: str) -> str:
@@ -201,14 +202,57 @@ def test_cloud_run_manifests_split_api_and_worker_roles() -> None:
 def test_cloud_run_secret_names_are_isolated_from_votrix_backend() -> None:
     for environment in ("production", "staging"):
         suffix = "-staging" if environment == "staging" else ""
-        expected_names = {f"vma-{base}{suffix}" for base in SECRET_BASES}
+        expected_shared_names = {
+            f"vma-{base}{suffix}" for base in SHARED_SECRET_BASES
+        }
+        expected_api_names = expected_shared_names | {
+            f"vma-{base}{suffix}" for base in API_ONLY_SECRET_BASES
+        }
         api_names = _secret_ref_names(_read(f"service.{environment}.yaml"))
         worker_names = _secret_ref_names(_read(f"service.worker.{environment}.yaml"))
         assert api_names, f"service.{environment}.yaml must use Secret Manager"
         assert all(name.startswith("vma-") for name in api_names), api_names
-        assert set(api_names) == expected_names
-        assert set(worker_names) == expected_names
-        assert set(worker_names) == set(api_names)
+        assert set(api_names) == expected_api_names
+        assert set(worker_names) == expected_shared_names
+        assert not (set(worker_names) & (expected_api_names - expected_shared_names))
+
+
+def test_organization_invitation_email_configuration_is_api_only() -> None:
+    expected_console_urls = {
+        "production": "https://vma.votrixai.com",
+        "staging": "https://staging.vma.votrixai.com",
+    }
+    for environment, console_url in expected_console_urls.items():
+        suffix = "-staging" if environment == "staging" else ""
+        api = _flatten(_read(f"service.{environment}.yaml"))
+        worker = _read(f"service.worker.{environment}.yaml")
+        expected_values = {
+            "VMA_CONSOLE_BASE_URL": console_url,
+            "VMA_EMAIL_FROM": "Votrix <no-reply@mail.votrixai.com>",
+            "VMA_ORGANIZATION_INVITE_TTL_DAYS": "14",
+        }
+        for name, value in expected_values.items():
+            assert re.search(
+                rf'name:\s*{name}\s+value:\s*["\']{re.escape(value)}["\']',
+                api,
+            )
+            assert f"name: {name}" not in worker
+
+        assert "name: VMA_RESEND_API_KEY" in api
+        assert f"name: vma-resend-api-key{suffix}" in api
+        assert "VMA_RESEND_API_KEY" not in worker
+        assert f"vma-resend-api-key{suffix}" not in worker
+
+    for example in (".env.production.example", ".env.staging.example"):
+        assert re.search(
+            r"^VMA_RESEND_API_KEY=replace-with-resend-api-key$",
+            _read(example),
+            re.MULTILINE,
+        )
+
+    importer = _read("scripts/gcloud/1-create-secrets.sh")
+    assert "VMA_RESEND_API_KEY|vma-resend-api-key" in importer
+    assert "resend-api-key" in _read("scripts/gcloud/preflight.sh")
 
 
 def test_hosted_runtime_flags_are_explicit_and_consistent() -> None:

@@ -100,6 +100,7 @@ VMA_LISTEN_DATABASE_URL=
 DATABASE_URL_DIRECT=
 VMA_SUPABASE_URL=
 VMA_SUPABASE_PUBLISHABLE_KEY=
+VMA_RESEND_API_KEY=
 VMA_ENCRYPTION_KEY=
 E2B_API_KEY=
 S3_ENDPOINT_URL=
@@ -125,6 +126,7 @@ only these names:
 | `DATABASE_URL_DIRECT` | `vma-database-url-direct` | `vma-database-url-direct-staging` |
 | `VMA_SUPABASE_URL` | `vma-supabase-url` | `vma-supabase-url-staging` |
 | `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
+| `VMA_RESEND_API_KEY` | `vma-resend-api-key` | `vma-resend-api-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
 | `E2B_API_KEY` | `vma-e2b-api-key` | `vma-e2b-api-key-staging` |
 | `S3_ENDPOINT_URL` | `vma-s3-endpoint-url` | `vma-s3-endpoint-url-staging` |
@@ -140,6 +142,11 @@ maps `vma-database-url-direct[-staging]` to its `DATABASE_URL`.
 The Supabase URL and publishable key enable hosted owner and superadmin JWT
 authentication. They must match the Votrix web application in each environment;
 never substitute the Supabase service-role key.
+
+`VMA_RESEND_API_KEY` sends Organization owner invitations. It is mounted only
+into the API service; workers do not send invitation email. The API manifests
+pin the matching Developer Console URL, the verified
+`Votrix <no-reply@mail.votrixai.com>` sender, and a 14-day invitation lifetime.
 
 Do not quote values in these files, and do not commit them.
 
@@ -167,6 +174,9 @@ VMA_SERVICE_ROLE=api
 VMA_EMBEDDED_WORKER_ENABLED=false
 VMA_DB_POOL_SIZE=4
 VMA_DB_MAX_OVERFLOW=2
+VMA_CONSOLE_BASE_URL=https://vma.votrixai.com
+VMA_EMAIL_FROM=Votrix <no-reply@mail.votrixai.com>
+VMA_ORGANIZATION_INVITE_TTL_DAYS=14
 ```
 
 Worker-specific settings are:

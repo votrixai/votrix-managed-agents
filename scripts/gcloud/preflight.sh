@@ -352,6 +352,7 @@ check_environment_secrets() {
     e2b-api-key \
     supabase-url \
     supabase-publishable-key \
+    resend-api-key \
     s3-endpoint-url \
     s3-access-key-id \
     s3-secret-access-key \

@@ -32,6 +32,7 @@ from app.routers import (
     sessions,
     skills,
     organizations,
+    organization_invitations,
     usage,
 )
 
@@ -161,7 +162,9 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     if not is_worker_service:
         @app.middleware("http")
         async def enforce_public_ga_surface(request: Request, call_next):
-            private_hosted_path = request.url.path.startswith("/internal/") or request.url.path == "/v1/me/organizations"
+            private_hosted_path = request.url.path.startswith(
+                "/internal/"
+            ) or request.url.path.startswith("/v1/me/")
             if settings.vma_public_ga_only and not private_hosted_path and not is_public_ga_path(request.url.path):
                 return JSONResponse(
                     status_code=404,
@@ -282,6 +285,8 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(generic_resources.router)
     app.include_router(organizations.me_router)
     app.include_router(organizations.admin_router)
+    app.include_router(organization_invitations.management_router)
+    app.include_router(organization_invitations.acceptance_router)
 
     _install_health_routes(app, build_id=settings.vma_public_build_id)
 

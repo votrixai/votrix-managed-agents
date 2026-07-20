@@ -105,6 +105,7 @@ VMA_LISTEN_DATABASE_URL|vma-listen-database-url
 DATABASE_URL_DIRECT|vma-database-url-direct
 VMA_SUPABASE_URL|vma-supabase-url
 VMA_SUPABASE_PUBLISHABLE_KEY|vma-supabase-publishable-key
+VMA_RESEND_API_KEY|vma-resend-api-key
 VMA_ENCRYPTION_KEY|vma-encryption-key
 E2B_API_KEY|vma-e2b-api-key
 S3_ENDPOINT_URL|vma-s3-endpoint-url

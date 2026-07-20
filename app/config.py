@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     vma_allow_plaintext_secrets_local: bool = True
     vma_supabase_url: str = ""
     vma_supabase_publishable_key: str = ""
+    vma_console_base_url: str = "http://localhost:3011"
+    vma_resend_api_key: str = ""
+    vma_email_from: str = ""
+    vma_organization_invite_ttl_days: int = Field(default=14, ge=1, le=90)
 
     e2b_api_key: str = ""
     e2b_domain: str = ""
