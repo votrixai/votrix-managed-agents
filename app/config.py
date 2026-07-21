@@ -45,10 +45,10 @@ class Settings(BaseSettings):
     vma_e2b_template: str = ""
     vma_e2b_workdir: str = "/workspace"
     vma_e2b_guest_user: str = "user"
-    vma_e2b_timeout_seconds: int = 900
+    vma_e2b_timeout_seconds: int = 300
     vma_e2b_auto_pause: bool = True
     vma_e2b_auto_resume: bool = False
-    vma_e2b_keep_memory: bool = True
+    vma_e2b_keep_memory: bool = False
     vma_e2b_pause_on_exit: bool = True
     vma_e2b_allow_public_traffic: bool = False
     vma_e2b_template_resources: Annotated[dict[str, Any], NoDecode] = Field(default_factory=dict)

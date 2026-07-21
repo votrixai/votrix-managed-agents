@@ -238,7 +238,7 @@ async def test_provision_returns_async_deepagents_backend_and_safe_record():
     assert create["timeout"] == 900
     assert create["secure"] is True
     assert create["lifecycle"] == {
-        "on_timeout": {"action": "pause", "keep_memory": True},
+        "on_timeout": {"action": "pause", "keep_memory": False},
         "auto_resume": False,
     }
     assert create["allow_internet_access"] is True
@@ -255,7 +255,7 @@ async def test_provision_returns_async_deepagents_backend_and_safe_record():
     assert "session_private" not in repr(create["metadata"])
 
     assert connection.config["policy"]["network_access"] == "limited"
-    assert connection.config["keep_memory"] is True
+    assert connection.config["keep_memory"] is False
     assert connection.config["owner_fingerprint"] == owner.fingerprint
     assert "api_key" not in connection.config
     assert connection.capabilities["execute"] is True
@@ -353,8 +353,8 @@ async def test_pause_and_delete_use_static_calls_without_resuming():
     await instance.pause(created.reference, owner)
     assert FakeSDK.connect_calls == []
     assert FakeSDK.pause_calls == [
-        (created.external_id, {"keep_memory": True, **instance._api_options()}),
-        (created.external_id, {"keep_memory": True, **instance._api_options()}),
+        (created.external_id, {"keep_memory": False, **instance._api_options()}),
+        (created.external_id, {"keep_memory": False, **instance._api_options()}),
     ]
 
     await instance.delete(created.reference, owner)
@@ -772,8 +772,8 @@ def test_policy_reference_and_capability_validation_are_fail_closed():
 def test_constructor_enforces_persistent_secure_configuration():
     with pytest.raises(ValueError, match="api_key"):
         E2BSandboxProvider("")
-    with pytest.raises(ValueError, match="keep_memory=True"):
-        E2BSandboxProvider("key", keep_memory=False)
+    with pytest.raises(ValueError, match="keep_memory=False"):
+        E2BSandboxProvider("key", keep_memory=True)
     with pytest.raises(ValueError, match="non-root"):
         E2BSandboxProvider("key", guest_user="root")
     with pytest.raises(ValueError, match="domain"):

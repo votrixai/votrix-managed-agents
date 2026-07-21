@@ -21,3 +21,5 @@ votrix_managed_agents.db*
 !.env.example
 !.env.production.example
 !.env.staging.example
+
+tests/

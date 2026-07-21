@@ -91,7 +91,7 @@ class FakeLifecycleProvider:
             config={
                 **reference.to_config(),
                 "policy": resolved.to_dict(),
-                "keep_memory": True,
+                "keep_memory": False,
             },
             capabilities=self.capabilities.to_dict(),
             metadata={"provider": "e2b", "state": state},

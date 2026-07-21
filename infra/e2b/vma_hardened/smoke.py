@@ -106,7 +106,7 @@ async def main(template_name: str) -> None:
         allow_internet_access=False,
         network={"allow_public_traffic": False},
         lifecycle={
-            "on_timeout": {"action": "pause", "keep_memory": True},
+            "on_timeout": {"action": "pause", "keep_memory": False},
             "auto_resume": False,
         },
     )
@@ -134,7 +134,7 @@ async def main(template_name: str) -> None:
             user="root",
         )
 
-        await current.pause(keep_memory=True)
+        await current.pause(keep_memory=False)
         current = await AsyncSandbox.connect(sandbox_id, timeout=300)
 
         await _attest_running_sandbox(current)

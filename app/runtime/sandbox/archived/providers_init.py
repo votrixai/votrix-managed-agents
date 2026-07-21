@@ -16,7 +16,7 @@ from app.runtime.sandbox_providers.base import (
     SandboxProviderError,
     SandboxReference,
 )
-from app.runtime.sandbox_providers.e2b import E2BDependencies, E2BSandboxProvider
+from app.runtime.sandbox_providers.e2b_archived import E2BDependencies, E2BSandboxProvider
 
 __all__ = [
     "E2BDependencies",

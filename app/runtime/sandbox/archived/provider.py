@@ -695,7 +695,7 @@ class E2BSandboxProvider:
         default_template: str | None = None,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
         command_timeout: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
-        keep_memory: bool = True,
+        keep_memory: bool = False,
         guest_user: str = "user",
         dependencies: DependencyLoader | E2BDependencies | None = None,
     ) -> None:
@@ -705,8 +705,8 @@ class E2BSandboxProvider:
         _validate_optional_url(api_url, "api_url")
         _validate_optional_url(sandbox_url, "sandbox_url")
         _validate_optional_name(default_template, "default_template")
-        if keep_memory is not True:
-            raise ValueError("E2B session persistence requires keep_memory=True")
+        if keep_memory is not False:
+            raise ValueError("E2B session persistence requires keep_memory=False")
         if (
             not isinstance(guest_user, str)
             or not _GUEST_USER.fullmatch(guest_user)
@@ -827,7 +827,7 @@ class E2BSandboxProvider:
             raise
 
     async def pause(self, reference: SandboxReference, owner: SandboxOwner) -> None:
-        """Pause a session sandbox without resuming it and preserve memory."""
+        """Pause a session sandbox without resuming it; filesystem-only snapshot."""
 
         reference.assert_access(provider=self.name, owner=owner)
         dependencies = self._dependencies()
@@ -837,7 +837,7 @@ class E2BSandboxProvider:
             dependencies,
             lambda: dependencies.sandbox_class.pause(
                 reference.external_id,
-                keep_memory=True,
+                keep_memory=False,
                 **self._api_options(),
             ),
         )
@@ -1300,7 +1300,7 @@ class E2BSandboxProvider:
             )
         config: dict[str, Any] = {
             "policy": policy.to_dict(),
-            "keep_memory": True,
+            "keep_memory": False,
             "configured_template": self._default_template,
             "domain": self._domain,
             "api_url": self._api_url,
@@ -1400,7 +1400,7 @@ class E2BSandboxProvider:
         if not callable(pause):
             return
         try:
-            result = pause(keep_memory=True, **self._api_options())
+            result = pause(keep_memory=False, **self._api_options())
             if inspect.isawaitable(result):
                 async with asyncio.timeout(10):
                     await asyncio.shield(result)
@@ -1432,7 +1432,7 @@ class E2BSandboxProvider:
     def _lifecycle_options(policy: ResolvedSandboxPolicy) -> dict[str, Any]:
         on_timeout: str | dict[str, Any]
         if policy.auto_pause:
-            on_timeout = {"action": "pause", "keep_memory": True}
+            on_timeout = {"action": "pause", "keep_memory": False}
         else:
             on_timeout = "kill"
         return {"on_timeout": on_timeout, "auto_resume": False}

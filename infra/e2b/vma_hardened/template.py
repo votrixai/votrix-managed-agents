@@ -4,7 +4,7 @@ from e2b import Template
 
 
 TEMPLATE_NAME = "vma-hardened"
-TEMPLATE_CANDIDATE = f"{TEMPLATE_NAME}:v20260712-2"
+TEMPLATE_CANDIDATE = f"{TEMPLATE_NAME}:v20260721-1"
 TEMPLATE_CPU_COUNT = 2
 TEMPLATE_MEMORY_MB = 2048
 
@@ -12,21 +12,10 @@ TEMPLATE_MEMORY_MB = 2048
 _HARDEN = r"""
 set -eux
 
-install -d -o user -g user -m 0700 \
-  /workspace \
-  /workspace/.tmp \
-  /workspace/.cache \
-  /workspace/.config \
-  /workspace/.local
-
-install -d -o root -g root -m 0755 \
-  /mnt \
-  /mnt/session \
-  /mnt/memory \
-  /skills \
-  /skills/custom
-
-install -d -o root -g root -m 0700 /var/lib/vma
+install -d -o user -g user -m 0700 /workspace
+install -d -o user -g user -m 0700 /mnt/memory
+install -d -o root -g root -m 0755 /mnt /mnt/session /mnt/session/uploads
+install -d -o user -g user -m 0700 /mnt/session/outputs
 
 usermod -d /workspace -s /bin/bash user
 
@@ -46,9 +35,9 @@ fi
 
 rm -rf /home/user
 
-# /tmp and /var/tmp are intentional session-local scratch exceptions. They stay
-# writable and sticky for tools that do not honor TMPDIR. All durable tenant
-# work belongs in /workspace or a VMA-created read-write memory root.
+# /tmp and /var/tmp keep their distro-default writable, sticky permissions;
+# no override needed. All durable tenant work belongs in /workspace or
+# /mnt/memory.
 find / -xdev \
   \( -path /workspace -o -path /tmp -o -path /var/tmp \) -prune \
   -o -user user -exec chown -h root:root {} +
@@ -79,17 +68,14 @@ if test -x /usr/bin/sudo && /usr/bin/sudo -n true >/dev/null 2>&1; then
 fi
 
 test -w /workspace
+test -w /mnt/memory
 test ! -w /mnt/session
-test ! -w /mnt/memory
-test ! -w /skills/custom
-test ! -w /var/lib/vma
+test ! -w /mnt/session/uploads
+test -w /mnt/session/outputs
 
 test -d /tmp
 test -w /tmp
 test -k /tmp
-test -d /var/tmp
-test -w /var/tmp
-test -k /var/tmp
 """
 
 
@@ -111,16 +97,7 @@ template = (
         ]
     )
     .run_cmd(_HARDEN, user="root")
-    .set_envs(
-        {
-            "HOME": "/workspace",
-            "TMPDIR": "/workspace/.tmp",
-            "XDG_CACHE_HOME": "/workspace/.cache",
-            "XDG_CONFIG_HOME": "/workspace/.config",
-            "PIP_CACHE_DIR": "/workspace/.cache/pip",
-            "NPM_CONFIG_CACHE": "/workspace/.cache/npm",
-        }
-    )
+    .set_envs({"HOME": "/workspace"})
     # Keep this before the build-time guest attestation: it verifies pwd.
     .set_workdir("/workspace")
     .run_cmd(_ATTEST, user="user")

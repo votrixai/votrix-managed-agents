@@ -138,9 +138,9 @@ def sandbox_policy_from_environment(
         raise SandboxLifecycleConfigurationError(
             "E2B auto-resume must stay disabled; VMA explicitly reconnects each turn"
         )
-    if not bool(sandbox.get("keep_memory", settings.vma_e2b_keep_memory)):
+    if bool(sandbox.get("keep_memory", settings.vma_e2b_keep_memory)):
         raise SandboxLifecycleConfigurationError(
-            "E2B session persistence requires full-memory pause"
+            "E2B session persistence requires filesystem-only pause (keep_memory=False)"
         )
     if bool(sandbox.get("allow_public_traffic", settings.vma_e2b_allow_public_traffic)):
         raise SandboxLifecycleConfigurationError("Public E2B sandbox traffic is disabled")
