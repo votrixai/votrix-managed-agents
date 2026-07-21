@@ -51,6 +51,26 @@ describe("committed public OpenAPI surface", () => {
       "/v1/files": ["get", "post"],
       "/v1/files/{file_id}": ["delete", "get"],
       "/v1/files/{file_id}/content": ["get"],
+      "/v1/memory_stores": ["get", "post"],
+      "/v1/memory_stores/{memory_store_id}": ["delete", "get", "post"],
+      "/v1/memory_stores/{memory_store_id}/archive": ["post"],
+      "/v1/memory_stores/{memory_store_id}/memories": ["get", "post"],
+      "/v1/memory_stores/{memory_store_id}/memories/by_path": ["get"],
+      "/v1/memory_stores/{memory_store_id}/memories/{memory_id}": [
+        "delete",
+        "get",
+        "post",
+      ],
+      "/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions": [
+        "get",
+      ],
+      "/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions/{version}":
+        ["get"],
+      "/v1/memory_stores/{memory_store_id}/memory_versions": ["get"],
+      "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}":
+        ["get"],
+      "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact":
+        ["post"],
       "/v1/skills": ["get", "post"],
       "/v1/skills/{skill_id}": ["delete", "get"],
       "/v1/skills/{skill_id}/versions": ["get", "post"],

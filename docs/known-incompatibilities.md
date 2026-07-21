@@ -26,7 +26,7 @@ Availability and readiness labels match the [compatibility matrix](./compatibili
 | Claude durable multiagent threads | Not offered | Deep Agents synchronous subagents are ephemeral; background subagents use another protocol. |
 | MCP OAuth lifecycle | Not available | Stored/matched access tokens are not automatically refreshed or revoked. |
 | Anthropic system skills | Not offered | Their private packages and behavior are unavailable to VMA. |
-| Claude memory mount/writeback | Repository preview — no writeback | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
+| Claude memory mount/writeback | Public beta — no writeback | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
 | Production deployment scheduler | Operator tick only — no running service | An idempotent tick exists, but no always-on scheduler service is included. |
 | Webhook delivery | Not offered | Cryptographic helpers exist, but endpoint management and delivery do not; webhooks are not a public-beta product promise. |
 | User-profile enrollment and attribution | Repository preview — lifecycle only | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |

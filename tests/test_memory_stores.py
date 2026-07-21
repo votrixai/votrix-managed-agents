@@ -2,8 +2,16 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.engine import session_scope
 from app.db.models import ManagedResource
+from app.db.queries import resources as res_q
 from app.ids import new_id
 from tests.conftest import TEST_HEADERS, TEST_ORGANIZATION_ID
+
+
+PRIVATE_MEMORY_VERSION_FIELDS = {"actor", "path_key", "session_id", "snapshot"}
+
+
+def _assert_public_memory_version(version: dict) -> None:
+    assert PRIVATE_MEMORY_VERSION_FIELDS.isdisjoint(version)
 
 
 async def _create_store(client):
@@ -46,6 +54,15 @@ async def test_memory_store_name_and_description_validation(client):
     )
     assert response.status_code == 422
     assert "control" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}",
+        headers=TEST_HEADERS,
+        json={"name": None, "description": "Null name is omitted."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Organization memory"
+    assert response.json()["description"] == "Null name is omitted."
 
 
 async def test_memory_routes_use_typed_openapi_request_models(client):
@@ -162,7 +179,8 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     assert response.status_code == 200, response.text
     versions = response.json()["data"]
     assert [version["version"] for version in versions] == [3, 2, 1]
-    assert versions[0]["actor"] == "operator"
+    _assert_public_memory_version(versions[0])
+    assert versions[0]["created_by"]["api_key_id"] == "operator"
     assert versions[0]["operation"] == "modified"
 
 
@@ -216,6 +234,42 @@ async def test_memory_update_noop_and_stale_precondition_match_do_not_create_ver
     assert [version["version"] for version in response.json()["data"]] == [1]
 
 
+async def test_memory_update_normalizes_nullable_patch_fields(client):
+    store = await _create_store(client)
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={
+            "path": "/accounts/acme",
+            "content": "before",
+            "actor": "original-actor",
+            "metadata": {"remove": "me"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "path": None,
+            "content": "after",
+            "actor": None,
+            "updated_by": None,
+            "metadata": None,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    assert updated["path"] == "/accounts/acme"
+    assert updated["content"] == "after"
+    assert updated["updated_by"] == "original-actor"
+    assert updated["updated_by"] != "None"
+    assert updated["metadata"] == {}
+
+
 async def test_memory_path_validation_matches_sdk_contract(client):
     store = await _create_store(client)
     invalid_paths = {
@@ -237,27 +291,47 @@ async def test_memory_path_validation_matches_sdk_contract(client):
         assert message in response.json()["error"]["message"]
 
 
-async def test_memory_path_prefix_query_is_not_capped_before_filtering(client):
+async def test_memory_list_queries_use_store_capacity_before_pagination(client):
     store = await _create_store(client)
     base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
     target = _memory_resource(store["id"], "accounts/acme", base_time)
-    newer_non_matches = [
-        _memory_resource(store["id"], f"other/{index}", base_time + timedelta(seconds=index + 1))
+    newer_matches = [
+        _memory_resource(
+            store["id"],
+            f"accounts/other/{index}",
+            base_time + timedelta(seconds=index + 1),
+        )
         for index in range(1001)
     ]
     async with session_scope() as db:
         db.add(target)
-        db.add_all(newer_non_matches)
+        db.add_all(newer_matches)
         await db.commit()
 
-    response = await client.get(
-        f"/v1/memory_stores/{store['id']}/memories",
-        headers=TEST_HEADERS,
-        params={"path_prefix": "/accounts", "limit": 10},
-    )
+    for query in ({"path_prefix": "/accounts"}, {"path_prefix": "/"}, {}):
+        response = await client.get(
+            f"/v1/memory_stores/{store['id']}/memories",
+            headers=TEST_HEADERS,
+            params={**query, "limit": 1000},
+        )
+        assert response.status_code == 200, response.text
+        first_page = response.json()
+        assert first_page["has_more"] is True
+        assert first_page["next_page"]
+        first_paths = [item["path_key"] for item in first_page["data"]]
 
-    assert response.status_code == 200, response.text
-    assert [item["path_key"] for item in response.json()["data"]] == ["accounts/acme"]
+        response = await client.get(
+            f"/v1/memory_stores/{store['id']}/memories",
+            headers=TEST_HEADERS,
+            params={**query, "limit": 1000, "page": first_page["next_page"]},
+        )
+        assert response.status_code == 200, response.text
+        second_page = response.json()
+        second_paths = [item["path_key"] for item in second_page["data"]]
+        all_paths = first_paths + second_paths
+        assert len(all_paths) == 1002
+        assert len(set(all_paths)) == 1002
+        assert "accounts/acme" in all_paths
 
 
 async def test_memory_list_depth_returns_prefix_rollups(client):
@@ -316,7 +390,18 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
     )
     assert response.status_code == 200, response.text
     memory_version = response.json()
-    assert memory_version["snapshot"]["content"] == "secret preference"
+    _assert_public_memory_version(memory_version)
+    assert memory_version["content"] == "secret preference"
+
+    async with session_scope() as db:
+        stored_version = await res_q.get_resource(
+            db,
+            resource_id=memory_version["id"],
+            resource_type="memory_version",
+        )
+        assert stored_version is not None
+        assert stored_version.data["content"] == "secret preference"
+        assert stored_version.data["snapshot"]["content"] == "secret preference"
 
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memory_versions/{memory_version['id']}/redact",
@@ -337,8 +422,29 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
     )
     assert response.status_code == 200, response.text
     redacted = response.json()
+    _assert_public_memory_version(redacted)
     assert redacted["redacted"] is True
-    assert "content" not in redacted["snapshot"]
+    assert redacted["content"] is None
+    assert redacted["path"] is None
+    assert redacted["content_sha256"] is None
+    assert redacted["content_size_bytes"] is None
+
+    async with session_scope() as db:
+        stored_version = await res_q.get_resource(
+            db,
+            resource_id=memory_version["id"],
+            resource_type="memory_version",
+        )
+        assert stored_version is not None
+        for field in (
+            "content",
+            "path",
+            "path_key",
+            "content_sha256",
+            "content_size_bytes",
+        ):
+            assert field not in stored_version.data
+            assert field not in stored_version.data["snapshot"]
 
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
@@ -373,6 +479,7 @@ async def test_memory_delete_creates_surviving_deleted_version(client):
     assert response.status_code == 200, response.text
     versions = response.json()["data"]
     assert [version["operation"] for version in versions] == ["deleted", "created"]
+    _assert_public_memory_version(versions[0])
     assert versions[0]["content"] is None
     assert versions[0]["content_sha256"] is None
     assert versions[0]["content_size_bytes"] is None
@@ -459,6 +566,7 @@ async def test_memory_version_list_filters_api_key_session_and_view(client):
     assert response.status_code == 200, response.text
     versions = response.json()["data"]
     assert [version["created_by"]["api_key_id"] for version in versions] == ["key-a"]
+    _assert_public_memory_version(versions[0])
     assert versions[0]["content"] is None
     assert "session_id" not in versions[0]
 
@@ -470,6 +578,7 @@ async def test_memory_version_list_filters_api_key_session_and_view(client):
     assert response.status_code == 200, response.text
     versions = response.json()["data"]
     assert [version["created_by"]["api_key_id"] for version in versions] == ["key-b"]
+    _assert_public_memory_version(versions[0])
     assert versions[0]["content"] == "updated by key b"
     assert "session_id" not in versions[0]
 
@@ -479,6 +588,7 @@ async def test_memory_version_list_filters_api_key_session_and_view(client):
         params={"view": "basic"},
     )
     assert response.status_code == 200, response.text
+    _assert_public_memory_version(response.json())
     assert response.json()["content"] is None
 
 
@@ -535,6 +645,20 @@ async def test_archived_memory_store_is_read_only_and_not_attachable(client):
     assert response.status_code == 409
 
     response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={"content": "also blocked"},
+    )
+    assert response.status_code == 409
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["content"] == "read only"
+
+    response = await client.post(
         "/v1/agents",
         headers=TEST_HEADERS,
         json={"name": "Memory Attach Agent", "model": {"id": "gpt-5.5"}},
@@ -581,6 +705,57 @@ async def test_memory_version_retrieve_requires_matching_store(client):
     assert response.status_code == 404
 
 
+async def test_memory_version_lists_page_past_one_thousand_rows(client):
+    store = await _create_store(client)
+    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    memory = _memory_resource(store["id"], "accounts/acme", base_time)
+    versions = [
+        _memory_version_resource(
+            store["id"],
+            memory.id,
+            version,
+            base_time + timedelta(seconds=version),
+        )
+        for version in range(1, 1003)
+    ]
+    async with session_scope() as db:
+        db.add(memory)
+        db.add_all(versions)
+        await db.commit()
+
+    paths = (
+        f"/v1/memory_stores/{store['id']}/memories/{memory.id}/versions",
+        f"/v1/memory_stores/{store['id']}/memory_versions",
+    )
+    for path in paths:
+        response = await client.get(
+            path,
+            headers=TEST_HEADERS,
+            params={"limit": 1000},
+        )
+        assert response.status_code == 200, response.text
+        first_page = response.json()
+        assert first_page["has_more"] is True
+        assert first_page["next_page"]
+
+        response = await client.get(
+            path,
+            headers=TEST_HEADERS,
+            params={"limit": 1000, "page": first_page["next_page"]},
+        )
+        assert response.status_code == 200, response.text
+        second_page = response.json()
+        assert second_page["has_more"] is False
+        assert second_page["next_page"] is None
+
+        all_versions = first_page["data"] + second_page["data"]
+        assert len(all_versions) == 1002
+        assert len({item["id"] for item in all_versions}) == 1002
+        assert [item["version"] for item in all_versions] == list(
+            range(1002, 0, -1)
+        )
+
+
 def _memory_resource(memory_store_id: str, path_key: str, created_at: datetime) -> ManagedResource:
     return ManagedResource(
         id=new_id("mem"),
@@ -596,6 +771,40 @@ def _memory_resource(memory_store_id: str, path_key: str, created_at: datetime) 
             "metadata": {},
             "redacted": False,
             "memory_version_id": "",
+        },
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _memory_version_resource(
+    memory_store_id: str,
+    memory_id: str,
+    version: int,
+    created_at: datetime,
+) -> ManagedResource:
+    content = f"version {version}"
+    return ManagedResource(
+        id=new_id("memver"),
+        organization_id=TEST_ORGANIZATION_ID,
+        resource_type="memory_version",
+        parent_id=memory_id,
+        version=version,
+        data={
+            "memory_store_id": memory_store_id,
+            "memory_id": memory_id,
+            "memory_version": version,
+            "path": "/accounts/acme",
+            "content": content,
+            "content_sha256": f"{version:064x}",
+            "content_size_bytes": len(content.encode("utf-8")),
+            "actor": "pagination-test",
+            "created_by": {
+                "type": "api_actor",
+                "api_key_id": "pagination-test",
+            },
+            "operation": "created" if version == 1 else "modified",
+            "redacted": False,
         },
         created_at=created_at,
         updated_at=created_at,

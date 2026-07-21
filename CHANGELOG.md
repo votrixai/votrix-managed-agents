@@ -45,8 +45,8 @@ operator-provisioned Organization platform funding.
   `pg_notify` delivery with loopback suppression and durable-event
   reconciliation.
 - A public-beta capability manifest and GA-only OpenAPI filter for API keys,
-  Agents, Environments, Sessions, Files, Skills, Vaults/native model
-  Credentials, and Model Providers.
+  Agents, Environments, Sessions, Files, Skills, Memory Stores, Vaults/native
+  model Credentials, and Model Providers.
 - Native model-Credential list/retrieve/rotate/archive/delete lifecycle in both
   server and SDK surfaces.
 - Immutable Session funding bindings plus Organization billing-account and
@@ -115,9 +115,9 @@ operator-provisioned Organization platform funding.
   HTTP/SSE without running Agent turns.
 - Object storage is private. VMA serves authenticated downloads and requires no
   `S3_PUBLIC_URL`, R2 public development URL, or public custom domain.
-- Public GA hides presign/complete file uploads, Environment worker routes,
-  Session Threads, Memory Stores, Deployments, User Profiles, Outcomes, and
-  other deferred/experimental capabilities.
+- Public beta hides presign/complete file uploads, Environment worker routes,
+  Session Threads, Deployments, User Profiles, Outcomes, and other
+  deferred/experimental capabilities while exposing Memory Stores.
 - The daily token quota uses an explicit one-turn overrun semantic: a turn
   admitted below the limit may cross it, its complete usage is recorded, and
   later turns are blocked until the UTC-day reset.
@@ -180,9 +180,13 @@ operator-provisioned Organization platform funding.
   time to narrow rebinding exposure.
 - Organization quota counters and reservations use atomic database operations;
   audit and usage rows reject mutation at both application and database layers.
-- Public SDK surfaces omit deferred Memory Stores and generic Vault Credential
-  escape hatches; Organization model-provider keys remain write-only and are
-  mapped from public provider IDs to private Vault slots.
+- Public SDK surfaces expose Organization-scoped Memory Stores while continuing
+  to omit generic Vault Credential escape hatches; Organization model-provider
+  keys remain write-only and are mapped from public provider IDs to private
+  Vault slots.
+- Public Memory Version responses omit internal snapshots and attribution
+  filter fields; redaction purges stored content, path, digest, and size data
+  instead of only hiding them in the response.
 - Organization model keys are decrypted only from the selected Session Vault
   Credential or exact platform-provider key row and never sourced from service
   environment variables, embedded provider config, checkpoints, or E2B.

@@ -34,6 +34,7 @@ async def test_public_ga_openapi_contains_only_allowed_paths(public_ga_app) -> N
     assert "/v1/sessions" in paths
     assert "/v1/files" in paths
     assert "/v1/skills" in paths
+    assert "/v1/memory_stores" in paths
     assert "/v1/api_keys" in paths
     assert "/v1/usage" in paths
     assert paths
@@ -42,7 +43,6 @@ async def test_public_ga_openapi_contains_only_allowed_paths(public_ga_app) -> N
     deferred_prefixes = (
         "/v1/deployments",
         "/v1/deployment_runs",
-        "/v1/memory_stores",
         "/v1/user_profiles",
     )
     assert not any(path.startswith(deferred_prefixes) for path in paths)
@@ -61,13 +61,14 @@ async def test_public_capability_manifest_includes_platform_guarantees(public_ga
     assert body["release_channel"] == "public_beta"
     assert body["platform_guarantees"]["tenant_scoped_api_keys"] == "ga"
     assert body["platform_guarantees"]["audit_and_usage_ledgers"] == "ga"
+    assert body["resources"]["memory_stores"] == "ga"
+    assert body["deferred"]["memory_writeback"] == "unsupported"
 
 
 @pytest.mark.parametrize(
     "path",
     (
         "/v1/deployments",
-        "/v1/memory_stores",
         "/v1/user_profiles",
         "/v1/sessions/sess_example/threads",
         "/v1/environments/env_example/work/next",
@@ -83,6 +84,28 @@ async def test_deferred_public_endpoints_return_capability_404(public_ga_app, pa
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "capability_not_available"
     assert response.json()["request_id"] == response.headers["request-id"]
+
+
+async def test_public_ga_exposes_memory_store_lifecycle(public_ga_app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=public_ga_app),
+        base_url="http://testserver",
+    ) as client:
+        created_response = await client.post(
+            "/v1/memory_stores",
+            headers=TEST_HEADERS,
+            json={"name": "Public beta memory"},
+        )
+        assert created_response.status_code == 201, created_response.text
+        memory_store = created_response.json()
+
+        listed_response = await client.get(
+            "/v1/memory_stores",
+            headers=TEST_HEADERS,
+        )
+
+    assert listed_response.status_code == 200, listed_response.text
+    assert memory_store["id"] in {item["id"] for item in listed_response.json()["data"]}
 
 
 async def test_public_ga_rejects_anthropic_system_skills(public_ga_app) -> None:

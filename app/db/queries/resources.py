@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.db.models import ManagedResource, ManagedSession
 from app.ids import new_id
@@ -240,6 +241,82 @@ async def list_resources(
     if not include_archived:
         stmt = stmt.where(ManagedResource.archived_at.is_(None))
     result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_memory_versions_page(
+    db: AsyncSession,
+    *,
+    memory_store_id: str,
+    memory_id: str | None = None,
+    operation: str | None = None,
+    api_key_id: str | None = None,
+    session_id: str | None = None,
+    created_at_gte: datetime | None = None,
+    created_at_lte: datetime | None = None,
+    limit: int = 51,
+    offset: int = 0,
+    organization_id: str | None = None,
+) -> list[ManagedResource]:
+    """List one database page of store-scoped memory history.
+
+    The parent-memory join deliberately includes soft-deleted memories so their
+    immutable history remains visible from the store-wide endpoint.
+    """
+
+    memory = aliased(ManagedResource)
+    operation_value = ManagedResource.data["operation"].as_string()
+    created_by_api_key = ManagedResource.data["created_by"]["api_key_id"].as_string()
+    actor = ManagedResource.data["actor"].as_string()
+    direct_session = ManagedResource.data["session_id"].as_string()
+    snapshot_session = ManagedResource.data["snapshot"]["session_id"].as_string()
+    organization = resolve_organization_id(organization_id)
+
+    stmt = (
+        select(ManagedResource)
+        .join(
+            memory,
+            and_(
+                memory.id == ManagedResource.parent_id,
+                memory.organization_id == ManagedResource.organization_id,
+                memory.resource_type == "memory",
+                memory.parent_id == memory_store_id,
+            ),
+        )
+        .where(
+            ManagedResource.resource_type == "memory_version",
+            ManagedResource.organization_id == organization,
+            ManagedResource.deleted_at.is_(None),
+            memory.organization_id == organization,
+        )
+    )
+    if memory_id is not None:
+        stmt = stmt.where(memory.id == memory_id)
+    if operation == "created":
+        stmt = stmt.where(operation_value.in_(("created", "create")))
+    elif operation == "deleted":
+        stmt = stmt.where(operation_value.in_(("deleted", "delete")))
+    elif operation == "modified":
+        stmt = stmt.where(
+            or_(
+                operation_value.is_(None),
+                operation_value.not_in(("created", "create", "deleted", "delete")),
+            )
+        )
+    if api_key_id is not None:
+        stmt = stmt.where(func.coalesce(created_by_api_key, actor) == api_key_id)
+    if session_id is not None:
+        stmt = stmt.where(func.coalesce(direct_session, snapshot_session) == session_id)
+    if created_at_gte is not None:
+        stmt = stmt.where(ManagedResource.created_at >= created_at_gte)
+    if created_at_lte is not None:
+        stmt = stmt.where(ManagedResource.created_at <= created_at_lte)
+
+    result = await db.execute(
+        stmt.order_by(ManagedResource.created_at.desc(), ManagedResource.id.desc())
+        .offset(max(0, offset))
+        .limit(max(1, limit))
+    )
     return list(result.scalars().all())
 
 

@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 from urllib.parse import quote
 
 from ._client import AsyncVotrix, BinaryResponse
@@ -15,6 +15,7 @@ from ._constants import (
     AGENTS_PATH,
     ENVIRONMENTS_PATH,
     FILES_PATH,
+    MEMORY_STORES_PATH,
     MODEL_PROVIDERS_PATH,
     SESSIONS_PATH,
     SKILLS_PATH,
@@ -29,6 +30,13 @@ from ._models import (
     DeletedObject,
     Environment,
     FileObject,
+    Memory,
+    MemoryListItem,
+    MemoryOperation,
+    MemoryPrecondition,
+    MemoryStore,
+    MemoryVersion,
+    MemoryView,
     ModelCredential,
     ModelProvider,
     SendEventsResult,
@@ -289,6 +297,370 @@ class EnvironmentsResource:
     async def delete(self, environment_id: str) -> DeletedObject:
         return await self._client.request(
             "DELETE", f"{ENVIRONMENTS_PATH}/{_path_id(environment_id)}", model=DeletedObject
+        )
+
+
+class MemoryStoresResource:
+    def __init__(self, client: AsyncVotrix) -> None:
+        self._client = client
+        self.memories = MemoriesResource(client)
+        self.memory_versions = MemoryVersionsResource(client)
+
+    async def create(
+        self,
+        *,
+        name: str,
+        description: str | None | _NotGiven = NOT_GIVEN,
+        metadata: Mapping[str, str] | _NotGiven = NOT_GIVEN,
+    ) -> MemoryStore:
+        return await self._client.request(
+            "POST",
+            MEMORY_STORES_PATH,
+            model=MemoryStore,
+            json=_body(name=name, description=description, metadata=metadata),
+        )
+
+    async def retrieve(self, memory_store_id: str) -> MemoryStore:
+        return await self._client.request(
+            "GET",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}",
+            model=MemoryStore,
+        )
+
+    async def update(
+        self,
+        memory_store_id: str,
+        *,
+        name: str | None | _NotGiven = NOT_GIVEN,
+        description: str | None | _NotGiven = NOT_GIVEN,
+        metadata: Mapping[str, str | None] | None | _NotGiven = NOT_GIVEN,
+    ) -> MemoryStore:
+        return await self._client.request(
+            "POST",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}",
+            model=MemoryStore,
+            json=_body(name=name, description=description, metadata=metadata),
+        )
+
+    def list(
+        self,
+        *,
+        limit: int = 50,
+        page: str | None = None,
+        include_archived: bool = False,
+        created_at_gte: str | datetime | None = None,
+        created_at_lte: str | datetime | None = None,
+    ) -> AsyncPaginator[MemoryStore]:
+        return _paginator(
+            self._client,
+            MEMORY_STORES_PATH,
+            MemoryStore,
+            {
+                "limit": limit,
+                "page": page,
+                "include_archived": include_archived,
+                "created_at[gte]": created_at_gte,
+                "created_at[lte]": created_at_lte,
+            },
+        )
+
+    async def archive(self, memory_store_id: str) -> MemoryStore:
+        return await self._client.request(
+            "POST",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/archive",
+            model=MemoryStore,
+        )
+
+    async def delete(self, memory_store_id: str) -> DeletedObject:
+        return await self._client.request(
+            "DELETE",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}",
+            model=DeletedObject,
+        )
+
+
+class MemoriesResource:
+    def __init__(self, client: AsyncVotrix) -> None:
+        self._client = client
+        self.versions = MemoryHistoryResource(client)
+
+    async def create(
+        self,
+        memory_store_id: str,
+        *,
+        path: str | Sequence[str],
+        content: str | None,
+        metadata: Mapping[str, Any] | _NotGiven = NOT_GIVEN,
+        actor: str | None | _NotGiven = NOT_GIVEN,
+        session_id: str | None | _NotGiven = NOT_GIVEN,
+        view: MemoryView | None = None,
+    ) -> Memory:
+        normalized_path: str | list[str] = path if isinstance(path, str) else list(path)
+        return await self._client.request(
+            "POST",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memories",
+            model=Memory,
+            params={"view": view},
+            json=_body(
+                path=normalized_path,
+                content=content,
+                metadata=metadata,
+                actor=actor,
+                session_id=session_id,
+            ),
+        )
+
+    async def retrieve(
+        self,
+        memory_id: str,
+        *,
+        memory_store_id: str,
+        view: MemoryView | None = None,
+    ) -> Memory:
+        return await self._client.request(
+            "GET",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memories/{_path_id(memory_id)}",
+            model=Memory,
+            params={"view": view},
+        )
+
+    async def retrieve_by_path(
+        self,
+        path: str,
+        *,
+        memory_store_id: str,
+        view: MemoryView | None = None,
+    ) -> Memory:
+        return await self._client.request(
+            "GET",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memories/by_path",
+            model=Memory,
+            params={"path": path, "view": view},
+        )
+
+    async def by_path(
+        self,
+        path: str,
+        *,
+        memory_store_id: str,
+        view: MemoryView | None = None,
+    ) -> Memory:
+        """Alias for :meth:`retrieve_by_path`."""
+
+        return await self.retrieve_by_path(path, memory_store_id=memory_store_id, view=view)
+
+    async def update(
+        self,
+        memory_id: str,
+        *,
+        memory_store_id: str,
+        path: str | Sequence[str] | None | _NotGiven = NOT_GIVEN,
+        content: str | None | _NotGiven = NOT_GIVEN,
+        precondition: MemoryPrecondition | Mapping[str, Any] | None | _NotGiven = NOT_GIVEN,
+        if_version: int | None | _NotGiven = NOT_GIVEN,
+        expected_version: int | None | _NotGiven = NOT_GIVEN,
+        actor: str | None | _NotGiven = NOT_GIVEN,
+        updated_by: str | None | _NotGiven = NOT_GIVEN,
+        session_id: str | None | _NotGiven = NOT_GIVEN,
+        metadata: Mapping[str, Any] | None | _NotGiven = NOT_GIVEN,
+        view: MemoryView | None = None,
+    ) -> Memory:
+        normalized_path: str | list[str] | None | _NotGiven
+        if isinstance(path, (str, _NotGiven)) or path is None:
+            normalized_path = path
+        else:
+            normalized_path = list(path)
+        return await self._client.request(
+            "POST",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memories/{_path_id(memory_id)}",
+            model=Memory,
+            params={"view": view},
+            json=_body(
+                path=normalized_path,
+                content=content,
+                precondition=precondition,
+                if_version=if_version,
+                expected_version=expected_version,
+                actor=actor,
+                updated_by=updated_by,
+                session_id=session_id,
+                metadata=metadata,
+            ),
+        )
+
+    @overload
+    def list(
+        self,
+        memory_store_id: str,
+        *,
+        limit: int = 50,
+        page: str | None = None,
+        path: str | None = None,
+        path_prefix: str | None = None,
+        depth: None = None,
+        view: MemoryView | None = None,
+        order: str = "asc",
+        order_by: str = "path",
+    ) -> AsyncPaginator[Memory]: ...
+
+    @overload
+    def list(
+        self,
+        memory_store_id: str,
+        *,
+        limit: int = 50,
+        page: str | None = None,
+        path: str | None = None,
+        path_prefix: str | None = None,
+        depth: int,
+        view: MemoryView | None = None,
+        order: str = "asc",
+        order_by: str = "path",
+    ) -> AsyncPaginator[MemoryListItem]: ...
+
+    def list(
+        self,
+        memory_store_id: str,
+        *,
+        limit: int = 50,
+        page: str | None = None,
+        path: str | None = None,
+        path_prefix: str | None = None,
+        depth: int | None = None,
+        view: MemoryView | None = None,
+        order: str = "asc",
+        order_by: str = "path",
+    ) -> AsyncPaginator[Memory] | AsyncPaginator[MemoryListItem]:
+        params = {
+            "limit": limit,
+            "page": page,
+            "path": path,
+            "path_prefix": path_prefix,
+            "depth": depth,
+            "view": view,
+            "order": order,
+            "order_by": order_by,
+        }
+        path_value = f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memories"
+        if depth is None:
+            return _paginator(self._client, path_value, Memory, params)
+        return _paginator(self._client, path_value, MemoryListItem, params)
+
+    async def delete(
+        self,
+        memory_id: str,
+        *,
+        memory_store_id: str,
+        expected_content_sha256: str | None = None,
+    ) -> DeletedObject:
+        return await self._client.request(
+            "DELETE",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memories/{_path_id(memory_id)}",
+            model=DeletedObject,
+            params={"expected_content_sha256": expected_content_sha256},
+        )
+
+
+class MemoryHistoryResource:
+    """Immutable versions for one Memory, addressed by numeric version."""
+
+    def __init__(self, client: AsyncVotrix) -> None:
+        self._client = client
+
+    def list(
+        self,
+        memory_id: str,
+        *,
+        memory_store_id: str,
+        limit: int = 50,
+        page: str | None = None,
+    ) -> AsyncPaginator[MemoryVersion]:
+        return _paginator(
+            self._client,
+            (
+                f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}"
+                f"/memories/{_path_id(memory_id)}/versions"
+            ),
+            MemoryVersion,
+            {"limit": limit, "page": page},
+        )
+
+    async def retrieve(
+        self,
+        version: int,
+        *,
+        memory_store_id: str,
+        memory_id: str,
+    ) -> MemoryVersion:
+        return await self._client.request(
+            "GET",
+            (
+                f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}"
+                f"/memories/{_path_id(memory_id)}/versions/{_path_id(str(version))}"
+            ),
+            model=MemoryVersion,
+        )
+
+
+class MemoryVersionsResource:
+    def __init__(self, client: AsyncVotrix) -> None:
+        self._client = client
+
+    def list(
+        self,
+        memory_store_id: str,
+        *,
+        limit: int = 50,
+        page: str | None = None,
+        memory_id: str | None = None,
+        operation: MemoryOperation | None = None,
+        api_key_id: str | None = None,
+        session_id: str | None = None,
+        view: MemoryView | None = None,
+        created_at_gte: str | datetime | None = None,
+        created_at_lte: str | datetime | None = None,
+    ) -> AsyncPaginator[MemoryVersion]:
+        return _paginator(
+            self._client,
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memory_versions",
+            MemoryVersion,
+            {
+                "limit": limit,
+                "page": page,
+                "memory_id": memory_id,
+                "operation": operation,
+                "api_key_id": api_key_id,
+                "session_id": session_id,
+                "view": view,
+                "created_at[gte]": created_at_gte,
+                "created_at[lte]": created_at_lte,
+            },
+        )
+
+    async def retrieve(
+        self,
+        memory_version_id: str,
+        *,
+        memory_store_id: str,
+        view: MemoryView | None = None,
+    ) -> MemoryVersion:
+        return await self._client.request(
+            "GET",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memory_versions/{_path_id(memory_version_id)}",
+            model=MemoryVersion,
+            params={"view": view},
+        )
+
+    async def redact(
+        self,
+        memory_version_id: str,
+        *,
+        memory_store_id: str,
+    ) -> MemoryVersion:
+        return await self._client.request(
+            "POST",
+            f"{MEMORY_STORES_PATH}/{_path_id(memory_store_id)}/memory_versions/{_path_id(memory_version_id)}/redact",
+            model=MemoryVersion,
         )
 
 

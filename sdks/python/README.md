@@ -99,8 +99,8 @@ If a context manager does not fit the application's lifetime, call
 ## Managed Agents resources
 
 The public-beta client exposes API keys, agents, environments, sessions, files,
-skills, Vaults, model Credentials, model providers, and raw usage as typed async
-resources:
+skills, Memory Stores, Vaults, model Credentials, model providers, and raw usage
+as typed async resources:
 
 ```python
 async with AsyncVotrix() as client:
@@ -138,9 +138,53 @@ Request and response objects accept the Votrix extensions for their resource
 while retaining the shared Claude Managed Agents field names where the APIs
 overlap.
 
-Deferred server capabilities such as Memory Stores and generic Vault
-Credentials are deliberately absent from this public SDK. Provider BYOK uses
-the typed `vaults.model_credentials` surface below.
+Memory Stores are available through `memory_stores`, with nested `memories` and
+`memory_versions` resources. Generic Vault Credentials remain deliberately
+absent; provider BYOK uses the typed `vaults.model_credentials` surface below.
+
+## Memory Stores
+
+Create a store, manage path-addressed memories, and inspect or redact immutable
+versions through the native async client:
+
+```python
+store = await client.memory_stores.create(name="Account context")
+memory = await client.memory_stores.memories.create(
+    store.id,
+    path="/accounts/acme.md",
+    content="ACME prefers email.",
+    view="full",
+)
+
+memory = await client.memory_stores.memories.update(
+    memory.id,
+    memory_store_id=store.id,
+    content="ACME prefers chat.",
+    precondition={
+        "type": "content_sha256",
+        "content_sha256": memory.content_sha256,
+    },
+    view="full",
+)
+
+versions = await client.memory_stores.memory_versions.list(
+    store.id,
+    memory_id=memory.id,
+    view="full",
+)
+
+first_version = await client.memory_stores.memories.versions.retrieve(
+    1,
+    memory_store_id=store.id,
+    memory_id=memory.id,
+)
+```
+
+Use `memories.retrieve_by_path(path, memory_store_id=...)` (or its `by_path`
+alias) for direct path lookup. A depth-limited memory list may contain
+`MemoryListItem(type="memory_prefix", ...)` directory rollups. Redaction is
+available at `memory_stores.memory_versions.redact(...)`; the API rejects
+redaction of a live memory's current head version.
 
 ## API-key lifecycle
 

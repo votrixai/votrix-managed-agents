@@ -36,6 +36,12 @@ export { Agents, AgentVersions } from "./resources/agents.js";
 export { ApiKeys } from "./resources/api-keys.js";
 export { Environments } from "./resources/environments.js";
 export { Files } from "./resources/files.js";
+export {
+  Memories,
+  MemoryHistory,
+  MemoryStores,
+  MemoryVersions,
+} from "./resources/memory-stores.js";
 export { ModelProviders } from "./resources/model-providers.js";
 export {
   Sessions,

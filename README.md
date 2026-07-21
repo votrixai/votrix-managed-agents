@@ -22,9 +22,10 @@ for real workloads.
 Supported in the Votrix core:
 
 - A public-beta `/v1` surface for API keys, agents and immutable versions,
-  environments, sessions and events, files, Skills, Vaults, native model
-  Credentials, the model-provider catalog, and raw usage. Additional repository
-  routes remain explicitly deferred when `VMA_PUBLIC_GA_ONLY=true`.
+  environments, sessions and events, files, Skills, Memory Stores, Vaults,
+  native model Credentials, the model-provider catalog, and raw usage.
+  Additional repository routes remain explicitly deferred when
+  `VMA_PUBLIC_GA_ONLY=true`.
 - Postgres-backed Organization API keys with one-time secrets, independent
   create/list/retrieve/revoke/rotate lifecycle, expiration, and the `api`,
   `api_keys:manage`, and `worker` scopes.

@@ -22,11 +22,11 @@ def paginate(
     max_limit: int = MAX_LIMIT,
 ) -> ListResponse[T]:
     all_items = list(items)
-    page_size = _limit(limit, max_limit=max_limit)
-    offset = _decode_page(page)
+    page_size = normalize_page_limit(limit, max_limit=max_limit)
+    offset = decode_page_offset(page)
     sliced = all_items[offset : offset + page_size]
     next_offset = offset + page_size
-    next_page = _encode_page(next_offset) if next_offset < len(all_items) else None
+    next_page = encode_page_offset(next_offset) if next_offset < len(all_items) else None
     return ListResponse.from_items(sliced, has_more=next_page is not None, next_page=next_page)
 
 
@@ -41,7 +41,7 @@ def paginate_by_id(
     all_items = list(items)
     if after_id and before_id:
         raise HTTPException(status_code=400, detail="Only one of after_id or before_id may be provided")
-    page_size = _limit(limit, max_limit=max_limit)
+    page_size = normalize_page_limit(limit, max_limit=max_limit)
     offset = 0
     if after_id:
         offset = _index_after(all_items, after_id)
@@ -123,13 +123,13 @@ def _index_of(items: list[T], item_id: str) -> int:
     raise HTTPException(status_code=400, detail="Invalid pagination cursor")
 
 
-def _limit(value: int | None, *, max_limit: int = MAX_LIMIT) -> int:
+def normalize_page_limit(value: int | None, *, max_limit: int = MAX_LIMIT) -> int:
     if value is None:
         return DEFAULT_LIMIT
     return max(1, min(int(value), max_limit))
 
 
-def _decode_page(value: str | None) -> int:
+def decode_page_offset(value: str | None) -> int:
     if not value:
         return 0
     if not value.startswith("page_"):
@@ -147,7 +147,7 @@ def _decode_page(value: str | None) -> int:
     return max(0, offset)
 
 
-def _encode_page(offset: int) -> str:
+def encode_page_offset(offset: int) -> str:
     payload = json.dumps(
         {"offset": offset, "expires_at": _now_epoch_seconds() + PAGE_CURSOR_TTL_SECONDS},
         separators=(",", ":"),

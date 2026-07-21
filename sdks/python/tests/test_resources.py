@@ -7,6 +7,11 @@ import pytest
 
 from votrix import (
     AsyncVotrix,
+    Memory,
+    MemoryListItem,
+    MemoryPrecondition,
+    MemoryStore,
+    MemoryVersion,
     SessionFundingRequest,
     UsageEntry,
     UsagePage,
@@ -594,7 +599,236 @@ async def test_list_date_filters_use_server_bracket_names():
 
 
 @pytest.mark.asyncio
-async def test_public_ga_client_surface_excludes_deferred_resources():
+async def test_memory_store_resource_lifecycle_and_nested_filters():
+    calls: list[tuple[str, str, dict[str, str], dict]] = []
+    raw_paths: list[str] = []
+    timestamp = "2026-07-20T12:00:00Z"
+
+    def store_payload(*, archived: bool = False) -> dict:
+        return {
+            "id": "memstore_1",
+            "type": "memory_store",
+            "name": "Account context",
+            "description": "Support memories",
+            "metadata": {"team": "support"},
+            "archived_at": timestamp if archived else None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+
+    def memory_payload() -> dict:
+        return {
+            "id": "mem_1",
+            "type": "memory",
+            "memory_store_id": "memstore_1",
+            "memory_version_id": "memver_1",
+            "path": "/accounts/acme.md",
+            "path_key": "accounts/acme.md",
+            "content": "ACME prefers email.",
+            "content_sha256": "sha256_1",
+            "content_size_bytes": 19,
+            "version": 1,
+            "metadata": {"tier": "enterprise"},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+
+    def version_payload(*, redacted: bool = False) -> dict:
+        return {
+            "id": "memver_1",
+            "type": "memory_version",
+            "memory_store_id": "memstore_1",
+            "memory_id": "mem_1",
+            "operation": "created",
+            "version": 1,
+            "path": None if redacted else "/accounts/acme.md",
+            "content": None if redacted else "ACME prefers email.",
+            "content_sha256": None if redacted else "sha256_1",
+            "content_size_bytes": None if redacted else 19,
+            "redacted_at": timestamp if redacted else None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+
+    def handler(request: httpx.Request):
+        body = json.loads(request.content) if request.content else {}
+        query = dict(request.url.params)
+        calls.append((request.method, request.url.path, query, body))
+        raw_paths.append(request.url.raw_path.decode())
+        path = request.url.path
+        if request.method == "DELETE":
+            deleted_type = "memory_deleted" if "/memories/" in path else "memory_store_deleted"
+            deleted_id = "mem_1" if "/memories/" in path else "memstore_1"
+            return httpx.Response(200, json={"id": deleted_id, "type": deleted_type, "deleted": True})
+        if path.endswith("/redact"):
+            return httpx.Response(200, json=version_payload(redacted=True))
+        if "/memory_versions/" in path:
+            return httpx.Response(200, json=version_payload())
+        if path.endswith("/memory_versions"):
+            return httpx.Response(200, json={"data": [version_payload()], "has_more": False})
+        if "/memories/" in path and path.endswith("/versions"):
+            return httpx.Response(200, json={"data": [version_payload()], "has_more": False})
+        if "/memories/" in path and "/versions/" in path:
+            return httpx.Response(200, json=version_payload())
+        if path.endswith("/memories/by_path") or "/memories/" in path:
+            return httpx.Response(200, json=memory_payload())
+        if path.endswith("/memories"):
+            if request.method == "GET":
+                data = (
+                    [{"type": "memory_prefix", "path": "/accounts/"}]
+                    if "depth" in query
+                    else [memory_payload()]
+                )
+                return httpx.Response(200, json={"data": data, "has_more": False})
+            return httpx.Response(201, json=memory_payload())
+        if request.method == "GET" and path == "/v1/memory_stores":
+            return httpx.Response(200, json={"data": [store_payload()], "has_more": False})
+        return httpx.Response(
+            201 if request.method == "POST" and path == "/v1/memory_stores" else 200,
+            json=store_payload(archived=path.endswith("/archive")),
+        )
+
+    sdk, http_client = make_client(handler)
+    store = await sdk.memory_stores.create(
+        name="Account context",
+        description="Support memories",
+        metadata={"team": "support"},
+    )
+    assert isinstance(store, MemoryStore)
+    assert (await sdk.memory_stores.retrieve(store.id)).id == store.id
+    await sdk.memory_stores.update(store.id, description=None, metadata={"old": None})
+    stores = await sdk.memory_stores.list(
+        include_archived=True,
+        created_at_gte="2026-07-01T00:00:00Z",
+    )
+    assert isinstance(stores.data[0], MemoryStore)
+
+    memory = await sdk.memory_stores.memories.create(
+        store.id,
+        path=["accounts", "acme.md"],
+        content="ACME prefers email.",
+        metadata={"tier": "enterprise"},
+        actor="key_1",
+        session_id="sess_1",
+        view="full",
+    )
+    assert isinstance(memory, Memory)
+    assert (await sdk.memory_stores.memories.retrieve(
+        memory.id, memory_store_id=store.id, view="full"
+    )).id == memory.id
+    assert (await sdk.memory_stores.memories.by_path(
+        "/accounts/acme.md", memory_store_id=store.id, view="basic"
+    )).id == memory.id
+    await sdk.memory_stores.memories.update(
+        memory.id,
+        memory_store_id=store.id,
+        content="ACME prefers chat.",
+        precondition=MemoryPrecondition(content_sha256="sha256_1"),
+        if_version=1,
+        view="full",
+    )
+    memories = await sdk.memory_stores.memories.list(
+        store.id,
+        path_prefix="/accounts/",
+        view="full",
+        order="desc",
+    )
+    assert isinstance(memories.data[0], Memory)
+    prefixes = await sdk.memory_stores.memories.list(store.id, depth=1)
+    assert isinstance(prefixes.data[0], MemoryListItem)
+    assert prefixes.data[0].type == "memory_prefix"
+
+    history = await sdk.memory_stores.memories.versions.list(
+        "memory/one",
+        memory_store_id="store/one",
+        limit=10,
+    )
+    assert isinstance(history.data[0], MemoryVersion)
+    history_version = await sdk.memory_stores.memories.versions.retrieve(
+        2,
+        memory_store_id="store/one",
+        memory_id="memory/one",
+    )
+    assert history_version.id == "memver_1"
+
+    versions = await sdk.memory_stores.memory_versions.list(
+        store.id,
+        memory_id=memory.id,
+        operation="created",
+        api_key_id="key_1",
+        session_id="sess_1",
+        view="full",
+        created_at_lte="2026-08-01T00:00:00Z",
+    )
+    assert isinstance(versions.data[0], MemoryVersion)
+    version = await sdk.memory_stores.memory_versions.retrieve(
+        versions.data[0].id,
+        memory_store_id=store.id,
+        view="full",
+    )
+    redacted = await sdk.memory_stores.memory_versions.redact(
+        version.id,
+        memory_store_id=store.id,
+    )
+    assert redacted.redacted_at is not None
+
+    deleted_memory = await sdk.memory_stores.memories.delete(
+        memory.id,
+        memory_store_id=store.id,
+        expected_content_sha256="sha256_1",
+    )
+    assert deleted_memory.type == "memory_deleted"
+    assert (await sdk.memory_stores.archive(store.id)).archived_at is not None
+    assert (await sdk.memory_stores.delete(store.id)).type == "memory_store_deleted"
+
+    create_memory_call = next(call for call in calls if call[1].endswith("/memories") and call[0] == "POST")
+    assert create_memory_call[2] == {"view": "full"}
+    assert create_memory_call[3] == {
+        "path": ["accounts", "acme.md"],
+        "content": "ACME prefers email.",
+        "metadata": {"tier": "enterprise"},
+        "actor": "key_1",
+        "session_id": "sess_1",
+    }
+    update_memory_call = next(call for call in calls if call[1].endswith("/memories/mem_1") and call[0] == "POST")
+    assert update_memory_call[3]["precondition"] == {
+        "type": "content_sha256",
+        "content_sha256": "sha256_1",
+    }
+    assert any(
+        call[1].endswith("/memories/by_path")
+        and call[2] == {"path": "/accounts/acme.md", "view": "basic"}
+        for call in calls
+    )
+    assert any(
+        call[1].endswith("/memory_versions")
+        and call[2]["created_at[lte]"] == "2026-08-01T00:00:00Z"
+        for call in calls
+    )
+    assert any(
+        call[1] == "/v1/memory_stores/store/one/memories/memory/one/versions"
+        and call[2] == {"limit": "10"}
+        for call in calls
+    )
+    assert any(
+        call[1] == "/v1/memory_stores/store/one/memories/memory/one/versions/2"
+        for call in calls
+    )
+    assert any(
+        path.startswith(
+            "/v1/memory_stores/store%2Fone/memories/memory%2Fone/versions?"
+        )
+        for path in raw_paths
+    )
+    assert (
+        "/v1/memory_stores/store%2Fone/memories/memory%2Fone/versions/2"
+        in raw_paths
+    )
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_public_client_surface_excludes_deferred_resources():
     sdk, http_client = make_client(lambda _request: httpx.Response(500))
     assert {
         "api_keys",
@@ -602,12 +836,12 @@ async def test_public_ga_client_surface_excludes_deferred_resources():
         "environments",
         "sessions",
         "files",
+        "memory_stores",
         "skills",
         "usage",
         "vaults",
         "model_providers",
     } <= set(vars(sdk))
-    assert not hasattr(sdk, "memory_stores")
     assert not hasattr(sdk, "deployments")
     assert not hasattr(sdk, "user_profiles")
     assert not hasattr(sdk.vaults, "credentials")

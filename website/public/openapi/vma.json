@@ -9551,6 +9551,2468 @@
         ]
       }
     },
+    "/v1/memory_stores": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Create Memory Store",
+        "operationId": "create_memory_store_v1_memory_stores_post",
+        "parameters": [
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryStoreCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Creates a new memory store in the current Organization and returns the created resource.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "List Memory Stores",
+        "operationId": "list_memory_stores_v1_memory_stores_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50
+            },
+            "description": "Maximum number of records to return in this page.",
+            "example": 20
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Opaque pagination cursor returned as `next_page` by the previous request."
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Whether archived resources should be included in the result."
+          },
+          {
+            "name": "created_at[gte]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return resources created at or after this RFC 3339 timestamp.",
+            "example": "2026-07-01T00:00:00Z"
+          },
+          {
+            "name": "created_at[lte]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return resources created at or before this RFC 3339 timestamp.",
+            "example": "2026-08-01T00:00:00Z"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_MemoryStoreResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns a paginated list of memory stores visible to the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Retrieve Memory Store",
+        "operationId": "retrieve_memory_store_v1_memory_stores__memory_store_id__get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the requested memory store from the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Update Memory Store",
+        "operationId": "update_memory_store_v1_memory_stores__memory_store_id__post",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryStoreUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Updates the requested memory store and returns its latest representation.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Delete Memory Store",
+        "operationId": "delete_memory_store_v1_memory_stores__memory_store_id__delete",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreDeletedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Deletes the requested memory store and returns a deletion confirmation.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/archive": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Archive Memory Store",
+        "operationId": "archive_memory_store_v1_memory_stores__memory_store_id__archive_post",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Archives the requested memory store while retaining its history and returns the archived state.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memories": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Create Memory",
+        "operationId": "create_memory_v1_memory_stores__memory_store_id__memories_post",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Creates a new memory in the current Organization and returns the created resource.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "List Memories",
+        "operationId": "list_memories_v1_memory_stores__memory_store_id__memories_get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50
+            },
+            "description": "Maximum number of records to return in this page.",
+            "example": 20
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Opaque pagination cursor returned as `next_page` by the previous request."
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Exact normalized memory path to retrieve or filter by."
+          },
+          {
+            "name": "path_prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Normalized memory path prefix used to filter descendants."
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Maximum descendant depth to include below the requested memory path."
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "asc"
+            },
+            "description": "Sort direction for the returned records: `asc` or `desc`.",
+            "example": "desc"
+          },
+          {
+            "name": "order_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "path"
+            },
+            "description": "Resource field used to order the returned records."
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_Union_MemoryResponse__MemoryPrefixResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns a paginated list of memories visible to the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memories/by_path": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Retrieve Memory By Path",
+        "operationId": "retrieve_memory_by_path_v1_memory_stores__memory_store_id__memories_by_path_get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact normalized memory path to retrieve or filter by."
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the requested memory by path from the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Retrieve Memory",
+        "operationId": "retrieve_memory_v1_memory_stores__memory_store_id__memories__memory_id__get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory addressed by this request.",
+            "example": "mem_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the requested memory from the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Update Memory",
+        "operationId": "update_memory_v1_memory_stores__memory_store_id__memories__memory_id__post",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory addressed by this request.",
+            "example": "mem_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Updates the requested memory and returns its latest representation.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Delete Memory",
+        "operationId": "delete_memory_v1_memory_stores__memory_store_id__memories__memory_id__delete",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory addressed by this request.",
+            "example": "mem_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "expected_content_sha256",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Expected current SHA-256 digest used as a conditional write or delete precondition."
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDeletedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Deletes the requested memory and returns a deletion confirmation.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "List Memory Versions For Memory",
+        "operationId": "list_memory_versions_for_memory_v1_memory_stores__memory_store_id__memories__memory_id__versions_get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory addressed by this request.",
+            "example": "mem_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50
+            },
+            "description": "Maximum number of records to return in this page.",
+            "example": 20
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Opaque pagination cursor returned as `next_page` by the previous request."
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_MemoryVersionResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns a paginated list of memory versions for memory visible to the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions/{version}": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Retrieve Memory Version For Memory",
+        "operationId": "retrieve_memory_version_for_memory_v1_memory_stores__memory_store_id__memories__memory_id__versions__version__get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory addressed by this request.",
+            "example": "mem_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Version number of the resource addressed by this request.",
+            "example": 1
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryVersionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the requested memory version for memory from the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memory_versions": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "List Memory Versions",
+        "operationId": "list_memory_versions_v1_memory_stores__memory_store_id__memory_versions_get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50
+            },
+            "description": "Maximum number of records to return in this page.",
+            "example": 20
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Opaque pagination cursor returned as `next_page` by the previous request."
+          },
+          {
+            "name": "memory_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return records associated with this memory identifier.",
+            "example": "mem_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return memory versions created by this operation: `created`, `modified`, or `deleted`."
+          },
+          {
+            "name": "api_key_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return records associated with this api key identifier.",
+            "example": "key_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return records associated with this session identifier.",
+            "example": "sess_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "created_at[gte]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return resources created at or after this RFC 3339 timestamp.",
+            "example": "2026-07-01T00:00:00Z"
+          },
+          {
+            "name": "created_at[lte]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Only return resources created at or before this RFC 3339 timestamp.",
+            "example": "2026-08-01T00:00:00Z"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_MemoryVersionResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns a paginated list of memory versions visible to the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Retrieve Memory Version",
+        "operationId": "retrieve_memory_version_v1_memory_stores__memory_store_id__memory_versions__memory_version_id__get",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory version addressed by this request.",
+            "example": "memver_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Response detail level. Memory endpoints accept `basic` or `full`.",
+            "example": "full"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryVersionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the requested memory version from the current Organization.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Redact Memory Version",
+        "operationId": "redact_memory_version_v1_memory_stores__memory_store_id__memory_versions__memory_version_id__redact_post",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "memory_version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory version addressed by this request.",
+            "example": "memver_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "votrix-managed-agents-beta",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+              "default": "votrix-managed-agents-2026-04-01"
+            },
+            "description": "Votrix Managed Agents preview selector. Use `votrix-managed-agents-2026-04-01`.",
+            "example": "votrix-managed-agents-2026-04-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryVersionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request parameters or body failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request body validation failed."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed or is missing a required preview header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "invalid_request_error",
+                    "message": "The request is missing a required header or contains an invalid value."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Organization API key is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                },
+                "example": {
+                  "type": "error",
+                  "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Redacts sensitive content from the requested memory version and returns its latest state.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -11416,6 +13878,116 @@
         ],
         "title": "ListResponse[FileResponse]"
       },
+      "ListResponse_MemoryStoreResponse_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryStoreResponse"
+            },
+            "type": "array",
+            "description": "Resources or event records returned by this operation."
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether another page of results is available."
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the first item in this page."
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the last item in this page."
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor used to request the next page, or null at the end."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListResponse[MemoryStoreResponse]"
+      },
+      "ListResponse_MemoryVersionResponse_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryVersionResponse"
+            },
+            "type": "array",
+            "description": "Resources or event records returned by this operation."
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether another page of results is available."
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the first item in this page."
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the last item in this page."
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor used to request the next page, or null at the end."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListResponse[MemoryVersionResponse]"
+      },
       "ListResponse_ModelCredentialResponse_": {
         "properties": {
           "data": {
@@ -11746,6 +14318,68 @@
         ],
         "title": "ListResponse[SkillVersionResponse]"
       },
+      "ListResponse_Union_MemoryResponse__MemoryPrefixResponse__": {
+        "properties": {
+          "data": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/MemoryPrefixResponse"
+                }
+              ]
+            },
+            "type": "array",
+            "description": "Resources or event records returned by this operation."
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether another page of results is available."
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the first item in this page."
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the last item in this page."
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque cursor used to request the next page, or null at the end."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListResponse[Union[MemoryResponse, MemoryPrefixResponse]]"
+      },
       "ListResponse_Union_SessionFileResourceResponse__SessionGithubResourceResponse__SessionMemoryResourceResponse__SessionGenericResourceResponse__": {
         "properties": {
           "data": {
@@ -11924,13 +14558,39 @@
             "description": "Identifier of the session associated with this object."
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "path",
           "content"
         ],
         "title": "MemoryCreateRequest"
+      },
+      "MemoryDeletedResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this resource."
+          },
+          "type": {
+            "type": "string",
+            "const": "memory_deleted",
+            "default": "memory_deleted",
+            "description": "Stable type discriminator for this object."
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true,
+            "default": true,
+            "description": "Whether the requested resource was deleted successfully."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "MemoryDeletedResponse"
       },
       "MemoryPrecondition": {
         "properties": {
@@ -11951,12 +14611,165 @@
             "description": "Expected SHA-256 digest used by the memory precondition."
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "type"
         ],
         "title": "MemoryPrecondition"
+      },
+      "MemoryPrefixResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "memory_prefix",
+            "default": "memory_prefix",
+            "description": "Stable type discriminator for this object."
+          },
+          "path": {
+            "type": "string",
+            "description": "Normalized logical path for a memory record."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "MemoryPrefixResponse"
+      },
+      "MemoryResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this resource."
+          },
+          "type": {
+            "type": "string",
+            "const": "memory",
+            "default": "memory",
+            "description": "Stable type discriminator for this object."
+          },
+          "memory_store_id": {
+            "type": "string",
+            "description": "Memory Store that owns this record."
+          },
+          "memory_version_id": {
+            "type": "string",
+            "description": "Current immutable Memory Version ID."
+          },
+          "path": {
+            "type": "string",
+            "description": "Normalized logical path for a memory record."
+          },
+          "path_key": {
+            "type": "string",
+            "description": "Normalized path without the leading slash."
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Content stored in or carried by this resource."
+          },
+          "content_sha256": {
+            "type": "string",
+            "description": "Expected SHA-256 digest used by the memory precondition."
+          },
+          "content_size_bytes": {
+            "type": "integer",
+            "description": "UTF-8 content size in bytes."
+          },
+          "version": {
+            "type": "integer",
+            "description": "Version number of this resource."
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "description": "Caller-defined metadata stored with the resource."
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Actor that created the Memory."
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the actor that last updated this resource."
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the session associated with this object."
+          },
+          "redacted": {
+            "type": "boolean",
+            "description": "Whether content was redacted.",
+            "default": false
+          },
+          "redacted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When content was redacted."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when the resource was created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when the resource was last updated."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "memory_store_id",
+          "memory_version_id",
+          "path",
+          "path_key",
+          "content_sha256",
+          "content_size_bytes",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MemoryResponse"
       },
       "MemoryStoreCreateRequest": {
         "properties": {
@@ -11983,12 +14796,99 @@
             "description": "Caller-defined metadata stored with the resource."
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "name"
         ],
         "title": "MemoryStoreCreateRequest"
+      },
+      "MemoryStoreDeletedResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this resource."
+          },
+          "type": {
+            "type": "string",
+            "const": "memory_store_deleted",
+            "default": "memory_store_deleted",
+            "description": "Stable type discriminator for this object."
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true,
+            "default": true,
+            "description": "Whether the requested resource was deleted successfully."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "MemoryStoreDeletedResponse"
+      },
+      "MemoryStoreResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this resource."
+          },
+          "type": {
+            "type": "string",
+            "const": "memory_store",
+            "default": "memory_store",
+            "description": "Stable type discriminator for this object."
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name for the resource."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when the resource was created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when the resource was last updated."
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "RFC 3339 timestamp when the resource was archived, or null when active."
+          },
+          "description": {
+            "type": "string",
+            "default": "",
+            "description": "Optional human-readable description."
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "description": "Caller-defined metadata stored with the resource."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MemoryStoreResponse"
       },
       "MemoryStoreUpdateRequest": {
         "properties": {
@@ -12036,7 +14936,7 @@
             "description": "Caller-defined metadata stored with the resource."
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "title": "MemoryStoreUpdateRequest"
       },
@@ -12149,9 +15049,162 @@
             "description": "Caller-defined metadata stored with the resource."
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "title": "MemoryUpdateRequest"
+      },
+      "MemoryVersionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this resource."
+          },
+          "type": {
+            "type": "string",
+            "const": "memory_version",
+            "default": "memory_version",
+            "description": "Stable type discriminator for this object."
+          },
+          "memory_store_id": {
+            "type": "string",
+            "description": "Memory Store that owns this version."
+          },
+          "memory_id": {
+            "type": "string",
+            "description": "Memory record captured by this version."
+          },
+          "version": {
+            "type": "integer",
+            "description": "Version number of this resource."
+          },
+          "memory_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Numeric Memory version."
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "created",
+              "modified",
+              "deleted"
+            ],
+            "description": "Mutation recorded by this immutable version."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when the resource was created."
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Actor that created this version."
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Content stored in or carried by this resource."
+          },
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expected SHA-256 digest used by the memory precondition."
+          },
+          "content_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTF-8 content size in bytes."
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Normalized logical path for a memory record."
+          },
+          "redacted": {
+            "type": "boolean",
+            "description": "Whether this version was redacted.",
+            "default": false
+          },
+          "redacted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When this version was redacted."
+          },
+          "redacted_by": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Actor that redacted this version."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp when the resource was last updated."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "memory_store_id",
+          "memory_id",
+          "version",
+          "operation",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MemoryVersionResponse"
       },
       "ModelCredentialCreateRequest": {
         "properties": {

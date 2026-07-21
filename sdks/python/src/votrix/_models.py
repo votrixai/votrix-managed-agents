@@ -17,6 +17,9 @@ class OpenObject(VotrixModel):
 
 
 ApiKeyScope = Literal["api", "api_keys:manage", "worker"]
+MemoryVersionOperation = Literal["created", "modified", "deleted"]
+MemoryOperation = MemoryVersionOperation
+MemoryView = Literal["basic", "full"]
 SessionFundingType = Literal[
     "organization_default",
     "byok",
@@ -181,6 +184,80 @@ class FileObject(VotrixModel):
     scope: OpenObject | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class MemoryPrecondition(VotrixModel):
+    type: Literal["content_sha256"] = "content_sha256"
+    content_sha256: str | None = None
+
+
+class MemoryStore(VotrixModel):
+    id: str
+    type: Literal["memory_store"] = "memory_store"
+    name: str
+    description: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+    archived_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class Memory(VotrixModel):
+    id: str
+    type: Literal["memory"] = "memory"
+    memory_store_id: str
+    memory_version_id: str
+    path: str
+    path_key: str
+    content: str | None = None
+    content_sha256: str
+    content_size_bytes: int
+    version: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_by: str | None = None
+    updated_by: str | None = None
+    session_id: str | None = None
+    redacted: bool = False
+    redacted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryListItem(VotrixModel):
+    """A memory or a synthetic directory prefix returned by a depth-limited list."""
+
+    type: Literal["memory", "memory_prefix"]
+    path: str
+    id: str | None = None
+    memory_store_id: str | None = None
+    memory_version_id: str | None = None
+    content: str | None = None
+    content_sha256: str | None = None
+    content_size_bytes: int | None = None
+    version: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class MemoryVersion(VotrixModel):
+    id: str
+    type: Literal["memory_version"] = "memory_version"
+    memory_store_id: str
+    memory_id: str
+    operation: MemoryVersionOperation
+    version: int
+    memory_version: int | None = None
+    path: str | None = None
+    content: str | None = None
+    content_sha256: str | None = None
+    content_size_bytes: int | None = None
+    created_by: dict[str, Any] | None = None
+    redacted: bool = False
+    redacted_at: datetime | None = None
+    redacted_by: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SkillVersion(VotrixModel):

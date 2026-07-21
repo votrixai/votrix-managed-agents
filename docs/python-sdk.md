@@ -7,7 +7,7 @@ VMA has two deliberately separate Python client contracts:
 
 | Client | Purpose |
 | --- | --- |
-| `from votrix import AsyncVotrix` | Recommended async client for VMA resources, model-provider discovery, Session funding, and raw usage. |
+| `from votrix import AsyncVotrix` | Recommended async client for VMA resources, including Memory Stores, model-provider discovery, Session funding, and raw usage. |
 | `from votrix import Votrix` | Synchronous GA wrapper for API keys, model providers, Vaults, and native model Credentials. |
 | `from anthropic import AsyncAnthropic` | Compatibility client for the overlapping Claude Managed Agents wire surface. |
 
@@ -104,7 +104,57 @@ persist_secret(rotated.secret.get_secret_value())
 
 Only create and rotate responses contain the one-time plaintext key, wrapped
 as `SecretStr`. List, retrieve, and revoke return safe metadata only. The SDK
-does not expose the deferred Memory Store or generic Vault Credential APIs.
+exposes Memory Stores as a public typed async resource; generic Vault
+Credentials remain deferred.
+
+## Memory Stores
+
+The async client covers store create/retrieve/update/list/archive/delete,
+memory create/retrieve/update/list/delete and path lookup, plus immutable
+version list/retrieve/redact:
+
+```python
+store = await client.memory_stores.create(
+    name="Account context",
+    description="Support memories",
+)
+memory = await client.memory_stores.memories.create(
+    store.id,
+    path="/accounts/acme.md",
+    content="ACME prefers email.",
+    view="full",
+)
+
+memory = await client.memory_stores.memories.update(
+    memory.id,
+    memory_store_id=store.id,
+    content="ACME prefers chat.",
+    precondition={
+        "type": "content_sha256",
+        "content_sha256": memory.content_sha256,
+    },
+    view="full",
+)
+
+versions = await client.memory_stores.memory_versions.list(
+    store.id,
+    memory_id=memory.id,
+    view="full",
+)
+
+history = await client.memory_stores.memories.versions.list(
+    memory.id,
+    memory_store_id=store.id,
+)
+```
+
+`memories.retrieve_by_path(path, memory_store_id=...)` and its `by_path` alias
+perform direct path lookup. `memories.versions` addresses one memory's history
+by numeric version, while `memory_stores.memory_versions` lists store-wide
+history and addresses versions by ID. With `depth=`, memory lists can also
+return typed `memory_prefix` rollups. Version redaction is permanent and cannot
+target a live memory's current head version. Memory Stores are async-only; the
+synchronous provisioning client does not expose them.
 
 ## Provider discovery and Organization BYOK
 

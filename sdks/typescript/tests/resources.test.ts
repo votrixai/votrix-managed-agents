@@ -139,6 +139,7 @@ describe("public resources", () => {
     expect(client.environments).toBeDefined();
     expect(client.sessions).toBeDefined();
     expect(client.files).toBeDefined();
+    expect(client.memoryStores).toBeDefined();
     expect(client.skills).toBeDefined();
     expect(client.vaults).toBeDefined();
     expect(client.modelProviders).toBeDefined();
@@ -147,6 +148,9 @@ describe("public resources", () => {
     expect(client.sessions.events).toBeDefined();
     expect(client.sessions.resources).toBeDefined();
     expect(client.skills.versions).toBeDefined();
+    expect(client.memoryStores.memories).toBeDefined();
+    expect(client.memoryStores.memories.versions).toBeDefined();
+    expect(client.memoryStores.memoryVersions).toBeDefined();
     expect(client.vaults.modelCredentials).toBeDefined();
     expect(client.files.retrieveMetadata).toBeTypeOf("function");
 
@@ -154,7 +158,6 @@ describe("public resources", () => {
     for (const deferred of [
       "deployments",
       "deploymentRuns",
-      "memoryStores",
       "userProfiles",
       "webhooks",
       "billing",

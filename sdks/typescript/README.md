@@ -75,7 +75,7 @@ and `created_at`.
 
 ## Resource surface
 
-The client exposes nine top-level resources:
+The client exposes ten top-level resources:
 
 | Resource                | Main operations                                                                                                             |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -84,6 +84,7 @@ The client exposes nine top-level resources:
 | `client.environments`   | Create, retrieve, update, list, archive, and delete execution Environments.                                                 |
 | `client.sessions`       | Manage Sessions, send/list/stream events through `sessions.events`, and manage attached files through `sessions.resources`. |
 | `client.files`          | Upload, inspect, list, stream-download, and delete Files.                                                                   |
+| `client.memoryStores`   | Manage Memory Stores and Memories, inspect immutable version history, and redact historical content.                        |
 | `client.skills`         | Create, retrieve, list, and delete Skills; manage archives and versions through `skills.versions`.                          |
 | `client.vaults`         | Manage Vaults and provider credentials through `vaults.modelCredentials`.                                                   |
 | `client.modelProviders` | Discover and retrieve the public model-provider catalog.                                                                    |
@@ -108,6 +109,29 @@ const session = await client.sessions.create({
   environment_id: environment.id,
   vault_ids: ["vault_end_user", "vault_organization_shared"],
 });
+```
+
+Memory Stores expose durable, Organization-scoped records independently of a
+Session:
+
+```ts
+const memoryStore = await client.memoryStores.create({
+  name: "Account context",
+});
+
+const memory = await client.memoryStores.memories.create(memoryStore.id, {
+  path: "/accounts/acme/preferences",
+  content: "ACME prefers email support.",
+});
+
+for await (const version of client.memoryStores.memoryVersions.list(
+  memoryStore.id,
+  {
+    memory_id: memory.id,
+  },
+)) {
+  console.log(version.operation, version.created_at);
+}
 ```
 
 Session creation and event submission receive an automatically generated

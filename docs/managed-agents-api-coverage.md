@@ -248,20 +248,23 @@ managed Memory Store versions.
 
 | Operation | Route | Public Beta | VMA Readiness | Claude Parity |
 | --- | --- | --- | --- | --- |
-| create | `POST /v1/memory_stores` | No | Complete | Compatible |
-| retrieve | `GET /v1/memory_stores/{memory_store_id}` | No | Complete | Compatible |
-| update | `POST /v1/memory_stores/{memory_store_id}` | No | Complete | Compatible |
-| list | `GET /v1/memory_stores` | No | Complete | Compatible |
-| delete | `DELETE /v1/memory_stores/{memory_store_id}` | No | Complete | Compatible |
-| archive | `POST /v1/memory_stores/{memory_store_id}/archive` | No | Complete | Compatible |
-| memory create | `POST /v1/memory_stores/{memory_store_id}/memories` | No | Complete | Compatible |
-| memory retrieve | `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | No | Complete | Compatible |
-| memory update | `POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | No | Complete | Compatible |
-| memory list | `GET /v1/memory_stores/{memory_store_id}/memories` | No | Complete | Compatible |
-| memory delete | `DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | No | Complete | Compatible |
-| memory version retrieve | `GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}` | No | Complete | Compatible |
-| memory version list | `GET /v1/memory_stores/{memory_store_id}/memory_versions` | No | Complete | Compatible |
-| memory version redact | `POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact` | No | Complete | Compatible |
+| create | `POST /v1/memory_stores` | Yes | Complete | Compatible |
+| retrieve | `GET /v1/memory_stores/{memory_store_id}` | Yes | Complete | Compatible |
+| update | `POST /v1/memory_stores/{memory_store_id}` | Yes | Complete | Compatible |
+| list | `GET /v1/memory_stores` | Yes | Complete | Compatible |
+| delete | `DELETE /v1/memory_stores/{memory_store_id}` | Yes | Complete | Compatible |
+| archive | `POST /v1/memory_stores/{memory_store_id}/archive` | Yes | Complete | Compatible |
+| memory create | `POST /v1/memory_stores/{memory_store_id}/memories` | Yes | Complete | Compatible |
+| memory retrieve | `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | Yes | Complete | Compatible |
+| memory retrieve by path | `GET /v1/memory_stores/{memory_store_id}/memories/by_path` | Yes | Complete | Compatible |
+| memory update | `POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | Yes | Complete | Compatible |
+| memory list | `GET /v1/memory_stores/{memory_store_id}/memories` | Yes | Complete | Compatible |
+| memory delete | `DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | Yes | Complete | Compatible |
+| memory history list | `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions` | Yes | Complete | Compatible |
+| memory history retrieve | `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions/{version}` | Yes | Complete | Compatible |
+| memory version retrieve | `GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}` | Yes | Complete | Compatible |
+| memory version list | `GET /v1/memory_stores/{memory_store_id}/memory_versions` | Yes | Complete | Compatible |
+| memory version redact | `POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact` | Yes | Complete | Compatible |
 
 ## Files
 

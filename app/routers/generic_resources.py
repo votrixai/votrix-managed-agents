@@ -21,9 +21,15 @@ from app.models.common import ListResponse, utcnow
 from app.secret_cipher import encrypt_secret_values, is_secret_key
 from app.models.memory_stores import (
     MemoryCreateRequest,
+    MemoryDeletedResponse,
+    MemoryPrefixResponse,
+    MemoryResponse,
     MemoryStoreCreateRequest,
+    MemoryStoreDeletedResponse,
+    MemoryStoreResponse,
     MemoryStoreUpdateRequest,
     MemoryUpdateRequest,
+    MemoryVersionResponse,
 )
 from app.models.model_providers import (
     ModelCredentialCreateRequest,
@@ -38,7 +44,15 @@ from app.models.vaults import (
     VaultResponse,
     VaultUpdateRequest,
 )
-from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
+from app.pagination import (
+    decode_page_offset,
+    encode_page_offset,
+    filter_created_at,
+    normalize_page_limit,
+    normalize_sort_order,
+    paginate,
+    sort_by_created_at,
+)
 from app.runtime.agent_resolution import resolve_session_agent_config
 from app.runtime.model_credentials import (
     MODEL_CREDENTIAL_KIND,
@@ -488,12 +502,19 @@ def _credential_validation_payload(credential, *, vault_id: str) -> dict[str, An
     }
 
 
-@router.post("/v1/memory_stores", status_code=201)
+@router.post(
+    "/v1/memory_stores",
+    response_model=MemoryStoreResponse,
+    status_code=201,
+)
 async def create_memory_store(body: MemoryStoreCreateRequest, db: AsyncSession = Depends(get_session)):
     return await _create_top_level(db, "memory_store", body.model_dump(mode="json"))
 
 
-@router.get("/v1/memory_stores")
+@router.get(
+    "/v1/memory_stores",
+    response_model=ListResponse[MemoryStoreResponse],
+)
 async def list_memory_stores(
     limit: int = 50,
     page: str | None = None,
@@ -514,36 +535,55 @@ async def list_memory_stores(
     )
 
 
-@router.get("/v1/memory_stores/{memory_store_id}")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}",
+    response_model=MemoryStoreResponse,
+)
 async def retrieve_memory_store(memory_store_id: str, db: AsyncSession = Depends(get_session)):
     return await _retrieve(db, memory_store_id, "memory_store")
 
 
-@router.post("/v1/memory_stores/{memory_store_id}")
+@router.post(
+    "/v1/memory_stores/{memory_store_id}",
+    response_model=MemoryStoreResponse,
+)
 async def update_memory_store(
     memory_store_id: str,
     body: MemoryStoreUpdateRequest,
     db: AsyncSession = Depends(get_session),
 ):
+    update = body.model_dump(mode="json", exclude_unset=True)
+    if update.get("name") is None:
+        update.pop("name", None)
     return await _update(
         db,
         memory_store_id,
         "memory_store",
-        body.model_dump(mode="json", exclude_unset=True),
+        update,
     )
 
 
-@router.delete("/v1/memory_stores/{memory_store_id}")
+@router.delete(
+    "/v1/memory_stores/{memory_store_id}",
+    response_model=MemoryStoreDeletedResponse,
+)
 async def delete_memory_store(memory_store_id: str, db: AsyncSession = Depends(get_session)):
     return await _delete(db, memory_store_id, "memory_store", "memory_store_deleted")
 
 
-@router.post("/v1/memory_stores/{memory_store_id}/archive")
+@router.post(
+    "/v1/memory_stores/{memory_store_id}/archive",
+    response_model=MemoryStoreResponse,
+)
 async def archive_memory_store(memory_store_id: str, db: AsyncSession = Depends(get_session)):
     return await _archive(db, memory_store_id, "memory_store")
 
 
-@router.post("/v1/memory_stores/{memory_store_id}/memories", status_code=201)
+@router.post(
+    "/v1/memory_stores/{memory_store_id}/memories",
+    response_model=MemoryResponse,
+    status_code=201,
+)
 async def create_memory(
     memory_store_id: str,
     body: MemoryCreateRequest,
@@ -571,7 +611,10 @@ async def create_memory(
     return _resource_response(memory, view=view)
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memories")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memories",
+    response_model=ListResponse[MemoryResponse | MemoryPrefixResponse],
+)
 async def list_memories(
     memory_store_id: str,
     limit: int = 50,
@@ -598,12 +641,22 @@ async def list_memories(
                 resource_type="memory",
                 parent_id=memory_store_id,
                 name_prefix=prefix,
-                limit=1000,
+                limit=MAX_MEMORIES_PER_STORE,
             )
         else:
-            resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
+            resources = await res_q.list_resources(
+                db,
+                resource_type="memory",
+                parent_id=memory_store_id,
+                limit=MAX_MEMORIES_PER_STORE,
+            )
     else:
-        resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
+        resources = await res_q.list_resources(
+            db,
+            resource_type="memory",
+            parent_id=memory_store_id,
+            limit=MAX_MEMORIES_PER_STORE,
+        )
     if path is not None and path_prefix is not None:
         prefix = _path_key(_normalize_memory_path_prefix(path_prefix))
         if prefix:
@@ -622,7 +675,10 @@ async def list_memories(
     return paginate([_resource_response(memory, view=view) for memory in resources], limit=limit, page=page)
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memories/by_path")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memories/by_path",
+    response_model=MemoryResponse,
+)
 async def retrieve_memory_by_path(
     memory_store_id: str,
     path: str = Query(...),
@@ -637,7 +693,10 @@ async def retrieve_memory_by_path(
     return _resource_response(memory, view=view)
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+    response_model=MemoryResponse,
+)
 async def retrieve_memory(
     memory_store_id: str,
     memory_id: str,
@@ -649,7 +708,10 @@ async def retrieve_memory(
     return _resource_response(memory, view=view)
 
 
-@router.post("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
+@router.post(
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+    response_model=MemoryResponse,
+)
 async def update_memory(
     memory_store_id: str,
     memory_id: str,
@@ -658,8 +720,11 @@ async def update_memory(
     db: AsyncSession = Depends(get_session),
 ):
     view = _normalize_memory_view(view)
+    await _must_write_memory_store(db, memory_store_id)
     memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
     update = body.model_dump(mode="json", exclude_unset=True)
+    if update.get("path") is None:
+        update.pop("path", None)
     expected_version = update.pop("if_version", update.pop("expected_version", None))
     precondition = update.pop("precondition", None)
     current_version = int(memory.data.get("version") or 1)
@@ -693,7 +758,10 @@ async def update_memory(
     return _resource_response(memory, view=view)
 
 
-@router.delete("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
+@router.delete(
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+    response_model=MemoryDeletedResponse,
+)
 async def delete_memory(
     memory_store_id: str,
     memory_id: str,
@@ -723,7 +791,10 @@ async def delete_memory(
     return deleted_response(memory, public_type="memory_deleted")
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions",
+    response_model=ListResponse[MemoryVersionResponse],
+)
 async def list_memory_versions_for_memory(
     memory_store_id: str,
     memory_id: str,
@@ -732,11 +803,22 @@ async def list_memory_versions_for_memory(
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
-    versions = await res_q.list_resources(db, resource_type="memory_version", parent_id=memory_id, limit=1000)
-    return paginate([_resource_response(version) for version in versions], limit=limit, page=page)
+    page_size = normalize_page_limit(limit)
+    offset = decode_page_offset(page)
+    versions = await res_q.list_memory_versions_page(
+        db,
+        memory_store_id=memory_store_id,
+        memory_id=memory_id,
+        limit=page_size + 1,
+        offset=offset,
+    )
+    return _memory_version_page(versions, view=None, page_size=page_size, offset=offset)
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions/{version}")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions/{version}",
+    response_model=MemoryVersionResponse,
+)
 async def retrieve_memory_version_for_memory(
     memory_store_id: str,
     memory_id: str,
@@ -755,7 +837,10 @@ async def retrieve_memory_version_for_memory(
     return _resource_response(memory_version)
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memory_versions")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memory_versions",
+    response_model=ListResponse[MemoryVersionResponse],
+)
 async def list_memory_versions(
     memory_store_id: str,
     limit: int = 50,
@@ -773,32 +858,27 @@ async def list_memory_versions(
     if operation is not None and operation not in MEMORY_VERSION_OPERATIONS:
         raise HTTPException(status_code=422, detail="operation must be created, deleted, or modified")
     await _must_exist(db, memory_store_id, "memory_store")
-    memories = await res_q.list_resources(
+    page_size = normalize_page_limit(limit)
+    offset = decode_page_offset(page)
+    versions = await res_q.list_memory_versions_page(
         db,
-        resource_type="memory",
-        parent_id=memory_store_id,
-        limit=MAX_MEMORIES_PER_STORE + 100,
-        include_deleted=True,
+        memory_store_id=memory_store_id,
+        memory_id=memory_id,
+        operation=operation,
+        api_key_id=api_key_id,
+        session_id=session_id,
+        created_at_gte=created_at_gte,
+        created_at_lte=created_at_lte,
+        limit=page_size + 1,
+        offset=offset,
     )
-    versions = []
-    for memory in memories:
-        if memory_id is not None and memory.id != memory_id:
-            continue
-        versions.extend(
-            await res_q.list_resources(db, resource_type="memory_version", parent_id=memory.id, limit=1000)
-        )
-    versions = filter_created_at(versions, created_at_gte=created_at_gte, created_at_lte=created_at_lte)
-    if operation is not None:
-        versions = [version for version in versions if _memory_version_operation(version.data.get("operation")) == operation]
-    if api_key_id is not None:
-        versions = [version for version in versions if _memory_version_api_key_id(version) == api_key_id]
-    if session_id is not None:
-        versions = [version for version in versions if _memory_version_session_id(version) == session_id]
-    versions = sort_by_created_at(versions, order="desc")
-    return paginate([_resource_response(v, view=view) for v in versions], limit=limit, page=page)
+    return _memory_version_page(versions, view=view, page_size=page_size, offset=offset)
 
 
-@router.get("/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}")
+@router.get(
+    "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}",
+    response_model=MemoryVersionResponse,
+)
 async def retrieve_memory_version(
     memory_store_id: str,
     memory_version_id: str,
@@ -822,7 +902,10 @@ async def retrieve_memory_version(
     return _resource_response(version, view=view)
 
 
-@router.post("/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact")
+@router.post(
+    "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact",
+    response_model=MemoryVersionResponse,
+)
 async def redact_memory_version(
     memory_store_id: str,
     memory_version_id: str,
@@ -848,7 +931,15 @@ async def redact_memory_version(
     ):
         raise HTTPException(status_code=409, detail="Current live memory version cannot be redacted")
     snapshot = dict(data.get("snapshot") or {})
-    snapshot.pop("content", None)
+    for field in (
+        "content",
+        "path",
+        "path_key",
+        "content_sha256",
+        "content_size_bytes",
+    ):
+        data.pop(field, None)
+        snapshot.pop(field, None)
     snapshot["redacted"] = True
     data["snapshot"] = snapshot
     data["redacted"] = True
@@ -1855,7 +1946,11 @@ def _memory_store_response(resource) -> dict[str, Any]:
     response = resource_to_response(resource, public_type="memory_store")
     response["description"] = response.get("description") or ""
     response["metadata"] = dict(response.get("metadata") or {})
-    return response
+    return {
+        key: value
+        for key, value in response.items()
+        if key in MemoryStoreResponse.model_fields
+    }
 
 
 def _memory_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -1881,7 +1976,9 @@ def _memory_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) -> dict[str, Any]:
     merged = dict(existing or {})
-    actor = str(update.pop("actor", update.pop("updated_by", merged.get("updated_by", "api"))))
+    requested_actor = update.pop("actor", None)
+    requested_updated_by = update.pop("updated_by", None)
+    actor = str(requested_actor or requested_updated_by or merged.get("updated_by") or "api")
     if "path" in update:
         path = _normalize_memory_path(update["path"])
         merged["path"] = path
@@ -1901,7 +1998,8 @@ def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) 
     merged["version"] = int(merged.get("version") or 1) + 1
     merged["updated_by"] = actor
     merged["updated_at"] = utcnow().isoformat()
-    merged.setdefault("metadata", {})
+    if merged.get("metadata") is None:
+        merged["metadata"] = {}
     return merged
 
 
@@ -2091,7 +2189,11 @@ def _memory_response(resource, *, view: str | None = None) -> dict[str, Any]:
     response["memory_version_id"] = str(response.get("memory_version_id") or "")
     if view == "basic":
         response["content"] = None
-    return response
+    return {
+        key: value
+        for key, value in response.items()
+        if key in MemoryResponse.model_fields
+    }
 
 
 def _memory_version_response(resource, *, view: str | None = None) -> dict[str, Any]:
@@ -2099,6 +2201,8 @@ def _memory_version_response(resource, *, view: str | None = None) -> dict[str, 
     response = resource_to_response(resource, public_type="memory_version")
     data = resource.data or {}
     snapshot = dict(data.get("snapshot") or {})
+    for private_field in ("snapshot", "actor", "session_id", "path_key"):
+        response.pop(private_field, None)
     redacted = bool(data.get("redacted") or data.get("redacted_at"))
     response["memory_store_id"] = data.get("memory_store_id") or snapshot.get("memory_store_id")
     response["memory_id"] = data.get("memory_id") or resource.parent_id
@@ -2123,7 +2227,24 @@ def _memory_version_response(resource, *, view: str | None = None) -> dict[str, 
         response["path"] = _normalize_memory_path(data.get("path") or snapshot.get("path"))
         response["content_sha256"] = data.get("content_sha256") or snapshot.get("content_sha256")
         response["content_size_bytes"] = data.get("content_size_bytes") or snapshot.get("content_size_bytes")
-    return response
+    return {
+        key: value
+        for key, value in response.items()
+        if key in MemoryVersionResponse.model_fields
+    }
+
+
+def _memory_version_page(
+    resources: list,
+    *,
+    view: str | None,
+    page_size: int,
+    offset: int,
+) -> ListResponse[dict[str, Any]]:
+    has_more = len(resources) > page_size
+    data = [_resource_response(resource, view=view) for resource in resources[:page_size]]
+    next_page = encode_page_offset(offset + page_size) if has_more else None
+    return ListResponse.from_items(data, has_more=has_more, next_page=next_page)
 
 
 def _normalize_memory_view(view: str | None) -> str | None:
@@ -2133,28 +2254,6 @@ def _normalize_memory_view(view: str | None) -> str | None:
     if normalized not in MEMORY_VIEWS:
         raise HTTPException(status_code=422, detail="view must be basic or full")
     return normalized
-
-
-def _memory_version_api_key_id(resource) -> str | None:
-    data = resource.data or {}
-    created_by = data.get("created_by")
-    if isinstance(created_by, dict):
-        api_key_id = created_by.get("api_key_id")
-        if api_key_id is not None:
-            return str(api_key_id)
-    actor = data.get("actor")
-    return str(actor) if actor is not None else None
-
-
-def _memory_version_session_id(resource) -> str | None:
-    data = resource.data or {}
-    value = data.get("session_id")
-    if value is not None:
-        return str(value)
-    snapshot = data.get("snapshot")
-    if isinstance(snapshot, dict) and snapshot.get("session_id") is not None:
-        return str(snapshot["session_id"])
-    return None
 
 
 def _memory_version_operation(value: Any) -> str:

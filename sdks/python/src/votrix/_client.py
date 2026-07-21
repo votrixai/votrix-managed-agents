@@ -194,6 +194,7 @@ class AsyncVotrix:
             ApiKeysResource,
             EnvironmentsResource,
             FilesResource,
+            MemoryStoresResource,
             ModelProvidersResource,
             SessionsResource,
             SkillsResource,
@@ -206,6 +207,7 @@ class AsyncVotrix:
         self.environments = EnvironmentsResource(self)
         self.sessions = SessionsResource(self)
         self.files = FilesResource(self)
+        self.memory_stores = MemoryStoresResource(self)
         self.skills = SkillsResource(self)
         self.usage = UsageResource(self)
         self.vaults = VaultsResource(self)

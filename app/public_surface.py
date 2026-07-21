@@ -12,6 +12,7 @@ PUBLIC_GA_RESOURCES = (
     "sessions",
     "files",
     "skills",
+    "memory_stores",
     "usage",
     "vaults",
     "model_credentials",
@@ -62,6 +63,8 @@ def is_public_ga_path(path: str) -> bool:
     if normalized.startswith("/v1/files"):
         return normalized not in {"/v1/files/presign", "/v1/files/complete"}
     if normalized.startswith("/v1/skills"):
+        return True
+    if normalized.startswith("/v1/memory_stores"):
         return True
     if normalized.startswith("/v1/model_providers"):
         return True

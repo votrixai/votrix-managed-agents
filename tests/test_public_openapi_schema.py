@@ -86,6 +86,68 @@ def test_public_vault_operations_use_strict_native_schemas_only() -> None:
     )
 
 
+def test_public_memory_store_operations_use_typed_native_schemas() -> None:
+    schema = build_documentation_schema(server_url="https://api.example.test")
+    paths = schema["paths"]
+    components = schema["components"]["schemas"]
+
+    assert paths["/v1/memory_stores"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/MemoryStoreCreateRequest"}
+    assert paths["/v1/memory_stores"]["post"]["responses"]["201"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/MemoryStoreResponse"}
+    assert paths["/v1/memory_stores/{memory_store_id}"]["delete"]["responses"][
+        "200"
+    ]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/MemoryStoreDeletedResponse"
+    }
+    assert paths["/v1/memory_stores/{memory_store_id}/memories"]["post"][
+        "responses"
+    ]["201"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/MemoryResponse"
+    }
+    assert paths[
+        "/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact"
+    ]["post"]["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/MemoryVersionResponse"}
+
+    for model_name in (
+        "MemoryStoreCreateRequest",
+        "MemoryStoreUpdateRequest",
+        "MemoryStoreResponse",
+        "MemoryCreateRequest",
+        "MemoryUpdateRequest",
+        "MemoryResponse",
+        "MemoryPrefixResponse",
+        "MemoryVersionResponse",
+        "MemoryStoreDeletedResponse",
+        "MemoryDeletedResponse",
+    ):
+        assert components[model_name]["additionalProperties"] is False
+
+    assert {
+        "path_key",
+        "version",
+        "metadata",
+        "created_by",
+        "updated_by",
+        "session_id",
+        "redacted",
+        "redacted_at",
+    } <= components["MemoryResponse"]["properties"].keys()
+    assert {"version", "memory_version", "redacted", "updated_at"} <= components[
+        "MemoryVersionResponse"
+    ]["properties"].keys()
+    assert {
+        "snapshot",
+        "actor",
+        "session_id",
+        "path_key",
+    }.isdisjoint(components["MemoryVersionResponse"]["properties"])
+
+
 def test_docs_remain_blocked_from_search_indexing() -> None:
     layout = (ROOT / "website/app/layout.tsx").read_text(encoding="utf-8")
     robots = (ROOT / "website/public/robots.txt").read_text(encoding="utf-8")

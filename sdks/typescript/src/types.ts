@@ -460,6 +460,181 @@ export interface SessionResourceDeleteParams {
   session_id: string;
 }
 
+// Memory stores, memories, and immutable versions
+
+export type MemoryView = "basic" | "full";
+export type MemoryPath = string | readonly string[];
+
+export interface MemoryStore extends OpenObject {
+  id: string;
+  type: "memory_store";
+  name: string;
+  description: string;
+  metadata: StringMetadata;
+  archived_at?: string | null;
+  deleted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryStoreCreateParams {
+  name: string;
+  description?: string | null;
+  metadata?: StringMetadata;
+}
+
+export interface MemoryStoreUpdateParams {
+  name?: string | null;
+  description?: string | null;
+  metadata?: MetadataPatch | null;
+}
+
+export interface MemoryStoreListParams {
+  limit?: number;
+  page?: string;
+  include_archived?: boolean;
+  "created_at[gte]"?: string;
+  "created_at[lte]"?: string;
+}
+
+export interface Memory extends OpenObject {
+  id: string;
+  type: "memory";
+  memory_store_id: string;
+  memory_version_id: string;
+  path: string;
+  path_key: string;
+  content: string | null;
+  content_sha256: string;
+  content_size_bytes: number;
+  version: number;
+  created_by?: string | null;
+  updated_by?: string | null;
+  session_id?: string | null;
+  metadata: JSONMetadata;
+  redacted?: boolean;
+  redacted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryPrefix extends OpenObject {
+  type: "memory_prefix";
+  path: string;
+}
+
+export type MemoryListItem = Memory | MemoryPrefix;
+
+export interface MemoryCreateParams {
+  path: MemoryPath;
+  content: string | null;
+  metadata?: JSONMetadata;
+  actor?: string | null;
+  session_id?: string | null;
+  /** Controls whether the response includes content. Sent as a query value. */
+  view?: MemoryView;
+}
+
+export interface MemoryRetrieveParams {
+  memory_store_id: string;
+  view?: MemoryView;
+}
+
+export interface MemoryRetrieveByPathParams {
+  path: string;
+  view?: MemoryView;
+}
+
+export interface MemoryListParams {
+  limit?: number;
+  page?: string;
+  path?: string;
+  path_prefix?: string;
+  depth?: number;
+  view?: MemoryView;
+  order?: "asc" | "desc";
+  order_by?: "path" | "created_at";
+}
+
+export interface MemoryPrecondition extends OpenObject {
+  type: "content_sha256";
+  content_sha256?: string | null;
+}
+
+export interface MemoryUpdateParams {
+  memory_store_id: string;
+  path?: MemoryPath | null;
+  content?: string | null;
+  precondition?: MemoryPrecondition | null;
+  if_version?: number | null;
+  expected_version?: number | null;
+  actor?: string | null;
+  updated_by?: string | null;
+  session_id?: string | null;
+  metadata?: JSONMetadata | null;
+  /** Controls whether the response includes content. Sent as a query value. */
+  view?: MemoryView;
+}
+
+export interface MemoryDeleteParams {
+  memory_store_id: string;
+  expected_content_sha256?: string | null;
+}
+
+export type MemoryVersionOperation = "created" | "modified" | "deleted";
+
+export interface MemoryVersion extends OpenObject {
+  id: string;
+  type: "memory_version";
+  memory_store_id: string;
+  memory_id: string;
+  version: number;
+  memory_version?: number;
+  operation: MemoryVersionOperation;
+  created_by: OpenObject | null;
+  content: string | null;
+  content_sha256: string | null;
+  content_size_bytes: number | null;
+  path: string | null;
+  redacted?: boolean;
+  redacted_at: string | null;
+  redacted_by?: OpenObject | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryVersionListParams {
+  limit?: number;
+  page?: string;
+  memory_id?: string;
+  operation?: MemoryVersionOperation;
+  api_key_id?: string;
+  session_id?: string;
+  view?: MemoryView;
+  "created_at[gte]"?: string;
+  "created_at[lte]"?: string;
+}
+
+export interface MemoryVersionRetrieveParams {
+  memory_store_id: string;
+  view?: MemoryView;
+}
+
+export interface MemoryVersionRedactParams {
+  memory_store_id: string;
+}
+
+export interface MemoryHistoryListParams {
+  memory_store_id: string;
+  limit?: number;
+  page?: string;
+}
+
+export interface MemoryHistoryRetrieveParams {
+  memory_store_id: string;
+  memory_id: string;
+}
+
 // Raw usage
 
 export interface UsageEntry extends OpenObject {
