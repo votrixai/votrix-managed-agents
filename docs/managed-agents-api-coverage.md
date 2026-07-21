@@ -13,7 +13,7 @@ This file is route coverage only. It is not a claim of production semantic parit
 
 When `VMA_PUBLIC_GA_ONLY=true`, only API keys, Agents, Environments without
 worker operations, Sessions without Threads, Files without presign/complete,
-Skills, Vaults/native model Credentials, Model Providers, health, and
+Skills, Memory Stores, Vaults/native model Credentials, Model Providers, health, and
 capabilities appear in OpenAPI. Other rows below describe repository
 compatibility work, not public-beta product promises.
 
