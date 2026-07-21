@@ -1,5 +1,4 @@
 import json
-from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
@@ -36,25 +35,12 @@ class Settings(BaseSettings):
     vma_checkpoint_database_url: str = ""
     vma_listen_database_url: str = ""
     vma_sandbox_provider: str = "state"
-    vma_sandbox_factory: str = ""
-    vma_allow_unsafe_local_sandbox: bool = False
-    vma_sandbox_root: str = "/workspace"
-    vma_sandbox_retention_seconds: int = 30 * 24 * 60 * 60
-    vma_sandbox_janitor_interval_seconds: int = 60
-    vma_sandbox_command_timeout_seconds: int = 900
-    vma_e2b_template: str = ""
+    vma_sandbox_command_timeout_seconds: int = 300
     vma_e2b_workdir: str = "/workspace"
     vma_e2b_guest_user: str = "user"
     vma_e2b_timeout_seconds: int = 300
-    vma_e2b_auto_pause: bool = True
     vma_e2b_auto_resume: bool = False
     vma_e2b_keep_memory: bool = False
-    vma_e2b_pause_on_exit: bool = True
-    vma_e2b_allow_public_traffic: bool = False
-    vma_e2b_template_resources: Annotated[dict[str, Any], NoDecode] = Field(default_factory=dict)
-    vma_e2b_cost_estimation_enabled: bool = True
-    vma_e2b_vcpu_second_usd: Decimal = Field(default=Decimal("0.000014"), ge=0)
-    vma_e2b_gib_second_usd: Decimal = Field(default=Decimal("0.0000045"), ge=0)
     vma_max_graph_steps: int = 250
     vma_run_timeout_seconds: int = 900
     vma_web_fetch_max_bytes: int = 1_000_000
@@ -96,9 +82,6 @@ class Settings(BaseSettings):
     vma_supabase_publishable_key: str = ""
 
     e2b_api_key: str = ""
-    e2b_domain: str = ""
-    e2b_api_url: str = ""
-    e2b_sandbox_url: str = ""
 
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""
@@ -144,15 +127,6 @@ class Settings(BaseSettings):
                     "VMA_MODEL_PROVIDERS must not embed model API keys; "
                     "create a model Credential in an Organization Vault"
                 )
-        return value
-
-    @field_validator("vma_e2b_template_resources", mode="before")
-    @classmethod
-    def parse_e2b_template_resources(cls, value):
-        if value is None or value == "":
-            return {}
-        if isinstance(value, str):
-            return json.loads(value)
         return value
 
 

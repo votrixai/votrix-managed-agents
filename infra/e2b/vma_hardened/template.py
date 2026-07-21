@@ -39,11 +39,11 @@ rm -rf /home/user
 # no override needed. All durable tenant work belongs in /workspace or
 # /mnt/memory.
 find / -xdev \
-  \( -path /workspace -o -path /tmp -o -path /var/tmp \) -prune \
+  \( -path /workspace -o -path /tmp -o -path /var/tmp -o -path /mnt/memory -o -path /mnt/session/outputs \) -prune \
   -o -user user -exec chown -h root:root {} +
 
 find / -xdev \
-  \( -path /workspace -o -path /tmp -o -path /var/tmp \) -prune \
+  \( -path /workspace -o -path /tmp -o -path /var/tmp -o -path /mnt/memory -o -path /mnt/session/outputs \) -prune \
   -o -type d -perm /0022 -exec chmod go-w {} +
 
 find / -xdev -type f -perm /6000 -exec chmod a-s {} +

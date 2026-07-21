@@ -57,15 +57,11 @@ def test_vma_settings_parse_provider_configuration(monkeypatch):
         '{"gateway":{"adapter":"openai","base_url":"https://models.example/v1"}}',
     )
     monkeypatch.setenv("VMA_CHECKPOINT_DATABASE_URL", "memory://")
-    monkeypatch.setenv("VMA_ALLOW_UNSAFE_LOCAL_SANDBOX", "true")
-    monkeypatch.setenv("VMA_SANDBOX_ROOT", "/tmp/vma-sandboxes")
 
     settings = Settings(_env_file=None)
 
     assert settings.vma_model_providers["gateway"]["adapter"] == "openai"
     assert settings.vma_checkpoint_database_url == "memory://"
-    assert settings.vma_allow_unsafe_local_sandbox is True
-    assert settings.vma_sandbox_root == "/tmp/vma-sandboxes"
 
 
 def test_core_does_not_import_anthropic_sdk():

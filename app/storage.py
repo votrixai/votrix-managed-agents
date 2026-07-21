@@ -176,6 +176,24 @@ async def create_presigned_upload_url(
         )
 
 
+async def create_presigned_download_url(
+    key: str,
+    *,
+    expires_in: int = 300,
+) -> str:
+    config = _require_object_storage()
+    async with _get_session().client(**_client_kwargs()) as client:
+        return await client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": config.bucket_name,
+                "Key": key,
+            },
+            ExpiresIn=expires_in,
+            HttpMethod="GET",
+        )
+
+
 async def get_file_info(key: str) -> dict[str, Any]:
     config = _require_object_storage()
     async with _get_session().client(**_client_kwargs()) as client:

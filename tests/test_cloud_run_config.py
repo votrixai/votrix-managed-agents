@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import stat
-from decimal import Decimal
 from pathlib import Path
 
 from app.config import Settings
@@ -342,45 +341,6 @@ def test_hosted_runtime_has_no_platform_model_api_key() -> None:
         content = _read(relative_path)
         for value in forbidden:
             assert value not in content, f"{value} remains in {relative_path}"
-
-
-def test_cloud_e2b_template_resources_match_the_built_profile() -> None:
-    for environment in ("production", "staging"):
-        for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
-            manifest = _read(path)
-            match = re.search(
-                r"- name: VMA_E2B_TEMPLATE_RESOURCES\s+value: '([^']+)'",
-                manifest,
-            )
-            assert match is not None
-            assert json.loads(match.group(1)) == {"cpu": 2, "memory_mb": 2048}
-
-
-def test_e2b_cost_estimate_defaults_are_pinned_consistently() -> None:
-    expected = {
-        "VMA_E2B_COST_ESTIMATION_ENABLED": "true",
-        "VMA_E2B_VCPU_SECOND_USD": "0.000014",
-        "VMA_E2B_GIB_SECOND_USD": "0.0000045",
-    }
-    fields = Settings.model_fields
-    assert fields["vma_e2b_cost_estimation_enabled"].default is True
-    assert fields["vma_e2b_vcpu_second_usd"].default == Decimal(
-        expected["VMA_E2B_VCPU_SECOND_USD"]
-    )
-    assert fields["vma_e2b_gib_second_usd"].default == Decimal(
-        expected["VMA_E2B_GIB_SECOND_USD"]
-    )
-
-    dotenv = _read(".env.example")
-    for name, value in expected.items():
-        assert re.search(rf"^{name}={re.escape(value)}$", dotenv, re.MULTILINE)
-        for environment in ("production", "staging"):
-            for path in (f"service.{environment}.yaml", f"service.worker.{environment}.yaml"):
-                manifest = _read(path)
-                assert re.search(
-                    rf'- name: {name}\s+value: ["\']{re.escape(value)}["\']',
-                    manifest,
-                )
 
 
 def test_cloud_build_waits_for_migration_job_before_service_deploy() -> None:

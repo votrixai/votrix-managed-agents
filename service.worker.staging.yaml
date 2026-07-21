@@ -104,30 +104,16 @@ spec:
               value: "e2b"
             - name: VMA_E2B_TEMPLATE
               value: "vma-hardened"
-            - name: VMA_E2B_TEMPLATE_RESOURCES
-              value: '{"cpu":2,"memory_mb":2048}'
-            - name: VMA_E2B_COST_ESTIMATION_ENABLED
-              value: "true"
-            - name: VMA_E2B_VCPU_SECOND_USD
-              value: "0.000014"
-            - name: VMA_E2B_GIB_SECOND_USD
-              value: "0.0000045"
             - name: VMA_E2B_WORKDIR
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER
               value: "user"
             - name: VMA_E2B_TIMEOUT_SECONDS
               value: "900"
-            - name: VMA_E2B_AUTO_PAUSE
-              value: "true"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
             - name: VMA_E2B_KEEP_MEMORY
               value: "true"
-            - name: VMA_E2B_PAUSE_ON_EXIT
-              value: "true"
-            - name: VMA_E2B_ALLOW_PUBLIC_TRAFFIC
-              value: "false"
             - name: VMA_ALLOW_PLAINTEXT_SECRETS_LOCAL
               value: "false"
             - name: VMA_REQUIRE_BETA_HEADER
