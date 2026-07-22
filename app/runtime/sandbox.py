@@ -6,6 +6,16 @@ import mimetypes
 import shlex
 from typing import Any
 
+from deepagents.backends.protocol import (
+    EditResult,
+    ExecuteResponse,
+    GlobResult,
+    GrepResult,
+    LsResult,
+    ReadResult,
+    SandboxBackendProtocol,
+    WriteResult,
+)
 from e2b import AsyncSandbox
 from langchain_e2b import AsyncE2BSandbox
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,25 +34,36 @@ from app.storage import (
 
 
 class Sandbox:
-    """One instance = one connected E2B sandbox, bound to one VMA session."""
+    """One instance = one E2B sandbox, bound to one VMA session.
+
+    Connecting to E2B is a real API call that resumes (and bills for) a
+    paused sandbox, so ``Sandbox`` never does it up front. A freshly built
+    instance may only know its ``sandbox_id`` — the first call that actually
+    touches the sandbox runs ``ensure_connected()``, and every later call
+    re-validates the connection before using it, so a sandbox that auto-paused
+    mid-turn (the model took a while between tool calls) heals itself instead
+    of failing.
+    """
 
     def __init__(
         self,
-        native: AsyncSandbox,
+        sandbox_id: str,
         session_id: str,
         organization_id: str,
         guest_user: str,
         timeout_seconds: int,
+        native: AsyncSandbox | None = None,
     ) -> None:
-        self._native = native
+        self._sandbox_id = sandbox_id
         self._session_id = session_id
         self._organization_id = organization_id
         self._guest_user = guest_user
         self._timeout_seconds = timeout_seconds
+        self._native = native
 
     @property
     def sandbox_id(self) -> str:
-        return self._native.sandbox_id
+        return self._sandbox_id
 
     @property
     def session_id(self) -> str:
@@ -53,23 +74,31 @@ class Sandbox:
         return self._organization_id
 
     @property
-    def to_async_e2b_sandbox(self) -> AsyncE2BSandbox:
-        """Wrap this sandbox so it can be passed as create_deep_agent(backend=...)."""
-        return AsyncE2BSandbox(
-            sandbox=self._native,
-            workdir=get_settings().vma_e2b_workdir,
-            timeout=self._timeout_seconds,
-        )
+    def to_deep_agent_backend(self) -> LazyE2BBackend:
+        """Wrap this sandbox so it can be passed as create_deep_agent(backend=...).
+
+        Building this makes no network call. The connection happens lazily,
+        the first time the agent actually calls a filesystem/execute tool.
+        """
+        return LazyE2BBackend(self)
 
     # ---- construction: knows about VMA sessions/db ----------------------
 
     @classmethod
-    async def provision(cls, db: AsyncSession, session_id: str, organization_id: str, template: str) -> Sandbox:
-        """Create a brand-new E2B sandbox and persist its id for this session.
+    async def provision(
+        cls,
+        db: AsyncSession,
+        session_id: str,
+        organization_id: str,
+        template: str,
+        skill_refs: list[dict[str, Any]],
+    ) -> Sandbox:
+        """Create a brand-new E2B sandbox, persist its id, and install skills.
 
         Called once, the first time a session needs a sandbox. ``template`` is
-        an E2B template name (or ``name:tag``) — callers choose it, since it
-        is a per-session decision, not a global setting.
+        an E2B template name (or ``name:tag``); ``skill_refs`` is the
+        session's ``EffectiveAgentVersion.skills`` list — callers choose both,
+        since they are per-session decisions, not global settings.
         """
         settings = get_settings()
         native = await AsyncSandbox.create(
@@ -93,8 +122,30 @@ class Sandbox:
             template_id=template,
             organization_id=organization_id,
         )
+        sandbox = cls(
+            native.sandbox_id,
+            session_id,
+            organization_id,
+            settings.vma_e2b_guest_user,
+            settings.vma_e2b_timeout_seconds,
+            native=native,
+        )
+        if skill_refs:
+            await sandbox.install_skills(db, skill_refs)
+        return sandbox
+
+    @classmethod
+    def from_id(cls, sandbox_id: str, session_id: str, organization_id: str) -> Sandbox:
+        """Reference an already-known E2B sandbox id without connecting yet.
+
+        Pure local construction, no network call. The caller looks up
+        ``sandbox_id`` (e.g. via ``get_session_sandbox().external_sandbox_id``)
+        — this classmethod does not touch the database or E2B. Call this once
+        per turn; the actual connection happens lazily on first use.
+        """
+        settings = get_settings()
         return cls(
-            native,
+            sandbox_id,
             session_id,
             organization_id,
             settings.vma_e2b_guest_user,
@@ -103,32 +154,44 @@ class Sandbox:
 
     @classmethod
     async def connect(cls, sandbox_id: str, session_id: str, organization_id: str) -> Sandbox:
-        """Reconnect to an already-known E2B sandbox id.
+        """Reference an already-known E2B sandbox id and connect immediately.
 
-        The caller looks up ``sandbox_id`` (e.g. via
-        ``get_session_sandbox().external_sandbox_id``) — this classmethod does
-        not touch the database. Called once per turn.
+        Convenience for callers that need a live connection right away (tests,
+        one-off scripts). Turn execution should prefer ``from_id`` and let the
+        connection happen lazily.
         """
+        sandbox = cls.from_id(sandbox_id, session_id, organization_id)
+        await sandbox.ensure_connected()
+        return sandbox
+
+    # ---- connection freshness ----------------------------------------------
+
+    async def ensure_connected(self) -> None:
+        """Make sure ``self._native`` is a live, unexpired connection.
+
+        Connecting is a real E2B API call that resumes a paused sandbox (and
+        is billed for it), so this only pays that cost when needed: never
+        connected yet, or the held connection is no longer running. Otherwise
+        it just extends the timeout on the connection already held.
+        """
+        if self._native is not None and await self._native.is_running():
+            await self._native.set_timeout(self._timeout_seconds)
+            return
         settings = get_settings()
-        native = await AsyncSandbox.connect(
-            sandbox_id,
-            timeout=settings.vma_e2b_timeout_seconds,
+        self._native = await AsyncSandbox.connect(
+            self._sandbox_id,
+            timeout=self._timeout_seconds,
             api_key=settings.e2b_api_key,
-        )
-        return cls(
-            native,
-            session_id,
-            organization_id,
-            settings.vma_e2b_guest_user,
-            settings.vma_e2b_timeout_seconds,
         )
 
     # ---- lifecycle --------------------------------------------------------
 
     async def pause(self) -> None:
+        await self.ensure_connected()
         await self._native.pause(keep_memory=get_settings().vma_e2b_keep_memory)
 
     async def kill(self) -> None:
+        await self.ensure_connected()
         await self._native.kill()
 
     # ---- files --------------------------------------------------------------
@@ -178,48 +241,24 @@ class Sandbox:
         )
         return resource.id
 
-    # ---- memory / skills ------------------------------------------------------
-    # Memory content already lives in the database as plain text — no R2, no
-    # curl, just one batched write straight to e2b. Skills are zip archives in
-    # R2, so they follow the same curl-then-unpack shape as upload_file.
+    async def discover_outputs(self, db: AsyncSession, *, max_files: int = 100) -> list[str]:
+        """Register every file under the session's output directory as a file resource.
 
-    async def install_memory(self, db: AsyncSession) -> None:
-        """Write every memory file attached to this session into the sandbox.
-
-        One batched ``write_files`` call regardless of how many memory files
-        exist, so this doesn't add one network round trip per file.
+        Every call re-registers everything currently under the output root —
+        it does not track what a prior call already discovered, so calling
+        this more than once for an unchanged set of output files creates
+        duplicate file resources. Callers that need idempotency across
+        retries/recovery need to de-duplicate on their end for now.
         """
-        session_resources = await res_q.list_resources(
-            db,
-            resource_type="session_resource",
-            parent_id=self._session_id,
-            organization_id=self._organization_id,
-            limit=1000,
-        )
-        entries: list[dict[str, Any]] = []
-        for resource in session_resources:
-            data = resource.data or {}
-            if data.get("type") != "memory_store":
-                continue
-            mount_path = str(data["mount_path"])
-            memories = await res_q.list_resources(
-                db,
-                resource_type="memory",
-                parent_id=str(data["memory_store_id"]),
-                organization_id=self._organization_id,
-                limit=1000,
-            )
-            for memory in memories:
-                memory_data = memory.data or {}
-                entries.append(
-                    {
-                        "path": f"{mount_path}/{memory_data['path_key']}",
-                        "data": str(memory_data.get("content") or ""),
-                    }
-                )
+        root = f"{get_settings().vma_e2b_workdir}/outputs"
+        result = await self.run(f"find {shlex.quote(root)} -type f 2>/dev/null | head -n {int(max_files)}")
+        paths = [line for line in result.stdout.splitlines() if line.strip()]
+        return [await self.download_file(db, path) for path in paths]
 
-        if entries:
-            await self._native.files.write_files(entries, user=self._guest_user)
+    # ---- skills -----------------------------------------------------------
+    # Skills are zip archives in R2 and can contain executable helper files,
+    # so — unlike memory — they have to become real files in the sandbox for
+    # `execute` to run them. Same curl-then-unpack shape as upload_file.
 
     async def install_skills(self, db: AsyncSession, skill_refs: list[dict[str, Any]]) -> None:
         """Download and unpack every skill referenced by ``skill_refs``.
@@ -250,12 +289,22 @@ class Sandbox:
             if skill_version is None or not skill_version.storage_key:
                 raise ValueError(f"Skill {skill_id} version {version_number} is not available")
 
+            # The archive's members are already rooted under top_level_directory/
+            # (that's how skills.py validates and builds it — see
+            # _validate_skill_files / _zip_uploaded_files) — extract straight
+            # into skills_root, not skills_root/top_level_directory, or the
+            # directory ends up nested twice.
             top_level_directory = str(skill_version.data["top_level_directory"])
             url = await create_presigned_download_url(skill_version.storage_key)
             zip_path = f"/tmp/{skill_id}-v{version_number}.zip"
             await self.run(f"curl -fsSL -o {shlex.quote(zip_path)} {shlex.quote(url)}", user="root")
+            # unzip runs as root, and zips built with Python's zipfile.writestr
+            # (no explicit Unix mode) commonly extract as 600 root:root — the
+            # guest user couldn't read or execute anything without this chmod.
+            extracted_dir = f"{skills_root}/{top_level_directory}"
             await self.run(
-                f"unzip -oq {shlex.quote(zip_path)} -d {shlex.quote(f'{skills_root}/{top_level_directory}')} "
+                f"unzip -oq {shlex.quote(zip_path)} -d {shlex.quote(skills_root)} "
+                f"&& chmod -R a+rX {shlex.quote(extracted_dir)} "
                 f"&& rm -f {shlex.quote(zip_path)}",
                 user="root",
             )
@@ -263,10 +312,83 @@ class Sandbox:
     # ---- commands -----------------------------------------------------------
 
     async def run(self, command: str, **kwargs: Any) -> Any:
-        await self._native.set_timeout(self._timeout_seconds)
+        await self.ensure_connected()
         kwargs.setdefault("user", self._guest_user)
         kwargs.setdefault("timeout", get_settings().vma_sandbox_command_timeout_seconds)
         return await self._native.commands.run(command, **kwargs)
 
 
-__all__ = ["Sandbox"]
+class LazyE2BBackend(SandboxBackendProtocol):
+    """DeepAgents backend that connects on first use and self-heals afterward.
+
+    ``AsyncE2BSandbox`` (langchain_e2b) needs an already-connected native
+    sandbox at construction time and never re-validates it — fine for a
+    single call, wrong for a whole agent turn where the model can take
+    minutes between tool calls and the sandbox can auto-pause mid-turn. This
+    wraps it: every call runs ``Sandbox.ensure_connected()`` first, then
+    delegates to an ``AsyncE2BSandbox`` rebuilt whenever the underlying
+    connection was replaced.
+    """
+
+    def __init__(self, sandbox: Sandbox) -> None:
+        self._sandbox = sandbox
+        self._delegate: AsyncE2BSandbox | None = None
+        self._delegate_native: AsyncSandbox | None = None
+
+    async def _ready(self) -> AsyncE2BSandbox:
+        await self._sandbox.ensure_connected()
+        native = self._sandbox._native
+        if self._delegate is None or self._delegate_native is not native:
+            self._delegate = AsyncE2BSandbox(
+                sandbox=native,
+                workdir=get_settings().vma_e2b_workdir,
+                timeout=self._sandbox._timeout_seconds,
+            )
+            self._delegate_native = native
+        return self._delegate
+
+    @property
+    def id(self) -> str:
+        return self._sandbox.sandbox_id
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        backend = await self._ready()
+        return await backend.aexecute(command, timeout=timeout)
+
+    async def als(self, path: str) -> LsResult:
+        backend = await self._ready()
+        return await backend.als(path)
+
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        backend = await self._ready()
+        return await backend.aread(file_path, offset=offset, limit=limit)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        backend = await self._ready()
+        return await backend.awrite(file_path, content)
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        backend = await self._ready()
+        return await backend.aedit(file_path, old_string, new_string, replace_all=replace_all)
+
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+        backend = await self._ready()
+        return await backend.aglob(pattern, path=path)
+
+    async def agrep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        backend = await self._ready()
+        return await backend.agrep(pattern, path=path, glob=glob)
+
+
+__all__ = ["LazyE2BBackend", "Sandbox"]

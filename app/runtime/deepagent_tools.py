@@ -28,6 +28,7 @@ CLAUDE_TO_DEEP_TOOLS: dict[str, tuple[str, ...]] = {
     "web_fetch": ("web_fetch",),
     "web_search": ("web_search",),
 }
+
 DEEP_TO_CLAUDE_TOOL = {
     deep_name: public_name
     for public_name, deep_names in CLAUDE_TO_DEEP_TOOLS.items()

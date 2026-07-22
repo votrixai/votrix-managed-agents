@@ -212,7 +212,6 @@ async def _run_session_turn(
             )
             effective_version = effective_agent_version(version, session.status_details)
             previous_run_state = dict(session.run_state or {})
-            checkpoint_thread_id = session.runtime_thread_id
             environment_id = session.environment_id
 
         if journal_payload is not None:
@@ -228,7 +227,7 @@ async def _run_session_turn(
                 effective_version,
                 history,
                 previous_run_state,
-                thread_id=checkpoint_thread_id,
+                thread_id=session_id,
                 work_id=work_lease.work_id if work_lease is not None else "",
                 emit_event=emit_event,
                 begin_recovery=begin_recovery if work_lease is not None else None,
@@ -1233,13 +1232,19 @@ async def _execute(
 ) -> RuntimeResult:
     from app.runtime.deepagents_engine import execute_deep_agent
 
+    context = dict(runtime_context or {})
     return await execute_deep_agent(
         version,
         history,
         environment_config,
-        runtime_context=runtime_context,
-        organization_id=organization_id,
-        session_id=session_id,
+        organization_id=organization_id or str(context.get("organization_id") or ""),
+        session_id=session_id or str(context.get("session_id") or ""),
+        work_id=str(context.get("work_id") or ""),
+        previous_run_state=context.get("previous_run_state"),
+        provider_secrets=context.get("provider_secrets"),
+        mcp_auth=context.get("mcp_auth"),
+        subagents=context.get("subagents"),
+        completed_checkpoint_recovery_checked=bool(context.get("_completed_checkpoint_recovery_checked")),
         emit_event=emit_event,
         emit_preview=emit_preview,
         admit_execution=admit_execution,
