@@ -226,6 +226,90 @@ class VmaModelEvidenceCollector(AsyncCallbackHandler):
         }
 
 
+class VmaModelSpanEmitter(AsyncCallbackHandler):
+    """Publish a Managed Agents model-request span around every model call.
+
+    Claude brackets each model request with ``span.model_request_start`` /
+    ``span.model_request_end``, and the end event carries that request's token
+    usage. It is the only per-request usage signal on the public event stream,
+    so metering consumers read it rather than the turn-level totals. Subagent
+    and summarization calls are included: they draw the same tokens as the
+    coordinator's own requests.
+    """
+
+    def __init__(
+        self,
+        emit_event: RuntimeEventEmitter | None,
+        tool_events: list[dict[str, Any]],
+        *,
+        thread_id: str,
+    ) -> None:
+        self._emit_event = emit_event
+        self._tool_events = tool_events
+        self._thread_id = thread_id
+        self._open_spans: dict[str, str] = {}
+
+    def _span_event_id(self, run_key: str, event_type: str) -> str:
+        return _tool_event_id(self._thread_id, f"llm:{run_key}", event_type)
+
+    async def on_chat_model_start(self, serialized: Any, messages: Any, *, run_id: Any, **kwargs: Any) -> None:
+        await self._open_span(run_id)
+
+    async def on_llm_start(self, serialized: Any, prompts: Any, *, run_id: Any, **kwargs: Any) -> None:
+        await self._open_span(run_id)
+
+    async def on_llm_end(self, response: Any, *, run_id: Any, **kwargs: Any) -> None:
+        await self._close_span(run_id, response=response, is_error=False)
+
+    async def on_llm_error(self, error: BaseException, *, run_id: Any, **kwargs: Any) -> None:
+        await self._close_span(run_id, response=None, is_error=True)
+
+    async def _open_span(self, run_id: Any) -> None:
+        run_key = str(run_id)
+        if run_key in self._open_spans:
+            # A chat model reports through both callbacks; bracket it once.
+            return
+        event_id = self._span_event_id(run_key, "span.model_request_start")
+        self._open_spans[run_key] = event_id
+        await _emit(
+            {
+                "type": "span.model_request_start",
+                "source": "deepagents",
+                "_event_id": event_id,
+            },
+            self._emit_event,
+            self._tool_events,
+        )
+
+    async def _close_span(self, run_id: Any, *, response: Any, is_error: bool) -> None:
+        run_key = str(run_id)
+        start_event_id = self._open_spans.pop(run_key, None)
+        if start_event_id is None:
+            return
+        usage: dict[str, Any] = {}
+        for generations in getattr(response, "generations", None) or []:
+            for generation in generations or []:
+                message = getattr(generation, "message", None)
+                if message is not None:
+                    _merge_usage(usage, getattr(message, "usage_metadata", None))
+        llm_output = getattr(response, "llm_output", None)
+        if not usage and isinstance(llm_output, dict):
+            _merge_usage(usage, llm_output.get("token_usage"))
+            _merge_usage(usage, llm_output.get("usage"))
+        await _emit(
+            {
+                "type": "span.model_request_end",
+                "model_request_start_id": start_event_id,
+                "is_error": is_error,
+                "model_usage": _span_model_usage(usage),
+                "source": "deepagents",
+                "_event_id": self._span_event_id(run_key, "span.model_request_end"),
+            },
+            self._emit_event,
+            self._tool_events,
+        )
+
+
 class VmaTurnEvidenceMiddleware(AgentMiddleware[VmaDeepAgentState, TenantRunContext, Any]):
     """Checkpoint one deduplicated usage/text record per completed model call."""
 
@@ -601,6 +685,7 @@ async def execute_deep_agent(
             permissions = [FilesystemPermission(operations=["write"], paths=read_only_paths, mode="deny")]
 
         evidence_collector = VmaModelEvidenceCollector()
+        span_emitter = VmaModelSpanEmitter(emit_event, tool_events, thread_id=thread_id)
         subagents = _materialize_subagents(runtime_context, secrets if isinstance(secrets, dict) else {})
         for subagent in subagents:
             middleware = list(subagent.get("middleware") or [])
@@ -671,7 +756,7 @@ async def execute_deep_agent(
         config = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": max(10, int(get_settings().vma_max_graph_steps)),
-            "callbacks": [evidence_collector],
+            "callbacks": [evidence_collector, span_emitter],
         }
         checkpoint = await graph.aget_state(config) if work_id else None
         marker = _checkpoint_turn_marker(checkpoint)
@@ -872,6 +957,25 @@ def _turn_input_message_id(work_id: str, processed_seq: int) -> str:
 def _tool_event_id(thread_id: str, tool_use_id: str, event_type: str) -> str:
     material = f"{thread_id}:{tool_use_id}:{event_type}"
     return "evt_" + hashlib.sha1(material.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
+
+
+# Harness-internal Deep Agents tools. They have no Claude Managed Agents
+# equivalent, and their results are deliberately withheld, so publishing their
+# calls would leave every consumer with a tool use that never completes.
+_HARNESS_INTERNAL_TOOLS = frozenset({"write_todos", "task"})
+
+
+def _tool_use_event_type(
+    internal_name: str,
+    *,
+    custom_names: set[str],
+    mcp_tool_names: set[str],
+) -> str:
+    if internal_name in custom_names:
+        return "agent.custom_tool_use"
+    if internal_name in mcp_tool_names:
+        return "agent.mcp_tool_use"
+    return "agent.tool_use"
 
 
 def _graph_input_with_turn_marker(
@@ -1313,26 +1417,13 @@ async def _emit_tool_use(
 ) -> _EmittedToolCall:
     internal_name = call["name"]
     public_name = DEEP_TO_CLAUDE_TOOL.get(internal_name, internal_name)
-    if internal_name in custom_names:
-        event_type = "agent.custom_tool_use"
-    elif internal_name in mcp_tool_names:
-        event_type = "agent.mcp_tool_use"
-    else:
-        event_type = "agent.tool_use"
-    payload: dict[str, Any] = {
-        "type": event_type,
-        "name": public_name,
-        "input": call["args"],
-        "tool_use_id": call["id"],
-        "source": "deepagents",
-        "_event_id": _tool_event_id(thread_id, str(call["id"]), event_type),
-    }
-    if internal_name in custom_specs:
-        payload["tool"] = custom_specs[internal_name]
-    if requires_confirmation:
-        payload["requires_confirmation"] = True
-    event_id = await _emit(payload, emit_event, tool_events)
-    return _EmittedToolCall(
+    event_type = _tool_use_event_type(
+        internal_name,
+        custom_names=custom_names,
+        mcp_tool_names=mcp_tool_names,
+    )
+    event_id = _tool_event_id(thread_id, str(call["id"]), event_type)
+    emitted = _EmittedToolCall(
         event_id=event_id,
         event_type=event_type,
         internal_id=call["id"],
@@ -1340,6 +1431,25 @@ async def _emit_tool_use(
         public_name=public_name,
         args=call["args"],
     )
+    if internal_name in _HARNESS_INTERNAL_TOOLS:
+        # Tracked for interrupt matching and result suppression, never published.
+        return emitted
+    # The Managed Agents tool-use event carries only `id`, `name`, and `input`;
+    # the provider-internal call id stays in ``_EmittedToolCall`` and, for
+    # interrupts, in the run state's ``tool_call_id``.
+    payload: dict[str, Any] = {
+        "type": event_type,
+        "name": public_name,
+        "input": call["args"],
+        "source": "deepagents",
+        "_event_id": event_id,
+    }
+    if internal_name in custom_specs:
+        payload["tool"] = custom_specs[internal_name]
+    if requires_confirmation:
+        payload["requires_confirmation"] = True
+    await _emit(payload, emit_event, tool_events)
+    return emitted
 
 
 async def _emit_tool_result(
@@ -1357,14 +1467,27 @@ async def _emit_tool_result(
         raise DeepAgentsRuntimeError("A tool result has no stable tool call identity")
     emitted = emitted_calls.get(internal_id)
     name = str(getattr(message, "name", "") or (emitted.internal_name if emitted else "tool"))
-    if name in custom_names or name in {"write_todos", "task"}:
+    if name in custom_names or name in _HARNESS_INTERNAL_TOOLS:
         return
-    event_type = "agent.mcp_tool_result" if name in mcp_tool_names else "agent.tool_result"
+    is_mcp = name in mcp_tool_names
+    event_type = "agent.mcp_tool_result" if is_mcp else "agent.tool_result"
+    use_event_type = "agent.mcp_tool_use" if is_mcp else "agent.tool_use"
+    # Managed Agents results reference the *event* that opened the call, not the
+    # provider-internal call id, and the field is named per result type:
+    # `tool_use_id` on agent.tool_result, `mcp_tool_use_id` on
+    # agent.mcp_tool_result. The tool-use event id is derived from the same
+    # material, so it resolves even when the use landed in an earlier batch.
+    use_event_id = (
+        emitted.event_id
+        if emitted is not None
+        else _tool_event_id(thread_id, internal_id, use_event_type)
+    )
+    reference_field = "mcp_tool_use_id" if is_mcp else "tool_use_id"
     await _emit(
         {
             "type": event_type,
             "name": DEEP_TO_CLAUDE_TOOL.get(name, name),
-            "tool_use_id": internal_id or None,
+            reference_field: use_event_id,
             "content": [{"type": "text", "text": _content_text(message.content)}],
             "source": "deepagents",
             "_event_id": _tool_event_id(thread_id, internal_id, event_type),
@@ -1866,6 +1989,31 @@ def _merge_usage(total: dict[str, Any], usage: Any) -> None:
                 current = {}
                 total[key] = current
             _merge_usage(current, value)
+
+
+def _span_token_count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _span_model_usage(usage: Any) -> dict[str, int]:
+    """Project LangChain usage metadata onto the Managed Agents span shape.
+
+    LangChain counts cached tokens inside ``input_tokens``; Managed Agents
+    reports them alongside an input count that excludes them, so the cached
+    portions are subtracted rather than double-counted.
+    """
+    data = usage if isinstance(usage, dict) else {}
+    details = data.get("input_token_details")
+    details = details if isinstance(details, dict) else {}
+    cache_read = _span_token_count(details.get("cache_read"))
+    cache_creation = _span_token_count(details.get("cache_creation"))
+    input_tokens = _span_token_count(data.get("input_tokens")) - cache_read - cache_creation
+    return {
+        "input_tokens": max(input_tokens, 0),
+        "output_tokens": _span_token_count(data.get("output_tokens")),
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_creation,
+    }
 
 
 def _graph_name(name: str, identifier: str) -> str:

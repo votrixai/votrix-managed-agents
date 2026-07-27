@@ -361,6 +361,23 @@ async def test_backend_session_file_event_and_sse_parser_wire_contract():
         idle_event = next(item for item in durable_events if item.type == "session.status_idle")
         await _assert_backend_sse_parser_accepts_event(idle_event.model_dump(mode="json"))
 
+        # The backend meters model tokens exclusively from the model-request
+        # span pair, so a turn that emits no span records no usage at all.
+        starts = [item for item in durable_events if item.type == "span.model_request_start"]
+        ends = [item for item in durable_events if item.type == "span.model_request_end"]
+        assert starts and ends
+        start_ids = {item.id for item in starts}
+        for end in ends:
+            payload = end.model_dump(mode="json")
+            assert payload["model_request_start_id"] in start_ids
+            assert set(payload["model_usage"]) >= {
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            }
+            await _assert_backend_sse_parser_accepts_event(payload)
+
         deleted = await client.beta.sessions.delete(session.id, **BETA_KWARG)
         assert deleted.id == session.id
         deleted_file = await client.beta.files.delete(uploaded.id, **FILES_BETA_KWARG)

@@ -156,6 +156,28 @@ def _idempotency_error(claim: TenantIdempotencyClaim) -> HTTPException:
         detail="A request with this Idempotency-Key is still in progress",
     )
 
+
+def _session_conflict(code: str, message: str) -> HTTPException:
+    """Return a 409 whose reason a client can branch on without reading prose.
+
+    Managed Agents reports state conflicts as `409 invalid_request_error`, but
+    the reason only appears in the message. Callers that must distinguish an
+    archived Session from one that is merely busy would otherwise have to match
+    on wording, so the stable `code` is carried alongside it.
+    """
+    return HTTPException(
+        status_code=409,
+        detail={
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": code,
+                "message": message,
+            },
+        },
+    )
+
+
 router = APIRouter(
     prefix="/v1/sessions",
     tags=["sessions"],
@@ -539,9 +561,9 @@ async def send_events(
             return SendEventsResponse.model_validate(existing.response_body)
 
     if session.archived_at is not None:
-        raise HTTPException(status_code=409, detail="Session is archived")
+        raise _session_conflict("session_archived", "Session is archived")
     if session.status == SESSION_TERMINATED:
-        raise HTTPException(status_code=409, detail="Session is terminated")
+        raise _session_conflict("session_terminated", "Session is terminated")
     environment = await env_q.get_environment(db, session.environment_id)
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
@@ -550,7 +572,10 @@ async def send_events(
     await _validate_event_batch(db, session, event_inputs)
     if any(starts_work(event.type) or is_action_result(event.type) for event in event_inputs):
         if await get_active_session_work(db, session) is not None:
-            raise HTTPException(status_code=409, detail="Session already has active work")
+            raise _session_conflict(
+                "session_has_active_work",
+                "Session already has active work",
+            )
 
     appended = []
     should_run = False
@@ -1019,19 +1044,28 @@ async def _validate_event_batch(db: AsyncSession, session, event_inputs: list) -
     if session.status in ACTIVE_STATUSES:
         if event_types == ["user.interrupt"]:
             return
-        raise HTTPException(status_code=409, detail=f"Cannot send events while session is {session.status}")
+        raise _session_conflict(
+            "session_busy",
+            f"Cannot send events while session is {session.status}",
+        )
 
     if is_waiting_for_action(session.stop_reason):
         if event_types == ["user.interrupt"]:
             return
         action_result_inputs = [event_input for event_input in event_inputs if event_input.type != "system.message"]
         if not action_result_inputs or not all(event_input.type in ACTION_RESULT_EVENTS for event_input in action_result_inputs):
-            raise HTTPException(status_code=409, detail="Session is waiting for required action results")
+            raise _session_conflict(
+                "session_awaiting_action_results",
+                "Session is waiting for required action results",
+            )
         await _validate_action_results(db, session, action_result_inputs)
         return
 
     if any(event_type in ACTION_RESULT_EVENTS for event_type in event_types):
-        raise HTTPException(status_code=409, detail="Session is not waiting for action results")
+        raise _session_conflict(
+            "session_not_awaiting_action_results",
+            "Session is not waiting for action results",
+        )
 
     await validate_user_message_file_references(db, session, event_inputs)
 

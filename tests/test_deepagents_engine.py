@@ -18,10 +18,14 @@ from pydantic import Field, PrivateAttr
 from app.runtime.contracts import EffectiveAgentVersion
 from app.runtime.deepagents_engine import (
     DeepAgentsRuntimeError,
+    VmaModelSpanEmitter,
     _completed_tool_calls,
+    _emit_tool_result,
+    _emit_tool_use,
     _graph_input,
     _message_event_id,
     _merge_turn_evidence,
+    _span_model_usage,
     _stream_graph,
     _tool_event_id,
     execute_deep_agent,
@@ -147,6 +151,163 @@ def test_runtime_event_ids_are_stable_for_logical_event_identity():
     )
 
 
+def test_span_model_usage_separates_cached_tokens_from_fresh_input():
+    projected = _span_model_usage(
+        {
+            "input_tokens": 1000,
+            "output_tokens": 120,
+            "input_token_details": {"cache_read": 600, "cache_creation": 150},
+        }
+    )
+    assert projected == {
+        "input_tokens": 250,
+        "output_tokens": 120,
+        "cache_read_input_tokens": 600,
+        "cache_creation_input_tokens": 150,
+    }
+    # Absent, malformed, and negative counts all collapse to zero rather than
+    # producing a span the SDK cannot parse.
+    assert _span_model_usage(None) == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    assert _span_model_usage({"input_tokens": 10, "input_token_details": {"cache_read": 40}})[
+        "input_tokens"
+    ] == 0
+
+
+async def test_model_spans_bracket_each_request_and_carry_its_usage():
+    durable: list[dict[str, Any]] = []
+
+    async def emit_event(payload):
+        durable.append(dict(payload))
+        return payload["_event_id"]
+
+    emitter = VmaModelSpanEmitter(emit_event, [], thread_id="thread_a")
+    await emitter.on_chat_model_start({}, [], run_id="run-1")
+    # A chat model reports through both start callbacks; only one span opens.
+    await emitter.on_llm_start({}, [], run_id="run-1")
+    await emitter.on_llm_end(
+        SimpleNamespace(
+            generations=[
+                [
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            usage_metadata={
+                                "input_tokens": 900,
+                                "output_tokens": 40,
+                                "input_token_details": {"cache_read": 800},
+                            }
+                        )
+                    )
+                ]
+            ],
+            llm_output=None,
+        ),
+        run_id="run-1",
+    )
+
+    assert [event["type"] for event in durable] == [
+        "span.model_request_start",
+        "span.model_request_end",
+    ]
+    start, end = durable
+    assert end["model_request_start_id"] == start["_event_id"]
+    assert end["is_error"] is False
+    assert end["model_usage"] == {
+        "input_tokens": 100,
+        "output_tokens": 40,
+        "cache_read_input_tokens": 800,
+        "cache_creation_input_tokens": 0,
+    }
+
+    # A failed request still closes its span so consumers never leak one.
+    durable.clear()
+    await emitter.on_chat_model_start({}, [], run_id="run-2")
+    await emitter.on_llm_error(RuntimeError("boom"), run_id="run-2")
+    assert [event["type"] for event in durable] == [
+        "span.model_request_start",
+        "span.model_request_end",
+    ]
+    assert durable[1]["is_error"] is True
+
+    # An end without a matching start is dropped rather than emitted unpaired.
+    durable.clear()
+    await emitter.on_llm_end(SimpleNamespace(generations=[], llm_output=None), run_id="run-3")
+    assert durable == []
+
+
+async def test_mcp_tool_results_use_the_managed_agents_reference_field():
+    durable: list[dict[str, Any]] = []
+
+    async def emit_event(payload):
+        durable.append(dict(payload))
+        return payload["_event_id"]
+
+    emitted = await _emit_tool_use(
+        {"id": "call_mcp", "name": "linear_search", "args": {"query": "bug"}},
+        emit_event=emit_event,
+        tool_events=[],
+        custom_names=set(),
+        custom_specs={},
+        mcp_tool_names={"linear_search"},
+        requires_confirmation=False,
+        thread_id="thread_a",
+    )
+    await _emit_tool_result(
+        ToolMessage(content="ok", name="linear_search", tool_call_id="call_mcp"),
+        {"call_mcp": emitted},
+        emit_event=emit_event,
+        tool_events=[],
+        custom_names=set(),
+        mcp_tool_names={"linear_search"},
+        thread_id="thread_a",
+    )
+
+    use, result = durable
+    assert use["type"] == "agent.mcp_tool_use"
+    assert result["type"] == "agent.mcp_tool_result"
+    # MCP results reference the use event through `mcp_tool_use_id`, not the
+    # `tool_use_id` used by built-in tool results.
+    assert result["mcp_tool_use_id"] == use["_event_id"]
+    assert "tool_use_id" not in result
+
+
+async def test_harness_internal_tools_stay_off_the_public_event_stream():
+    durable: list[dict[str, Any]] = []
+
+    async def emit_event(payload):
+        durable.append(dict(payload))
+        return payload["_event_id"]
+
+    emitted = await _emit_tool_use(
+        {"id": "call_todo", "name": "write_todos", "args": {"todos": []}},
+        emit_event=emit_event,
+        tool_events=[],
+        custom_names=set(),
+        custom_specs={},
+        mcp_tool_names=set(),
+        requires_confirmation=False,
+        thread_id="thread_a",
+    )
+    await _emit_tool_result(
+        ToolMessage(content="ok", name="write_todos", tool_call_id="call_todo"),
+        {"call_todo": emitted},
+        emit_event=emit_event,
+        tool_events=[],
+        custom_names=set(),
+        mcp_tool_names=set(),
+        thread_id="thread_a",
+    )
+
+    # Neither half is published, so no consumer sees a call that never finishes.
+    assert durable == []
+    # The call is still tracked in-process for interrupt matching.
+    assert emitted.internal_id == "call_todo"
+
+
 def test_turn_evidence_merge_only_accepts_callback_placeholder_enrichment():
     placeholder = {
         "scope": "root",
@@ -263,23 +424,18 @@ async def test_stream_graph_keeps_tool_names_inputs_and_ids_aligned():
     )
 
     uses = [event for event in durable if event["type"] == "agent.tool_use"]
-    assert [
-        (event["name"], event["tool_use_id"], event["input"])
-        for event in uses
-    ] == [
-        ("read", "call_read", {"file_path": "/skills/example/SKILL.md"}),
-        ("bash", "call_pwd", {"command": "pwd"}),
-        (
-            "bash",
-            "call_marker",
-            {"command": "cat /workspace/vma-e2e-marker.txt"},
-        ),
+    assert [(event["name"], event["input"]) for event in uses] == [
+        ("read", {"file_path": "/skills/example/SKILL.md"}),
+        ("bash", {"command": "pwd"}),
+        ("bash", {"command": "cat /workspace/vma-e2e-marker.txt"}),
     ]
+    # The public tool-use event carries no provider-internal call id.
+    assert all("tool_use_id" not in event for event in uses)
+    # Each result points at the id of the tool-use *event* it completes, which
+    # is what the Managed Agents contract defines `tool_use_id` to be.
     results = [event for event in durable if event["type"] == "agent.tool_result"]
     assert [event["tool_use_id"] for event in results] == [
-        "call_read",
-        "call_pwd",
-        "call_marker",
+        event["_event_id"] for event in uses
     ]
     assert result["final_text"] == "done"
 

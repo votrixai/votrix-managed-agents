@@ -91,6 +91,10 @@ Consequence: a request accepted by the newest official SDK may fail validation o
 
 VMA persists an append-only event log and implements common user, agent, tool, status, outcome, and resource shapes. The complete Claude event union, all span nesting, processed-time transitions, mid-run steering, interrupt redirection, and every validation rule are not present.
 
+Model requests are bracketed by `span.model_request_start` / `span.model_request_end`, and the end event carries that request's `model_usage` in the Claude field shape. Every model call is covered, including subagent and summarization calls. Cached tokens are reported in `cache_read_input_tokens` / `cache_creation_input_tokens` and excluded from `input_tokens`, matching Claude rather than the provider-native totals, so a metering consumer can sum the four fields without provider-specific arithmetic. `span.outcome_evaluation_start` / `_ongoing` and the wider span nesting remain absent.
+
+Tool results reference the event that opened the call, not the runtime-internal call id: `agent.tool_result` carries `tool_use_id` and `agent.mcp_tool_result` carries `mcp_tool_use_id`, each holding the id of the matching `agent.tool_use` / `agent.mcp_tool_use` event. Deep Agents' harness-internal tools (`write_todos`, `task`) are withheld from the public stream in both directions, so no consumer sees a tool use that never completes.
+
 Consequence: clients should tolerate unknown/missing optional events and must not infer Claude-identical span traces from VMA events.
 
 ### Beta headers can drift

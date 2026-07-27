@@ -127,6 +127,13 @@ use the same provider.
 
 ## Session Events
 
+Send rejects a request that conflicts with the Session's current state with
+`409` and a stable `error.code`: `session_archived`, `session_terminated`,
+`session_busy`, `session_has_active_work`, `session_awaiting_action_results`, or
+`session_not_awaiting_action_results`. Claude reports the same conditions in
+prose only, so the code is additive — a client that matches on the message keeps
+working, and one that reads the code stops depending on wording.
+
 | Operation | Route | Public Beta | VMA Readiness | Claude Parity |
 | --- | --- | --- | --- | --- |
 | list | `GET /v1/sessions/{session_id}/events` | Yes | Complete | Compatible |

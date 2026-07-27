@@ -1,11 +1,13 @@
 import asyncio
 import hashlib
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
 
 from app.config import get_settings
+from app.ids import new_id
 from app.db.engine import session_scope
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
@@ -318,11 +320,17 @@ async def _run_session_turn(
             explicit_confirmation_events = any(event.get("requires_confirmation") for event in result.tool_events)
             if not result.events_persisted:
                 for tool_event in result.tool_events:
+                    payload = dict(tool_event)
+                    # ``_event_id`` is the producer's reserved identity, not part
+                    # of the public payload — honour it and strip it, the same
+                    # way the streaming persistence path does.
+                    reserved_event_id = payload.pop("_event_id", None)
                     event = await events_q.append_event(
                         db,
                         session,
-                        event_type=tool_event["type"],
-                        payload=tool_event,
+                        event_type=payload["type"],
+                        payload=payload,
+                        event_id=str(reserved_event_id) if reserved_event_id else None,
                     )
                     if _is_required_action_event(
                         result,
@@ -1247,7 +1255,55 @@ async def _execute(
     )
 
 
+def _local_model_spans(usage: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Bracket a simulated turn the way a real model request is bracketed.
+
+    The public event stream is the contract consumers build against, and the
+    model-request span pair is the only per-request usage signal on it. A
+    simulator that skips the pair would let a consumer's metering regress
+    without any test noticing.
+    """
+    start_event_id = new_id("evt")
+    reported = usage if isinstance(usage, dict) else {}
+    return [
+        {"type": "span.model_request_start", "_event_id": start_event_id},
+        {
+            "type": "span.model_request_end",
+            "_event_id": new_id("evt"),
+            "model_request_start_id": start_event_id,
+            "is_error": False,
+            "model_usage": {
+                "input_tokens": int(reported.get("input_tokens") or 0),
+                "output_tokens": int(reported.get("output_tokens") or 0),
+                "cache_read_input_tokens": int(reported.get("cache_read_input_tokens") or 0),
+                "cache_creation_input_tokens": int(
+                    reported.get("cache_creation_input_tokens") or 0
+                ),
+            },
+        },
+    ]
+
+
 async def _execute_local(
+    version,
+    history,
+    environment_config: dict[str, Any] | None = None,
+    *,
+    runtime_context: dict[str, Any] | None = None,
+) -> RuntimeResult:
+    result = await _execute_local_turn(
+        version,
+        history,
+        environment_config,
+        runtime_context=runtime_context,
+    )
+    return replace(
+        result,
+        tool_events=[*_local_model_spans(result.usage), *result.tool_events],
+    )
+
+
+async def _execute_local_turn(
     version,
     history,
     environment_config: dict[str, Any] | None = None,
