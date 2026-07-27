@@ -7,8 +7,8 @@ VMA has two deliberately separate Python client contracts:
 
 | Client | Purpose |
 | --- | --- |
-| `from votrix import AsyncVotrix` | Recommended async client for VMA resources, including Memory Stores, model-provider discovery, Session funding, and raw usage. |
-| `from votrix import Votrix` | Synchronous GA wrapper for API keys, model providers, Vaults, and native model Credentials. |
+| `from votrix.managed_agents import AsyncVotrix` | Recommended async client for VMA resources, including Memory Stores, model-provider discovery, Session funding, and raw usage. |
+| `from votrix.managed_agents import Votrix` | Synchronous GA wrapper for API keys, model providers, Vaults, and native model Credentials. |
 | `from anthropic import AsyncAnthropic` | Compatibility client for the overlapping Claude Managed Agents wire surface. |
 
 They call the same VMA control plane, but they are not interchangeable type
@@ -22,7 +22,7 @@ The SDK lives at `sdks/python` and is built as the independent distribution
 `votrix`. Its import namespace is also `votrix`:
 
 ```python
-from votrix import AsyncVotrix
+from votrix.managed_agents import AsyncVotrix
 ```
 
 The repository root remains the VMA server distribution and continues to
@@ -39,7 +39,7 @@ python -m pip install -e ./sdks/python
 After publication:
 
 ```bash
-python -m pip install votrix
+python -m pip install votrix-managed-agents
 ```
 
 ## Client setup
@@ -49,7 +49,7 @@ or use `VMA_API_KEY` and `VMA_BASE_URL`. The namespaced aliases
 `VOTRIX_VMA_API_KEY` and `VOTRIX_VMA_BASE_URL` are also supported:
 
 ```python
-from votrix import AsyncVotrix
+from votrix.managed_agents import AsyncVotrix
 
 client = AsyncVotrix(
     api_key="vma_live_...",
@@ -225,7 +225,7 @@ HTTP `422` with code `model_credential_required` under a BYOK-only policy.
 The native SDK also supports an explicit Organization funding source:
 
 ```python
-from votrix import SessionFundingRequest
+from votrix.managed_agents import SessionFundingRequest
 
 session = await client.sessions.create(
     agent=agent.id,
@@ -273,7 +273,7 @@ For synchronous provisioning code, use the same nested surface without
 `await`:
 
 ```python
-from votrix import Votrix
+from votrix.managed_agents import Votrix
 
 with Votrix(api_key="vma_live_...", base_url="https://your-vma.example.com") as client:
     vault = client.vaults.create(display_name="End-user credentials")

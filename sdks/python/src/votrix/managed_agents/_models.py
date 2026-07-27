@@ -161,13 +161,96 @@ class UsageEntry(VotrixModel):
     occurred_at: datetime
 
 
+class ModelUsage(VotrixModel):
+    """Token usage for a single model request.
+
+    Cached tokens are reported separately and are not included in
+    ``input_tokens``, so the four counts sum to the request's total.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+
+class StopReason(VotrixModel):
+    """Why a Session went idle.
+
+    ``requires_action`` means the Session is blocked on the caller and
+    ``event_ids`` lists the tool-use events awaiting a result. Every other type
+    is terminal for the turn.
+    """
+
+    type: str
+    event_ids: list[str] = Field(default_factory=list)
+
+
+class ContentBlock(VotrixModel):
+    """One block of an event's content. ``text`` is set on text blocks."""
+
+    type: str
+    text: str | None = None
+
+
+class RetryStatus(VotrixModel):
+    type: str
+
+
+class SessionError(VotrixModel):
+    type: str
+    message: str | None = None
+    retry_status: RetryStatus | None = None
+
+
 class SessionEvent(VotrixModel):
-    id: str
+    """One Session event, with its payload parsed into typed attributes.
+
+    The event surface is open — the server may add types and fields — so this is
+    a single permissive model rather than a closed union: an unrecognized event
+    still parses, with the fields it does not carry left as ``None`` and
+    anything unmodelled reachable through ``model_extra``. Branch on ``type``,
+    then read the fields that type carries:
+
+    ``agent.message``
+        ``content``
+    ``agent.tool_use`` / ``agent.mcp_tool_use`` / ``agent.custom_tool_use``
+        ``name``, ``input``
+    ``agent.tool_result``
+        ``tool_use_id`` (the id of the ``agent.tool_use`` event it completes),
+        ``content``, ``is_error``
+    ``agent.mcp_tool_result``
+        ``mcp_tool_use_id``, ``content``, ``is_error``
+    ``session.status_idle``
+        ``stop_reason``
+    ``session.error``
+        ``error``
+    ``span.model_request_end``
+        ``model_request_start_id``, ``model_usage``
+    """
+
+    id: str | None = None
     type: str
     session_id: str | None = None
     seq: int | None = None
     created_at: datetime | None = None
     processed_at: datetime | None = None
+
+    name: str | None = None
+    input: dict[str, Any] | None = None
+    # Managed Agents sends tool-result content either as blocks or as a bare
+    # string, so both are preserved rather than normalized into one.
+    content: list[ContentBlock] | str | None = None
+    is_error: bool | None = None
+
+    tool_use_id: str | None = None
+    mcp_tool_use_id: str | None = None
+
+    stop_reason: StopReason | None = None
+    error: SessionError | None = None
+
+    model_request_start_id: str | None = None
+    model_usage: ModelUsage | None = None
 
 
 class SendEventsResult(VotrixModel):

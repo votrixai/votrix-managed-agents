@@ -52,8 +52,8 @@ The route-by-route inventory is [Managed Agents API coverage](./managed-agents-a
 New VMA integrations can use the independently packaged native Python clients:
 
 ```python
-from votrix import AsyncVotrix
-from votrix import Votrix
+from votrix.managed_agents import AsyncVotrix
+from votrix.managed_agents import Votrix
 ```
 
 `AsyncVotrix` keeps the familiar resource-oriented GA API while `Votrix`

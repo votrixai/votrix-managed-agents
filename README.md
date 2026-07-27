@@ -426,7 +426,7 @@ pip install votrix
 Until then, install the project directly from `sdks/python`.
 
 ```python
-from votrix import AsyncVotrix
+from votrix.managed_agents import AsyncVotrix
 
 client = AsyncVotrix(
     api_key="vma_live_...",

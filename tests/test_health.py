@@ -46,7 +46,7 @@ async def test_health_routes_expose_package_version_and_public_build(monkeypatch
         health = await client.get("/health")
         database_health = await client.get("/health/db")
 
-    package_version = version("votrix-managed-agents")
+    package_version = version("votrix-managed-agents-server")
     assert health.status_code == 200
     assert health.json() == {
         "status": "ok",

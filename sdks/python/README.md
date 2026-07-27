@@ -20,7 +20,7 @@ python -m pip install -e ./sdks/python
 After the first release, the published installation command will be:
 
 ```bash
-python -m pip install votrix
+python -m pip install votrix-managed-agents
 ```
 
 From inside `sdks/python`, install development dependencies with

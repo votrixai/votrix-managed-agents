@@ -51,7 +51,7 @@ jobs:
         run: uv run pyright
 
       - name: Verify the public import
-        run: uv run python -c "from votrix import AsyncVotrix; assert AsyncVotrix.__name__ == 'AsyncVotrix'"
+        run: uv run python -c "from votrix.managed_agents import AsyncVotrix; assert AsyncVotrix.__name__ == 'AsyncVotrix'"
 
       - name: Build wheel and source distribution
         run: uv build
@@ -63,7 +63,7 @@ jobs:
         run: |
           uv venv --python "${{ matrix.python-version }}" .wheel-smoke
           uv pip install --python .wheel-smoke/bin/python dist/*.whl
-          .wheel-smoke/bin/python -c "import asyncio; from importlib.resources import files; from votrix import AsyncVotrix, Votrix; a=AsyncVotrix(api_key='vma_test_smoke', base_url='https://example.com'); s=Votrix(api_key='vma_test_smoke', base_url='https://example.com'); assert files('votrix').joinpath('py.typed').is_file(); assert hasattr(a, 'api_keys') and hasattr(s, 'api_keys'); assert hasattr(a, 'memory_stores') and not hasattr(s, 'memory_stores') and not hasattr(a.vaults, 'credentials'); asyncio.run(a.close()); s.close()"
+          .wheel-smoke/bin/python -c "import asyncio; from importlib.resources import files; from votrix.managed_agents import AsyncVotrix, Votrix; a=AsyncVotrix(api_key='vma_test_smoke', base_url='https://example.com'); s=Votrix(api_key='vma_test_smoke', base_url='https://example.com'); assert files('votrix.managed_agents').joinpath('py.typed').is_file(); assert hasattr(a, 'api_keys') and hasattr(s, 'api_keys'); assert hasattr(a, 'memory_stores') and not hasattr(s, 'memory_stores') and not hasattr(a.vaults, 'credentials'); asyncio.run(a.close()); s.close()"
 
   server-contract:
     name: Native SDK server contract

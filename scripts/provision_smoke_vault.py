@@ -20,7 +20,7 @@ SDK_SOURCE = Path(__file__).resolve().parents[1] / "sdks" / "python" / "src"
 if str(SDK_SOURCE) not in sys.path:
     sys.path.insert(0, str(SDK_SOURCE))
 
-from votrix import AsyncVotrix  # noqa: E402
+from votrix.managed_agents import AsyncVotrix  # noqa: E402
 
 
 PROVISIONER = "scripts/provision_smoke_vault.py"

@@ -52,7 +52,7 @@ Cloud Run topology now separates API and worker services and uses PostgreSQL
 
 - [x] Keep the server distribution/import surface unchanged and create an
   independently buildable `votrix` project under
-  `sdks/python`, imported as `from votrix import AsyncVotrix`.
+  `sdks/python`, imported as `from votrix.managed_agents import AsyncVotrix`.
 - [x] Add an authenticated, secret-free model-provider catalog and a native
   model-Credential create endpoint that accepts `provider` plus `api_key`
   without exposing `api_key_env` or `secret_name`.

@@ -227,6 +227,18 @@ class AsyncVotrix:
         if self._owns_http_client:
             await self._http_client.aclose()
 
+    def _timeout_for(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
+        """Resolve one call's timeout, falling back to the client default.
+
+        A single client serves both short CRUD calls and long-lived work — an
+        upload of many megabytes, an event stream held open for the length of a
+        turn — so those calls override the default rather than forcing the whole
+        client to be configured for the slowest one.
+        """
+        if timeout is None:
+            return self.timeout
+        return timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout)
+
     async def request(
         self,
         method: str,
@@ -239,6 +251,7 @@ class AsyncVotrix:
         files: Any = None,
         headers: Mapping[str, str] | None = None,
         retry: bool | None = None,
+        timeout: float | httpx.Timeout | None = None,
     ) -> T:
         response = await self._request_response(
             method,
@@ -249,6 +262,7 @@ class AsyncVotrix:
             files=files,
             headers=headers,
             retry=retry,
+            timeout=timeout,
         )
         try:
             payload = response.json()
@@ -287,6 +301,7 @@ class AsyncVotrix:
         *,
         params: Mapping[str, Any] | None = None,
         stream: bool = False,
+        timeout: float | httpx.Timeout | None = None,
     ) -> BinaryResponse:
         if not stream:
             response = await self._request_response(
@@ -294,6 +309,7 @@ class AsyncVotrix:
                 path,
                 params=params,
                 headers={"accept": "application/octet-stream"},
+                timeout=timeout,
             )
             return BinaryResponse(response)
 
@@ -303,7 +319,7 @@ class AsyncVotrix:
             self._url(path),
             params=_clean_params(params),
             headers=self._headers({"accept": "application/octet-stream"}),
-            timeout=self.timeout,
+            timeout=self._timeout_for(timeout),
         )
         response = await self._send(request, can_retry=method.upper() in _SAFE_METHODS, stream=True)
         if response.is_error:
@@ -325,6 +341,7 @@ class AsyncVotrix:
         files: Any = None,
         headers: Mapping[str, str] | None = None,
         retry: bool | None = None,
+        timeout: float | httpx.Timeout | None = None,
     ) -> httpx.Response:
         self._ensure_open()
         method = method.upper()
@@ -336,7 +353,7 @@ class AsyncVotrix:
             data=data,
             files=files,
             headers=self._headers(headers),
-            timeout=self.timeout,
+            timeout=self._timeout_for(timeout),
         )
         is_replay_safe = method in _SAFE_METHODS or "idempotency-key" in request.headers
         can_retry = is_replay_safe and retry is not False
@@ -352,6 +369,7 @@ class AsyncVotrix:
         *,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
+        timeout: float | httpx.Timeout | None = None,
     ) -> httpx.Response:
         self._ensure_open()
         request = self._http_client.build_request(
@@ -359,7 +377,7 @@ class AsyncVotrix:
             self._url(path),
             params=_clean_params(params),
             headers=self._headers({"accept": "text/event-stream", **dict(headers or {})}),
-            timeout=self.timeout,
+            timeout=self._timeout_for(timeout),
         )
         response = await self._send(request, can_retry=True, stream=True)
         if response.is_error:

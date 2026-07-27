@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from votrix import (
+from votrix.managed_agents import (
     AsyncVotrix,
     Memory,
     MemoryListItem,

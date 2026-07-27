@@ -8,7 +8,7 @@ from email.utils import format_datetime
 import httpx
 import pytest
 
-from votrix import (
+from votrix.managed_agents import (
     AsyncVotrix,
     ConflictError,
     InternalServerError,
@@ -16,7 +16,7 @@ from votrix import (
     UnprocessableEntityError,
     VotrixModel,
 )
-import votrix._client as client_module
+import votrix.managed_agents._client as client_module
 
 
 def make_client(handler, *, max_retries: int = 0, auth_scheme: str = "x-api-key"):

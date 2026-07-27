@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, overload
 from urllib.parse import quote
 
+import httpx
+
 from ._client import AsyncVotrix, BinaryResponse
 from ._constants import (
     API_KEYS_PATH,
@@ -855,6 +857,7 @@ class SessionEventsResource:
         event_deltas: Sequence[str] | None = None,
         last_event_id: str | None = None,
         max_reconnects: int | None = None,
+        timeout: float | httpx.Timeout | None = None,
     ) -> AsyncEventStream:
         headers = {"Last-Event-ID": last_event_id} if last_event_id is not None else None
         return AsyncEventStream(
@@ -867,6 +870,7 @@ class SessionEventsResource:
             },
             headers=headers,
             max_reconnects=max_reconnects,
+            timeout=timeout,
         )
 
 
@@ -941,10 +945,11 @@ class FilesResource:
         file: bytes | bytearray | os.PathLike[str] | tuple[str, bytes] | tuple[str, bytes, str] | Any,
         filename: str | None = None,
         mime_type: str | None = None,
+        timeout: float | httpx.Timeout | None = None,
     ) -> FileObject:
         upload = _upload_tuple(file, filename=filename, mime_type=mime_type)
         return await self._client.request(
-            "POST", FILES_PATH, model=FileObject, files={"file": upload}
+            "POST", FILES_PATH, model=FileObject, files={"file": upload}, timeout=timeout
         )
 
     async def retrieve_metadata(self, file_id: str) -> FileObject:
@@ -971,11 +976,18 @@ class FilesResource:
             cursor_param="before_id" if before_id is not None else "after_id",
         )
 
-    async def download(self, file_id: str, *, stream: bool = False) -> BinaryResponse:
+    async def download(
+        self,
+        file_id: str,
+        *,
+        stream: bool = False,
+        timeout: float | httpx.Timeout | None = None,
+    ) -> BinaryResponse:
         return await self._client.request_binary(
             "GET",
             f"{FILES_PATH}/{_path_id(file_id)}/content",
             stream=stream,
+            timeout=timeout,
         )
 
     async def delete(self, file_id: str) -> DeletedObject:

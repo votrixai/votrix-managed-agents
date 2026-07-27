@@ -10,18 +10,23 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ._exceptions import APIStreamError
-from ._models import VotrixModel
+from ._models import SessionEvent
 
 if TYPE_CHECKING:
     from ._client import AsyncVotrix
 
 
-class SSEEvent(VotrixModel):
-    type: str
-    seq: int | None = None
+class SSEEvent(SessionEvent):
+    """A Session event as delivered over SSE.
+
+    Subclasses :class:`SessionEvent` so a streamed event and one read back from
+    ``events.list()`` are the same shape — a reconnect that reconciles history
+    against the live stream handles one type, not two. The extra fields here are
+    transport-level and have no equivalent in the durable event log.
+    """
+
     event: str | dict[str, Any] | None = None
     sse_event: str | None = None
-    id: str | None = None
     sse_id: str | None = None
     data: Any = None
     raw_data: str = ""
@@ -40,6 +45,7 @@ class AsyncEventStream:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         max_reconnects: int | None = None,
+        timeout: float | httpx.Timeout | None = None,
     ) -> None:
         if max_reconnects is not None and max_reconnects < 0:
             raise ValueError("max_reconnects must be non-negative")
@@ -48,6 +54,7 @@ class AsyncEventStream:
         self._path = path
         self._params = params
         self._headers = dict(headers or {})
+        self._timeout = timeout
         self._max_reconnects = client.max_retries if max_reconnects is None else max_reconnects
         self._response: httpx.Response | None = None
         self._closed = False
@@ -131,6 +138,7 @@ class AsyncEventStream:
             self._path,
             params=self._params,
             headers=headers,
+            timeout=self._timeout,
         )
 
     def _initial_last_event_id(self) -> str | None:

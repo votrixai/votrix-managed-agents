@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from votrix import UnprocessableEntityError, Votrix
+from votrix.managed_agents import UnprocessableEntityError, Votrix
 
 
 def test_sync_client_configuration_is_fail_closed_and_matches_async(monkeypatch):

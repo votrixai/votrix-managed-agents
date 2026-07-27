@@ -5,7 +5,7 @@ import asyncio
 import httpx
 import pytest
 
-from votrix import APIStreamError, AsyncVotrix
+from votrix.managed_agents import APIStreamError, AsyncVotrix
 
 
 def make_client(body: str):
@@ -153,3 +153,129 @@ async def test_stream_cancellation_closes_the_http_response():
         await task
     assert source.closed is True
     await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_parses_event_payloads_into_typed_attributes():
+    """Nested payloads must be attribute-reachable, not left as raw dicts.
+
+    A consumer that reads `event.model_usage.input_tokens` off a dict gets a
+    silent zero rather than an error, so metering degrades without any signal.
+    """
+
+    sdk, http_client = make_client(
+        'id: 8\nevent: span.model_request_end\n'
+        'data: {"id":"evt_end","type":"span.model_request_end","session_id":"session_1","seq":8,'
+        '"model_request_start_id":"evt_start","is_error":false,'
+        '"model_usage":{"input_tokens":1234,"output_tokens":567,'
+        '"cache_read_input_tokens":800,"cache_creation_input_tokens":0}}\n\n'
+        'id: 9\nevent: session.status_idle\n'
+        'data: {"id":"evt_idle","type":"session.status_idle","session_id":"session_1","seq":9,'
+        '"stop_reason":{"type":"requires_action","event_ids":["evt_tool"]}}\n\n'
+        'id: 10\nevent: agent.tool_result\n'
+        'data: {"id":"evt_res","type":"agent.tool_result","session_id":"session_1","seq":10,'
+        '"name":"bash","tool_use_id":"evt_use","is_error":false,'
+        '"content":[{"type":"text","text":"ok"}]}\n\n'
+        'id: 11\nevent: agent.mcp_tool_result\n'
+        'data: {"id":"evt_mcp","type":"agent.mcp_tool_result","session_id":"session_1","seq":11,'
+        '"name":"linear_search","mcp_tool_use_id":"evt_mcp_use","content":[{"type":"text","text":"hit"}]}\n\n'
+        'id: 12\nevent: session.error\n'
+        'data: {"id":"evt_err","type":"session.error","session_id":"session_1","seq":12,'
+        '"error":{"type":"model_rate_limited_error","message":"slow down",'
+        '"retry_status":{"type":"exhausted"}}}\n\n'
+    )
+    async with http_client:
+        async with await sdk.sessions.events.stream("session_1") as stream:
+            events = [event async for event in stream]
+
+    span, idle, tool, mcp, error = events
+
+    assert span.model_request_start_id == "evt_start"
+    assert span.is_error is False
+    assert span.model_usage is not None
+    assert span.model_usage.input_tokens == 1234
+    assert span.model_usage.output_tokens == 567
+    assert span.model_usage.cache_read_input_tokens == 800
+    assert span.model_usage.cache_creation_input_tokens == 0
+
+    assert idle.stop_reason is not None
+    assert idle.stop_reason.type == "requires_action"
+    assert idle.stop_reason.event_ids == ["evt_tool"]
+
+    # A result points at the event that opened the call, and the field name
+    # differs between built-in and MCP results.
+    assert tool.tool_use_id == "evt_use"
+    assert tool.content is not None and not isinstance(tool.content, str)
+    assert [block.text for block in tool.content] == ["ok"]
+    assert mcp.mcp_tool_use_id == "evt_mcp_use"
+    assert mcp.tool_use_id is None
+
+    assert error.error is not None
+    assert error.error.type == "model_rate_limited_error"
+    assert error.error.retry_status is not None
+    assert error.error.retry_status.type == "exhausted"
+
+
+@pytest.mark.asyncio
+async def test_streamed_and_listed_events_share_one_type():
+    """The reconnect pattern reconciles history against the live stream, so both
+    sides have to be the same shape."""
+
+    from votrix.managed_agents import SessionEvent
+
+    sdk, http_client = make_client(
+        'id: 7\nevent: agent.message\n'
+        'data: {"id":"evt_1","type":"agent.message","session_id":"session_1","seq":7,'
+        '"content":[{"type":"text","text":"hi"}]}\n\n'
+    )
+    async with http_client:
+        async with await sdk.sessions.events.stream("session_1") as stream:
+            streamed = [event async for event in stream]
+
+    assert isinstance(streamed[0], SessionEvent)
+    # An unrecognized event type still parses — the surface is open.
+    unknown = SessionEvent.model_validate(
+        {"id": "evt_x", "type": "agent.future_event", "surprise": 1}
+    )
+    assert unknown.type == "agent.future_event"
+    assert unknown.model_usage is None
+    assert unknown.model_extra == {"surprise": 1}
+
+
+@pytest.mark.asyncio
+async def test_stream_and_upload_accept_a_per_call_timeout():
+    """One client serves both fast CRUD and long-lived work, so the slow calls
+    override the default instead of widening it for everything."""
+
+    seen: list[httpx.Timeout] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request.extensions["timeout"])
+        if request.url.path.endswith("/events/stream"):
+            return httpx.Response(200, text="", headers={"content-type": "text/event-stream"})
+        return httpx.Response(
+            200,
+            json={"id": "file_1", "type": "file", "filename": "a.txt"},
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sdk = AsyncVotrix(
+        api_key="vma_test_timeout",
+        base_url="https://vma.test",
+        max_retries=0,
+        timeout=30.0,
+        http_client=http_client,
+    )
+    async with http_client:
+        await sdk.files.upload(file=("a.txt", b"x", "text/plain"), timeout=900)
+        async with await sdk.sessions.events.stream(
+            "session_1", timeout=httpx.Timeout(30.0, read=1800.0)
+        ):
+            pass
+        await sdk.files.retrieve_metadata("file_1")
+
+    upload, stream, plain = seen
+    assert upload["read"] == 900
+    assert stream["read"] == 1800.0
+    # Calls that pass nothing keep the client default.
+    assert plain["read"] == 30.0

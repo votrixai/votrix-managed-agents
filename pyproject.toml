@@ -1,5 +1,8 @@
 [project]
-name = "votrix-managed-agents"
+# The `votrix-managed-agents` distribution name belongs to the published client
+# SDK under `sdks/python`. This is the control plane it talks to; the importable
+# module stays `votrix_managed_agents`, which the Cloud Run entrypoint resolves.
+name = "votrix-managed-agents-server"
 version = "0.1.0"
 description = "Self-hosted, multi-tenant managed-agents control plane powered by Deep Agents."
 requires-python = ">=3.12"
