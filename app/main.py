@@ -1,7 +1,5 @@
-from dotenv import load_dotenv
+"""ASGI entry point: `uvicorn app.main:app`."""
 
-from app.factory import create_app
-
-load_dotenv()
+from app.server import create_app
 
 app = create_app()

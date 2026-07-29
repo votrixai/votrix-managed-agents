@@ -24,18 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ManagedSession, SessionEvent
 from app.db.queries.events import append_event
 from app.db.queries.session_sandboxes import get_session_sandbox
+from app.db.queries.sessions import update_session
 from app.runtime.checkpoints import checkpoint_saver
 from app.runtime.contracts import EffectiveAgentVersion
-from app.runtime.deepagent_tools import (
-    DEEP_TO_CLAUDE_TOOL,
-    ToolFilterMiddleware,
-    custom_tool,
-    deep_tool_policy,
-    web_fetch_tool,
-    web_search_tool,
-)
+from app.runtime.deepagent_tools import custom_tool, resolve_tool_interrupts, web_fetch_tool, web_search_tool
 from app.runtime.providers import build_chat_model, resolve_runtime_provider
 from app.runtime.sandbox import Sandbox
+from app.session_state import SESSION_IDLE, is_action_result
 
 
 class UnsupportedEventError(RuntimeError):
@@ -44,6 +39,10 @@ class UnsupportedEventError(RuntimeError):
 
 class SandboxRequiredError(RuntimeError):
     """A session reached execute_deep_agent with no provisioned sandbox."""
+
+
+class FilesystemToolsetRequiredError(RuntimeError):
+    """A session's agent has no agent_toolset_20260401 toolset declared."""
 
 
 async def execute_deep_agent(
@@ -60,7 +59,11 @@ async def execute_deep_agent(
     single user.message (plus an optional trailing system.message), or a batch
     of action-result events (user.tool_confirmation / user.custom_tool_result)
     answering everything a prior turn was waiting on. Which case this is gets
-    decided below from the graph's own checkpoint, not from event type alone.
+    decided from the event types themselves (see app.session_state), not by
+    asking the checkpoint whether it's paused: deepagents' own
+    PatchToolCallsMiddleware already handles the (should-not-happen-in-practice)
+    case of a fresh message arriving while something is still pending — it
+    gracefully cancels the dangling tool call rather than erroring.
     """
     if not new_events:
         raise UnsupportedEventError("execute_deep_agent called with no new events")
@@ -81,17 +84,22 @@ async def execute_deep_agent(
     sandbox = Sandbox.from_id(sandbox_row.external_sandbox_id, session.id, session.organization_id)
     backend = sandbox.to_deep_agent_backend
 
-    # TODO: multiagent/subagents support is removed for now, not needed yet.
-    # has_multiagent=False keeps the "task" (delegate-to-subagent) tool excluded.
-    excluded, interrupt_on, _tool_config = deep_tool_policy(
-        version.tools, supports_execute=True, has_multiagent=False
-    )
+    # deepagents' own native tools (write_todos, the filesystem tools, execute,
+    # task/subagent-spawning) are never filtered: whatever create_deep_agent()
+    # installs by default is exactly what the model gets. Toolset config only
+    # ever controls whether a given tool needs a human approve/reject decision
+    # before it runs — never whether the tool exists at all.
+    if not any(isinstance(spec, dict) and spec.get("type") == "agent_toolset_20260401" for spec in version.tools):
+        raise FilesystemToolsetRequiredError(f"session {session.id}'s agent has no agent_toolset_20260401 toolset")
+    interrupt_on = resolve_tool_interrupts(version.tools)
 
-    tool_kind: dict[str, str] = dict.fromkeys(DEEP_TO_CLAUDE_TOOL, "agent")
+    has_web_toolset = any(
+        isinstance(spec, dict) and spec.get("type") == "web_toolset_20260401" for spec in version.tools
+    )
+    tool_kind: dict[str, str] = {}
     tools: list[Any] = []
-    if "web_fetch" not in excluded:
+    if has_web_toolset:
         tools.append(web_fetch_tool())
-    if "web_search" not in excluded:
         tools.append(web_search_tool())
     for spec in version.tools:
         if isinstance(spec, dict) and spec.get("type") == "custom":
@@ -114,7 +122,6 @@ async def execute_deep_agent(
             model=model,
             tools=tools,
             system_prompt=version.system,
-            middleware=[ToolFilterMiddleware(excluded=excluded)] if excluded else [],
             backend=backend,
             interrupt_on=interrupt_on or None,
             checkpointer=checkpointer,
@@ -123,14 +130,22 @@ async def execute_deep_agent(
         # Step 2: this turn is really about to run — announce it.
         await _emit(db, session, "session.status_running", {"status": "running"})
 
-        # Step 3: ask the checkpoint where this session's graph currently sits.
-        # Empty `next` means the graph is at rest (last turn ended naturally);
-        # non-empty means it is paused mid-interrupt, waiting on exactly the
-        # kind of event that triggered this turn.
+        # Step 3: fetch the checkpoint's current message history. Needed for
+        # Step 5's "which messages are new" diff, and — when this turn is a
+        # resume — for _build_resume's lookup of the last AIMessage.tool_calls.
         state = await graph.aget_state(config)
 
-        # Step 4: turn new_events into the right shape for this graph.
-        if state.next:
+        # Step 4: turn new_events into the right shape for this graph. An
+        # action-result event always means answering a pending decision; any
+        # other event always goes in as fresh input. If new_events claims to
+        # be answering something but the graph isn't actually paused, that is
+        # a caller bug (session_state.py's can_start_work should have already
+        # prevented this) — fail loudly instead of silently misinterpreting it.
+        if any(is_action_result(event.type) for event in new_events):
+            if not state.next:
+                raise UnsupportedEventError(
+                    "received action-result events but the graph is not paused on an interrupt"
+                )
             graph_input: Any = _build_resume(state, new_events, interrupt_on)
         else:
             graph_input = _build_fresh_input(new_events)
@@ -148,24 +163,15 @@ async def execute_deep_agent(
                 await _translate_message(db, session, message, tool_kind, interrupt_on, open_tool_calls)
             last_index = len(messages)
 
-        # Step 6: this turn is over — record why it stopped.
+        # Step 6: this turn is over — record why it stopped, and persist that
+        # onto the session row itself (the event above is what clients see;
+        # this is what the next turn's session_state checks actually read).
         if open_tool_calls:
-            await _emit(
-                db,
-                session,
-                "session.status_idle",
-                {
-                    "status": "idle",
-                    "stop_reason": {"type": "requires_action", "event_ids": sorted(open_tool_calls)},
-                },
-            )
+            stop_reason = {"type": "requires_action", "event_ids": sorted(open_tool_calls)}
         else:
-            await _emit(
-                db,
-                session,
-                "session.status_idle",
-                {"status": "idle", "stop_reason": {"type": "end_turn"}},
-            )
+            stop_reason = {"type": "end_turn"}
+        await update_session(db, session, status=SESSION_IDLE, stop_reason=stop_reason)
+        await _emit(db, session, "session.status_idle", {"status": "idle", "stop_reason": stop_reason})
 
 
 async def _emit(
@@ -310,4 +316,9 @@ def _text_from_blocks(blocks: Any) -> str:
     )
 
 
-__all__ = ["SandboxRequiredError", "UnsupportedEventError", "execute_deep_agent"]
+__all__ = [
+    "FilesystemToolsetRequiredError",
+    "SandboxRequiredError",
+    "UnsupportedEventError",
+    "execute_deep_agent",
+]

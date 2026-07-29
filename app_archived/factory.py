@@ -26,8 +26,8 @@ from app.routers import (
     api_keys,
     environments,
     files,
-    generic_resources,
     internal_work,
+    memory,
     model_providers,
     sessions,
     skills,
@@ -279,7 +279,7 @@ def create_app(*, auth_provider: AuthProvider | None = None) -> FastAPI:
     app.include_router(skills.router)
     app.include_router(model_providers.router)
     app.include_router(usage.router)
-    app.include_router(generic_resources.router)
+    app.include_router(memory.router)
     app.include_router(organizations.me_router)
     app.include_router(organizations.admin_router)
 

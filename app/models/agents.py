@@ -1,18 +1,19 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
-from app.db.models import Agent, AgentVersion
 from app.models.common import ApiModel
 
 
 class AgentCreateRequest(ApiModel):
-    name: str
+    name: str = Field(min_length=1, max_length=255)
+    # A bare string is accepted as shorthand for `{"id": ...}`.
     model: str | dict[str, Any]
     system: str | None = None
     description: str | None = None
     tools: list[dict[str, Any]] = Field(default_factory=list)
+    # Accepted and stored so the contract stays stable; the runtime skips it.
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
     skills: list[dict[str, Any]] = Field(default_factory=list)
     multiagent: dict[str, Any] | None = None
@@ -21,8 +22,16 @@ class AgentCreateRequest(ApiModel):
 
 
 class AgentUpdateRequest(ApiModel):
+    """An edit, stated against the version it was made from.
+
+    `version` is required. A client that built its form from version 5 would
+    otherwise write its stale copy of every field it did not touch back over
+    whatever version 6 changed. Sending the wrong one is a 409, not a silent
+    overwrite.
+    """
+
     version: int
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     model: str | dict[str, Any] | None = None
     system: str | None = None
     description: str | None = None
@@ -34,9 +43,27 @@ class AgentUpdateRequest(ApiModel):
     runtime: dict[str, Any] | None = None
 
 
+class AgentResponse(ApiModel):
+    id: str
+    type: Literal["agent"] = "agent"
+    name: str
+    version: int
+    model: dict[str, Any]
+    system: str | None = None
+    description: str | None = None
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
+    skills: list[dict[str, Any]] = Field(default_factory=list)
+    multiagent: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
 class AgentVersionResponse(ApiModel):
     id: str
-    type: str = "agent_version"
+    type: Literal["agent_version"] = "agent_version"
     agent_id: str
     version: int
     name: str
@@ -50,78 +77,3 @@ class AgentVersionResponse(ApiModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     runtime: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
-
-
-class AgentResponse(ApiModel):
-    id: str
-    type: str = "agent"
-    name: str
-    version: int
-    model: dict[str, Any]
-    system: str | None = None
-    description: str | None = None
-    tools: list[dict[str, Any]] = Field(default_factory=list)
-    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
-    skills: list[dict[str, Any]] = Field(default_factory=list)
-    multiagent: dict[str, Any] | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    archived_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-def version_to_response(version: AgentVersion) -> AgentVersionResponse:
-    return AgentVersionResponse(
-        id=version.id,
-        agent_id=version.agent_id,
-        version=version.version,
-        name=version.name,
-        model=version.model,
-        system=version.system,
-        description=version.description,
-        tools=version.tools,
-        mcp_servers=version.mcp_servers,
-        skills=version.skills,
-        multiagent=version.multiagent,
-        metadata=version.metadata_,
-        runtime=version.runtime,
-        created_at=version.created_at,
-    )
-
-
-def version_to_agent_response(agent: Agent, version: AgentVersion) -> AgentResponse:
-    return AgentResponse(
-        id=agent.id,
-        name=version.name,
-        version=version.version,
-        model=version.model,
-        system=version.system,
-        description=version.description,
-        tools=version.tools,
-        mcp_servers=version.mcp_servers,
-        skills=version.skills,
-        multiagent=version.multiagent,
-        metadata=version.metadata_,
-        archived_at=agent.archived_at,
-        created_at=version.created_at,
-        updated_at=version.updated_at,
-    )
-
-
-def agent_to_response(agent: Agent, version: AgentVersion) -> AgentResponse:
-    return AgentResponse(
-        id=agent.id,
-        name=agent.name,
-        version=version.version,
-        model=version.model,
-        system=version.system,
-        description=agent.description,
-        tools=version.tools,
-        mcp_servers=version.mcp_servers,
-        skills=version.skills,
-        multiagent=version.multiagent,
-        metadata=agent.metadata_,
-        archived_at=agent.archived_at,
-        created_at=agent.created_at,
-        updated_at=agent.updated_at,
-    )

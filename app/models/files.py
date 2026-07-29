@@ -1,51 +1,44 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
-from app.models.common import FlexibleApiModel
+from app.models.common import ApiModel
 
 
-class FileScopeResponse(FlexibleApiModel):
-    type: Literal["session"] = Field(description="Scope discriminator for a Session-owned file.")
-    id: str = Field(description="Identifier of the Session that owns this file copy.")
+class FileScope(ApiModel):
+    """What a file came out of.
+
+    An object rather than a bare id so the kind of thing is stated rather than
+    inferred from a prefix — today only a session produces files, and that will
+    not always be true.
+    """
+
+    type: Literal["session"] = "session"
+    id: str
 
 
-class FileResponse(FlexibleApiModel):
-    """Public metadata for a file; object-store coordinates are never exposed."""
-
+class FileResponse(ApiModel):
     id: str
     type: Literal["file"] = "file"
-    name: str | None = None
-    filename: str | None = Field(default=None, description="Original or generated filename.")
-    mime_type: str | None = Field(default=None, description="Media type recorded for the file content.")
-    size_bytes: int | None = Field(default=None, description="Stored file size in bytes.")
-    sha256: str | None = Field(default=None, description="Lowercase hexadecimal SHA-256 digest of the file content.")
-    deduplicated_from_file_id: str | None = Field(
-        default=None,
-        description="Identifier of an existing file whose immutable object is shared by this record.",
-    )
-    scope: FileScopeResponse | None = Field(
-        default=None,
-        description="Session ownership details when this is an isolated Session file copy.",
-    )
-    status: str | None = Field(default=None, description="Current lifecycle status when one is assigned.")
+    filename: str
+    mime_type: str | None = None
+    size_bytes: int
+    sha256: str | None = None
+    # Absent for anything a user uploaded. An output file is an ordinary file
+    # wearing a label saying which run it came out of, not a different kind.
+    scope: FileScope | None = None
     created_at: datetime
     updated_at: datetime
-    archived_at: datetime | None = None
-    deleted_at: datetime | None = None
 
 
-class FileDeletedResponse(FlexibleApiModel):
-    id: str
-    type: Literal["file_deleted"] = "file_deleted"
-    deleted: Literal[True] = True
+class LiveFileRequest(ApiModel):
+    """Take one file out of a running session's sandbox, now.
 
+    `path` is relative to the sandbox's `outputs/` directory. A session's
+    outputs are collected when its turn ends; this is for the case where the
+    agent has finished a deliverable and the user wants it before the rest of
+    the turn is.
+    """
 
-class PresignedFileUploadResponse(FlexibleApiModel):
-    type: Literal["file_upload_url"] = "file_upload_url"
-    key: str = Field(description="Organization-scoped staging object key to pass to the completion request.")
-    upload_url: str = Field(description="Time-limited URL that accepts the file bytes.")
-    method: Literal["PUT"] = Field(default="PUT", description="HTTP method required by the upload URL.")
-    headers: dict[str, str] = Field(description="Headers that must be sent with the upload request.")
-    expires_in: int = Field(description="Number of seconds before the upload URL expires.")
+    path: str = Field(min_length=1, max_length=512)

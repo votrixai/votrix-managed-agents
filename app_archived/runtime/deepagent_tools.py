@@ -1,107 +1,44 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.tools import StructuredTool
 
+from app.agent_contract import TOOLSET_TOOL_NAMES
 from app.config import get_settings
 from app.network_security import create_restricted_http_client, validate_public_https_url
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
-    from langchain.agents.middleware.types import ExtendedModelResponse, ModelRequest, ModelResponse, ResponseT
-    from langchain_core.messages import AIMessage
+def resolve_tool_interrupts(tools: list[dict[str, Any]]) -> dict[str, Any]:
+    """Which of deepagents' always-on native tools require a human decision first.
 
-
-CLAUDE_TO_DEEP_TOOLS: dict[str, tuple[str, ...]] = {
-    "bash": ("execute",),
-    "read": ("ls", "read_file"),
-    "write": ("write_file",),
-    "edit": ("edit_file",),
-    "glob": ("glob",),
-    "grep": ("grep",),
-    "web_fetch": ("web_fetch",),
-    "web_search": ("web_search",),
-}
-
-DEEP_TO_CLAUDE_TOOL = {
-    deep_name: public_name
-    for public_name, deep_names in CLAUDE_TO_DEEP_TOOLS.items()
-    for deep_name in deep_names
-}
-
-
-class ToolFilterMiddleware(AgentMiddleware[Any, Any, Any]):
-    """Hide disabled harness tools after all Deep Agents middleware is assembled."""
-
-    def __init__(self, *, excluded: set[str] | frozenset[str]) -> None:
-        self._excluded = frozenset(excluded)
-
-    def wrap_model_call(self, request, handler):
-        if self._excluded:
-            request = request.override(tools=[tool for tool in request.tools if _tool_name(tool) not in self._excluded])
-        return handler(request)
-
-    async def awrap_model_call(self, request, handler):
-        if self._excluded:
-            request = request.override(tools=[tool for tool in request.tools if _tool_name(tool) not in self._excluded])
-        return await handler(request)
-
-
-def effective_agent_tool_config(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Resolve Claude toolset defaults and per-tool overrides."""
-    resolved = {
-        name: {"enabled": False, "permission_policy": {"type": "always_allow"}}
-        for name in CLAUDE_TO_DEEP_TOOLS
-    }
+    Nothing is ever excluded here: every native deepagents tool (write_todos,
+    the filesystem tools, execute, task) stays available regardless of what the
+    agent's tool config says. Tool config only controls whether a given tool
+    needs an approve/reject decision before it runs.
+    """
+    interrupt_on: dict[str, Any] = {}
     for toolset in tools:
-        if not isinstance(toolset, dict) or toolset.get("type") != "agent_toolset_20260401":
+        if not isinstance(toolset, dict):
             continue
-        default = dict(toolset.get("default_config") or {})
-        default_enabled = bool(default.get("enabled", True))
-        default_policy = _policy(default, "always_allow")
-        for name in resolved:
-            resolved[name] = {"enabled": default_enabled, "permission_policy": {"type": default_policy}}
+        names = TOOLSET_TOOL_NAMES.get(toolset.get("type"))
+        if names is None:
+            continue
+        default_policy = _policy(dict(toolset.get("default_config") or {}), "always_allow")
+        resolved_policy = dict.fromkeys(names, default_policy)
         for entry in toolset.get("configs") or []:
             if not isinstance(entry, dict):
                 continue
             name = str(entry.get("name") or "")
-            if name not in resolved:
-                continue
-            resolved[name] = {
-                "enabled": bool(entry.get("enabled", default_enabled)),
-                "permission_policy": {"type": _policy(entry, default_policy)},
-            }
-    return resolved
-
-
-def deep_tool_policy(
-    tools: list[dict[str, Any]],
-    *,
-    supports_execute: bool,
-    has_multiagent: bool,
-) -> tuple[set[str], dict[str, Any], dict[str, dict[str, Any]]]:
-    config = effective_agent_tool_config(tools)
-    excluded: set[str] = set()
-    interrupt_on: dict[str, Any] = {}
-    for public_name, deep_names in CLAUDE_TO_DEEP_TOOLS.items():
-        item = config[public_name]
-        enabled = bool(item["enabled"])
-        if public_name == "bash" and not supports_execute:
-            enabled = False
-        for deep_name in deep_names:
-            if not enabled:
-                excluded.add(deep_name)
-            elif item["permission_policy"]["type"] == "always_ask":
-                interrupt_on[deep_name] = {"allowed_decisions": ["approve", "reject"]}
-    if not has_multiagent:
-        excluded.add("task")
-    return excluded, interrupt_on, config
+            if name in names:
+                resolved_policy[name] = _policy(entry, default_policy)
+        for name, policy in resolved_policy.items():
+            if policy == "always_ask":
+                interrupt_on[name] = {"allowed_decisions": ["approve", "reject"]}
+    return interrupt_on
 
 
 def custom_tool(spec: dict[str, Any]) -> StructuredTool:
@@ -191,14 +128,6 @@ def web_search_tool() -> StructuredTool:
         return json.dumps(compact, ensure_ascii=False)
 
     return StructuredTool.from_function(coroutine=web_search, name="web_search", description=web_search.__doc__ or "Search the web.")
-
-
-def _tool_name(tool: Any) -> str | None:
-    if isinstance(tool, dict):
-        value = tool.get("name")
-    else:
-        value = getattr(tool, "name", None)
-    return value if isinstance(value, str) else None
 
 
 def _policy(config: dict[str, Any], default: str) -> str:

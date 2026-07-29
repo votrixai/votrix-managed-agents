@@ -29,6 +29,12 @@ class MemoryStoreResponse(FlexibleApiModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
+class MemoryStoreDeletedResponse(FlexibleApiModel):
+    id: str
+    type: Literal["memory_store_deleted"] = "memory_store_deleted"
+    deleted: Literal[True] = True
+
+
 class MemoryCreateRequest(FlexibleApiModel):
     path: str | list[str]
     content: str | None
@@ -70,6 +76,12 @@ class MemoryResponse(FlexibleApiModel):
 class MemoryPrefixResponse(FlexibleApiModel):
     type: Literal["memory_prefix"] = "memory_prefix"
     path: str
+
+
+class MemoryDeletedResponse(FlexibleApiModel):
+    id: str
+    type: Literal["memory_deleted"] = "memory_deleted"
+    deleted: Literal[True] = True
 
 
 class MemoryVersionResponse(FlexibleApiModel):

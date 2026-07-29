@@ -1,76 +1,49 @@
-from __future__ import annotations
+from typing import Any
 
-from uuid import uuid4
-
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 import structlog
+from fastapi import APIRouter
 
-from app.config import get_settings
-from app.runtime.turn_limiter import TurnLimiter
-from app.runtime.work_queue import execute_work_item
-
+from app.models.common import ApiModel
+from app.routers.deps import Db, TaskCaller
+from app.services import sessions as service
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/internal/work", include_in_schema=False)
-
-_SUCCESS_OUTCOMES = frozenset(
-    {
-        "completed",
-        "error",
-        "stopped",
-        "exhausted",
-        "rescheduling",
-        "already_running",
-        "superseded",
-        "missing",
-        "not_runnable",
-    }
+# Every route here skips the busy check and starts work directly, so the caller
+# has to prove it is the queue. Under `inline` dispatch nothing legitimate calls
+# these and the dependency answers 404.
+router = APIRouter(
+    prefix="/internal/sessions",
+    include_in_schema=False,
+    dependencies=[TaskCaller],
 )
 
 
-@router.post("/{work_id}/execute")
-async def execute_internal_work(work_id: str, request: Request) -> JSONResponse:
-    settings = get_settings()
-    limiter: TurnLimiter = request.app.state.turn_limiter
-    worker_id = f"push-{uuid4().hex[:8]}"
+class ProcessSessionRequest(ApiModel):
+    """What the queue hands back to us.
 
-    async with limiter.acquire():
-        try:
-            outcome = await execute_work_item(
-                work_id,
-                worker_id=worker_id,
-                lease_seconds=settings.vma_worker_lease_seconds,
-            )
-        except Exception as exc:
-            logger.exception(
-                "push_work_execution_failed",
-                work_id=work_id,
-                worker_id=worker_id,
-                exc_info=exc,
-            )
-            return JSONResponse(
-                status_code=500,
-                content={"outcome": "internal_error"},
-            )
+    The message travels in the payload rather than being looked up, because
+    the history the agent needs is in the graph checkpoint, not our tables —
+    this endpoint has no reason to read the event log at all.
+    """
 
-    if outcome in _SUCCESS_OUTCOMES:
-        return JSONResponse(status_code=200, content={"outcome": outcome})
-    if outcome == "deferred":
-        return JSONResponse(
-            status_code=503,
-            content={"outcome": outcome},
-            headers={"Retry-After": "15"},
-        )
+    message: dict[str, Any]
 
-    logger.error(
-        "push_work_execution_returned_unknown_outcome",
-        work_id=work_id,
-        worker_id=worker_id,
-        outcome=outcome,
-    )
-    return JSONResponse(
-        status_code=500,
-        content={"outcome": "internal_error"},
-    )
+
+@router.post("/{session_id}/process", status_code=204)
+async def process_session(session_id: str, body: ProcessSessionRequest, db: Db) -> None:
+    """Run one turn.
+
+    No organization header: a worker is woken by a queue, not by a tenant, so
+    it has none of its own. The session it is handed carries the organization
+    everything else is scoped to.
+
+    Answers 204 even when the turn fails. The failure is already recorded as a
+    `session.error` event, and a turn that broke on this delivery will break on
+    the next one — reporting it would only have the queue redeliver a turn that
+    cannot succeed, against a session that has already been told it is over.
+    """
+    try:
+        await service.process_session(db, session_id=session_id, message=body.message)
+    except Exception:
+        logger.exception("cloud_turn_failed", session_id=session_id)

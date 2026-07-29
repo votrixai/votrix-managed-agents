@@ -4,7 +4,6 @@ from typing import AsyncGenerator
 
 import structlog
 from sqlalchemy.ext.asyncio import (
-    AsyncConnection,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -18,7 +17,6 @@ logger = structlog.get_logger(__name__)
 SLOW_POOL_CHECKOUT_THRESHOLD_SECONDS = 0.250
 
 _engine = None
-_session_scoped_engine = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
@@ -81,35 +79,6 @@ def get_engine():
     return _engine
 
 
-def session_scoped_database_url() -> str:
-    """Resolve the DSN reserved for connection-session PostgreSQL features."""
-    settings = get_settings()
-    return str(settings.vma_listen_database_url or settings.database_url)
-
-
-def get_session_scoped_engine():
-    """Return the engine used only while a session-scoped connection is held."""
-    global _session_scoped_engine
-
-    url = session_scoped_database_url()
-    if url == str(get_settings().database_url):
-        return get_engine()
-    if _session_scoped_engine is None:
-        _session_scoped_engine = create_async_engine(
-            url,
-            connect_args=_connect_args(url),
-            poolclass=NullPool,
-        )
-    return _session_scoped_engine
-
-
-@asynccontextmanager
-async def session_scoped_connection() -> AsyncGenerator[AsyncConnection, None]:
-    """Hold one backend connection for advisory locks or similar features."""
-    async with get_session_scoped_engine().connect() as connection:
-        yield connection
-
-
 def _connect_args(url: str) -> dict:
     if not url.startswith("postgresql+asyncpg"):
         return {}
@@ -166,11 +135,8 @@ async def session_scope() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def reset_engine_for_tests() -> None:
-    global _engine, _session_scoped_engine, _session_factory
-    if _session_scoped_engine is not None:
-        await _session_scoped_engine.dispose()
+    global _engine, _session_factory
     if _engine is not None:
         await _engine.dispose()
     _engine = None
-    _session_scoped_engine = None
     _session_factory = None
