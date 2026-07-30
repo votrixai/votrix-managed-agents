@@ -24,12 +24,50 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
     deepseek_api_key: str = ""
+    openai_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
     s3_bucket_name: str = ""
+
+    # How many Postgres connections to keep open and hand round.
+    #
+    # Zero means `NullPool`: a fresh connection per database session, which
+    # against a hosted Postgres is a TCP handshake, a TLS handshake and an
+    # authentication round trip every time — 1.9 seconds against the Supabase
+    # pooler in us-east-2, versus 0.9 for the same work on a connection that
+    # already exists.
+    #
+    # The ceiling is not ours. That pooler, in session mode, refuses the
+    # sixteenth client outright:
+    #
+    #   (EMAXCONNSESSION) max clients reached in session mode
+    #   - max clients are limited to pool_size: 15
+    #
+    # And this pool is not the only thing spending that budget: LangGraph's
+    # checkpointer opens its own psycopg connection per turn, outside here
+    # entirely. `pool_size + max_overflow` plus one per concurrent turn has to
+    # stay under fifteen, so these two are deliberately well below it. Raising
+    # them does not buy throughput; it buys a failure at the far end.
+    vma_db_pool_size: int = 5
+    vma_db_max_overflow: int = 5
+    vma_db_pool_timeout_seconds: float = 10.0
+    vma_db_pool_recycle_seconds: int = 300
+    # On, and it has to be. It was briefly off — a pre-ping measured 1.3s per
+    # checkout, which looked like more than the pooling it protects saves, and
+    # recycling on age was meant to cover the gap. It did not: the pooler in
+    # front of this database drops idle connections well inside the recycle
+    # window, and the live suite went from clean to thirty `connection is
+    # closed` failures in one run. A connection handed out dead is a failed
+    # request; a connection tested first is a slow one.
+    #
+    # The 1.3s is itself a symptom rather than the price of a ping — a ping is
+    # one round trip, and one round trip here is 150ms. What the rest of it
+    # measures is pre-ping finding a dead connection and rebuilding it, which
+    # is work that has to happen either way.
+    vma_db_pool_pre_ping: bool = True
 
     e2b_api_key: str = ""
     # How long a container may sit idle before E2B pauses it. Long enough to

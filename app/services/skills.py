@@ -19,7 +19,6 @@ from typing import Any
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import Skill
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.db.queries import skills as skills_q

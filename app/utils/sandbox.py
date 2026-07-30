@@ -32,6 +32,7 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from e2b import AsyncSandbox, AsyncTemplate
+from httpcore import LocalProtocolError
 from langchain_e2b import AsyncE2BSandbox
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +44,7 @@ from app.db.queries import files as files_q
 from app.db.queries import sessions as sessions_q
 from app.db.queries import skills as skills_q
 from app.utils import storage
+from app.utils.timing import timed
 
 # The base image, and the two facts that come with it: where work happens and
 # which unprivileged user the agent runs as. Swapping the image means revisiting
@@ -324,21 +326,81 @@ class Sandbox:
     # ---- connection -------------------------------------------------------
 
     async def ensure_connected(self) -> None:
-        """Guarantee a live connection, paying for one only when needed."""
-        if self._native is not None and await self._native.is_running():
-            await self._native.set_timeout(get_settings().sandbox_timeout_seconds)
-            return
-        self._native = await AsyncSandbox.connect(
-            self._sandbox_id,
-            timeout=get_settings().sandbox_timeout_seconds,
-            api_key=get_settings().e2b_api_key,
-        )
+        """Guarantee a live connection, paying for one only when needed.
+
+        Both branches are timed and told apart by `reused`, because they are
+        not the same expense and the cheap-looking one is not free: keeping an
+        existing connection still costs an `is_running` and a `set_timeout`,
+        two round trips to E2B, and this runs before *every* backend call.
+        """
+        async with timed(
+            "sandbox_connected", session_id=self._session_id, sandbox_id=self._sandbox_id
+        ) as span:
+            if self._native is not None:
+                try:
+                    # No `is_running()` first. Asking and then acting is two
+                    # round trips where acting alone is one, and this runs
+                    # before every backend call — measured, the "cheap" branch
+                    # cost more than reconnecting outright. `set_timeout` is
+                    # the liveness check: a container that has gone says so.
+                    await self._native.set_timeout(
+                        get_settings().sandbox_timeout_seconds
+                    )
+                    span["reused"] = True
+                    return
+                except Exception as exc:
+                    # Not swallowed: the reconnect below either succeeds or
+                    # raises in its place. Recorded so a container that is
+                    # being rebuilt on every call is visible rather than
+                    # merely slow.
+                    span["stale"] = type(exc).__name__
+            span["reused"] = False
+            self._native = await AsyncSandbox.connect(
+                self._sandbox_id,
+                timeout=get_settings().sandbox_timeout_seconds,
+                api_key=get_settings().e2b_api_key,
+            )
 
     async def run(self, command: str, **kwargs: Any) -> ExecuteResponse:
-        await self.ensure_connected()
+        """Run a command in the container.
+
+        The command itself is not logged — an agent's shell line can carry
+        anything the user put in front of it. Its length and the exit code say
+        enough to tell one call from another when reading timings back.
+
+        A `LocalProtocolError` is retried once, and only that one. It comes out
+        of the HTTP/2 layer inside E2B's own client — "invalid input RECV_PING
+        in state CLOSED" — and means the connection this request was about to
+        go out on had already been closed by the far end. The request never
+        left the process, so sending it again cannot repeat anything: there is
+        no half-run command to worry about, which is exactly why no other
+        failure is retried here.
+
+        It is rare — once in fifty-odd sandbox starts — and it surfaced as a
+        500 on `POST /v1/sessions`, because provisioning runs commands and
+        nothing above this layer retries.
+        """
         kwargs.setdefault("user", GUEST_USER)
         kwargs.setdefault("timeout", get_settings().sandbox_command_timeout_seconds)
-        return await self._native.commands.run(command, **kwargs)
+        async with timed(
+            "sandbox_command",
+            session_id=self._session_id,
+            command_chars=len(command),
+        ) as span:
+            for attempt in (1, 2):
+                await self.ensure_connected()
+                try:
+                    result = await self._native.commands.run(command, **kwargs)
+                except LocalProtocolError:
+                    if attempt == 2:
+                        raise
+                    # Drop the handle so `ensure_connected` builds a fresh
+                    # client rather than reaching into the same dead pool.
+                    self._native = None
+                    span["retried"] = "stale_connection"
+                    continue
+                span["exit_code"] = getattr(result, "exit_code", None)
+                return result
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -474,6 +536,27 @@ class Sandbox:
         digest = (result.stdout or "").split(" ", 1)[0].strip()
         return digest or None
 
+    async def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
+        """One file, out of the container and into this process.
+
+        Not `download_file`: that one moves bytes to the bucket and writes a
+        row, because it is how a deliverable leaves. This is for looking at a
+        file, and leaves nothing behind.
+
+        The size is checked in the container first. A ceiling enforced after
+        the transfer is a ceiling that costs the transfer.
+        """
+        measured = await self.run(f"stat -c %s {shlex.quote(path)} 2>/dev/null || echo -1")
+        raw = (measured.stdout or "").strip()
+        size = int(raw) if raw.lstrip("-").isdigit() else -1
+        if size < 0:
+            raise FileNotFoundError(path)
+        if size > max_bytes:
+            raise ValueError(f"{path} is {size} bytes, over the {max_bytes} byte limit")
+
+        await self.ensure_connected()
+        return bytes(await self._native.files.read(path, format="bytes", user=GUEST_USER))
+
     async def list_files(self, path: str) -> list[OutputFile]:
         """Everything under `path`, with a hash, as the container sees it.
 
@@ -484,26 +567,32 @@ class Sandbox:
         they would break the line-by-line reading of this output, and nothing
         good comes of misreading a path.
         """
+        # Size and hash in the same command. They used to be two: a `find` for
+        # the hashes and then a `stat` per file, which is one round trip per
+        # deliverable on top of the one that found them. Over this network a
+        # round trip is most of a second.
         result = await self.run(
             f"cd {shlex.quote(path)} 2>/dev/null "
-            f"&& find . -type f -exec sha256sum {{}} + 2>/dev/null | head -n {get_settings().max_output_files}"
+            f"&& find . -type f 2>/dev/null | head -n {get_settings().max_output_files} "
+            "| while IFS= read -r f; do "
+            'printf "%s " "$(stat -c %s "$f" 2>/dev/null || echo -1)"; '
+            'sha256sum "$f" 2>/dev/null; done'
         )
+        # Each line is `<size> <sha256>  ./<path>`; `stat` reports -1 for a file
+        # that vanished between being listed and being read, which then fails
+        # the size check below like any other unusable entry.
         found: list[OutputFile] = []
         for line in (result.stdout or "").splitlines():
-            digest, _, relative = line.partition("  ")
+            raw_size, _, rest = line.partition(" ")
+            digest, _, relative = rest.partition("  ")
             relative = relative.strip().removeprefix("./")
-            if not digest or not relative:
+            if not digest or not relative or not raw_size.lstrip("-").isdigit():
                 continue
-            size = await self._size_of(f"{path}/{relative}")
-            if size is None or size > get_settings().max_output_bytes:
+            size = int(raw_size)
+            if size < 0 or size > get_settings().max_output_bytes:
                 continue
             found.append(OutputFile(path=relative, size_bytes=size, sha256=digest))
         return found
-
-    async def _size_of(self, path: str) -> int | None:
-        result = await self.run(f"stat -c %s {shlex.quote(path)} 2>/dev/null || true")
-        raw = (result.stdout or "").strip()
-        return int(raw) if raw.isdigit() else None
 
     async def discover_outputs(self, db: AsyncSession) -> list[File]:
         """Take everything new the agent left in `outputs/`.
@@ -516,8 +605,12 @@ class Sandbox:
         client, or quoted back to a user, keeps working for as long as the file
         exists, whatever the agent does to the path afterwards.
         """
+        async with timed("outputs_discovered", session_id=self._session_id) as span:
+            found = await self.list_files(OUTPUTS_DIR)
+            span["listed"] = len(found)
+
         collected: list[File] = []
-        for output in await self.list_files(OUTPUTS_DIR):
+        for output in found:
             before = await files_q.get_latest_scoped_file(
                 db,
                 scope_id=self._session_id,

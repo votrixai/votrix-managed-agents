@@ -23,3 +23,6 @@ votrix_managed_agents.db*
 !.env.staging.example
 
 tests/
+
+
+tests_live/manual_io/*

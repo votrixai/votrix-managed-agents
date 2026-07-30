@@ -16,10 +16,12 @@ TERMINATED = "terminated"
 
 STOP_END_TURN = "end_turn"
 STOP_REQUIRES_ACTION = "requires_action"
-STOP_RETRIES_EXHAUSTED = "retries_exhausted"
 # Ours, not CMA's. CMA reports an interrupted turn as `end_turn`, which leaves
 # the client unable to tell a reply that finished from one that was cut off.
 STOP_INTERRUPTED = "interrupted"
+# Also ours. The `session.error` event beside it says what went wrong; this
+# only says the turn is over, which a client waiting for idle has to hear.
+STOP_ERROR = "error"
 
 class FileResource(ApiModel):
     """An uploaded file to put in the container before the session starts.
@@ -68,10 +70,11 @@ class SessionBusyError(ApiModel):
     """Body of the 409 returned when a session is still working.
 
     There is no queue, so a message that arrives mid-reply is refused rather
-    than held. `retry_after_seconds` comes from the running lease, which is
-    the longest the caller could have to wait even if the worker has died.
+    than held. No retry hint comes with it: how long the agent still needs is
+    not something this service can know, and the lease — which is renewed for
+    as long as the worker lives — only measures how quickly a dead one is
+    noticed.
     """
 
     type: Literal["session_busy"] = "session_busy"
     message: str
-    retry_after_seconds: int

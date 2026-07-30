@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from app.db.engine import session_scope
 from app.db.models import Session as SessionRow, SessionEvent
 from app.db.queries import DEFAULT_PAGE_SIZE
+from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
 from app.models.events import EventResponse, SendEventsRequest, SendEventsResponse
 from app.models.files import FileResponse, LiveFileRequest
@@ -112,6 +113,8 @@ async def send_events(
         db,
         session_id=session_id,
         organization_id=organization_id,
+        # Flat dicts, the same shape the client sent. There is no `payload`
+        # envelope to unwrap: `type` picks the shape and the rest is the event.
         events=[event.model_dump() for event in body.events],
     )
     return SendEventsResponse(data=[to_event(e) for e in events])
@@ -296,12 +299,8 @@ def to_session(session: SessionRow) -> SessionResponse:
 
 
 def to_event(event: SessionEvent) -> EventResponse:
-    return EventResponse(
-        id=event.id,
-        session_id=event.session_id,
-        seq=event.seq,
-        event_type=event.type,
-        source=event.source,
-        payload=event.payload,
-        created_at=event.created_at,
-    )
+    """A stored row becomes whichever of the fourteen shapes it was written as.
+
+    `models.events` owns the mapping; the router only needs the result.
+    """
+    return event_models.from_row(event)

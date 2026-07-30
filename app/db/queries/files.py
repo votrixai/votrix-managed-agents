@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import File
+from app.db.models import File, SessionFile
 from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
 from app.utils.id_generator import new_id
 
@@ -112,6 +112,23 @@ async def total_size_bytes(db: AsyncSession, *, organization_id: str) -> int:
 async def archive_file(db: AsyncSession, file: File) -> None:
     file.archived_at = datetime.now(timezone.utc)
     await db.flush()
+
+
+async def sessions_holding(db: AsyncSession, file: File) -> int:
+    """How many sessions were given this file.
+
+    An uploaded file is mounted into a session by a row in `session_files`, and
+    sessions are only ever soft-deleted — so that row outlives the session and
+    keeps referencing the file for good. Asking first is what turns "the
+    foreign key will refuse this" into something the caller can be told.
+    """
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(SessionFile)
+            .where(SessionFile.file_id == file.id)
+        )
+    ).scalar_one()
 
 
 async def delete_file(db: AsyncSession, file: File) -> None:

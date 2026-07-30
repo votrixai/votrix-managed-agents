@@ -55,18 +55,12 @@ def _install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(SessionBusy)
     async def _session_busy(request: Request, exc: SessionBusy) -> JSONResponse:
-        # Retry-After as well as the body: the header is what a generic client
-        # or proxy already knows how to obey.
+        # No `Retry-After`. How long the agent has left to think is not
+        # something this service knows, and a header saying otherwise would
+        # send well-behaved clients back at the wrong moment.
         return JSONResponse(
             status_code=409,
-            headers={"Retry-After": str(exc.retry_after_seconds)},
-            content={
-                "error": {
-                    "type": "session_busy",
-                    "message": str(exc),
-                    "retry_after_seconds": exc.retry_after_seconds,
-                }
-            },
+            content={"error": {"type": "session_busy", "message": str(exc)}},
         )
 
     @app.exception_handler(SandboxUnavailable)

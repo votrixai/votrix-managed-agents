@@ -22,13 +22,15 @@ class Conflict(ServiceError):
 class SessionBusy(ServiceError):
     """The session is mid-reply and there is no queue to hold the message.
 
-    Carries the lease remainder so the caller can tell the client how long to
-    wait — worst case, that is how long it takes a dead worker to time out.
+    Deliberately says nothing about when to try again. The lease is renewed
+    every forty-five seconds for as long as the worker lives, so its remainder
+    is not how long the turn has left — it is only how long a *dead* worker
+    would take to be noticed. A number that is right in the one case nobody
+    cares about is worse than no number.
     """
 
-    def __init__(self, retry_after_seconds: int) -> None:
+    def __init__(self) -> None:
         super().__init__("The session is still working on the previous message.")
-        self.retry_after_seconds = retry_after_seconds
 
 
 class SessionCancelled(ServiceError):

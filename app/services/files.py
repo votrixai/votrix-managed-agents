@@ -112,16 +112,32 @@ async def download_url(db: AsyncSession, *, file_id: str, organization_id: str) 
 
 
 async def delete_file(db: AsyncSession, *, file_id: str, organization_id: str) -> File:
-    """Remove the bytes, then the row.
+    """Refuse if a session still holds it; otherwise the row, then the bytes.
 
-    Failing between the two leaves a row pointing at a deleted object, which
-    shows up as a broken download. The other order loses the key and leaks the
-    bytes forever, which nobody would ever notice.
+    A file mounted into a session is referenced by `session_files`, and
+    sessions are only soft-deleted, so that reference never goes away. The
+    check is here to say so plainly. Without it the delete reached the database
+    and came back as a foreign-key violation — a 500 for a request that was
+    never going to work.
+
+    The row goes before the bytes, which is the opposite of what this used to
+    do and matters more than the reasoning it replaces. Removing the object
+    first meant a failure on the *second* step destroyed the bytes and rolled
+    the row back: the file stayed in every listing and every download of it
+    404ed. Deleting the row first can at worst leave an unreferenced object in
+    the bucket, which costs pennies and breaks nothing.
     """
     file = await get_file(db, file_id=file_id, organization_id=organization_id)
-    await storage.delete_object(file.storage_key)
+    holders = await files_q.sessions_holding(db, file)
+    if holders:
+        raise Conflict(
+            f"File {file_id} is attached to {holders} session(s) and cannot be deleted"
+        )
+
+    key = file.storage_key
     await files_q.delete_file(db, file)
     await db.commit()
+    await storage.delete_object(key)
     return file
 
 

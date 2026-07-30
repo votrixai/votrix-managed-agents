@@ -62,9 +62,6 @@ class Session(TimestampMixin, Base):
     title: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
     stop_reason: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    # The event that started the turn now in flight. Kept so an interrupt can
-    # name what it cut off instead of leaving the client to guess.
-    current_event_id: Mapped[str | None] = mapped_column(String(64))
     last_event_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # Held while a worker is busy with this session. New messages are refused
     # until it lapses, which is also what stops a dead worker from locking the

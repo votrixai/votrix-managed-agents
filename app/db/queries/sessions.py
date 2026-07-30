@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.db.models import Session, SessionEvent, SessionFile, SessionSandbox
 from app.db.models.sessions import IDLE, RUNNING, SANDBOX_PROVISIONING
@@ -119,13 +120,51 @@ async def append_event(
     source: str,
     payload: dict[str, Any] | None = None,
 ) -> SessionEvent:
-    """Append one event and advance the session's sequence counter."""
-    session.last_event_seq += 1
+    """Append one event, letting the database hand out its sequence number.
+
+    The number has to be allocated by the database rather than by adding one to
+    the copy of the row this request happens to be holding. Two requests do
+    write to one session at the same time, by design: `user.interrupt` exists
+    precisely to reach a session while its turn is still producing output, so
+    the agent's next `agent.message` and the interrupt's own events are racing
+    for the same counter.
+
+    Adding one in memory loses that race. Both sides read the same committed
+    value, both write the same `seq`, and the unique constraint on
+    `(session_id, seq)` rejects the second — which rolls back the whole
+    interrupt, so the user's stop is not delayed but lost.
+
+    The worker's own generation check cannot help here. It fires on what
+    `cancel_session` writes, and the collision happens *inside* that function,
+    before it commits and therefore before anything it did is visible.
+
+    `UPDATE ... RETURNING` reads and writes in one statement, so concurrent
+    callers get 3 and 4 rather than 3 and 3. Which of them gets which does not
+    matter: the ordering these numbers carry is "not the same as each other",
+    not "in the order I would have guessed".
+    """
+    seq = (
+        await db.execute(
+            update(Session)
+            .where(Session.id == session.id)
+            .values(last_event_seq=Session.last_event_seq + 1)
+            .returning(Session.last_event_seq)
+        )
+    ).scalar_one()
+
+    # The row moved behind the ORM's back, so tell the in-memory copy what it
+    # now holds — as a *committed* value, not an assignment. A plain
+    # `session.last_event_seq = seq` would mark the attribute dirty, and the
+    # next flush would write this request's number back over a number some
+    # other request had since allocated. That is the same bug again, one layer
+    # up.
+    set_committed_value(session, "last_event_seq", seq)
+
     event = SessionEvent(
         id=new_id("evt"),
         organization_id=session.organization_id,
         session_id=session.id,
-        seq=session.last_event_seq,
+        seq=seq,
         type=type,
         source=source,
         payload=payload or {},
@@ -247,12 +286,6 @@ async def extend_session_lease(
     await db.flush()
 
 
-async def set_current_event(db: AsyncSession, session: Session, *, event_id: str | None) -> None:
-    """Record which event the turn now in flight is answering."""
-    session.current_event_id = event_id
-    await db.flush()
-
-
 async def release_session(
     db: AsyncSession,
     session: Session,
@@ -269,7 +302,6 @@ async def release_session(
     """
     session.status = status
     session.stop_reason = stop_reason
-    session.current_event_id = None
     session.lease_expires_at = None
     session.lock_version += 1
     await db.flush()

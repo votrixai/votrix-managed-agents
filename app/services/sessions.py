@@ -38,9 +38,8 @@ from app.db.queries import agents as agents_q
 from app.db.queries import environments as environments_q
 from app.db.queries import sessions as sessions_q
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
-from app.db.queries import skills as skills_q
 from app.models import events as event_types
-from app.models.sessions import IDLE, RUNNING, STOP_INTERRUPTED, TERMINATED
+from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
 from app.services import environments as environments_service
 from app.services import files as files_service
 from app.models.errors import (
@@ -51,6 +50,7 @@ from app.models.errors import (
     SessionCancelled,
 )
 from app.utils.sandbox import OUTPUTS_DIR, Image, Sandbox
+from app.utils.timing import timed
 
 # A turn may hold the session this long before we call it hung.
 TURN_TIMEOUT_SECONDS = 600
@@ -251,7 +251,7 @@ async def send_events(
     # stale here whether we won or lost.
     await db.refresh(session)
     if not claimed:
-        raise SessionBusy(retry_after_seconds=_lease_remaining(session))
+        raise SessionBusy()
 
     appended = [
         await sessions_q.append_event(
@@ -259,20 +259,20 @@ async def send_events(
             session,
             type=event["type"],
             source="user",
-            payload=event.get("payload") or {},
+            payload={key: value for key, value in event.items() if key != "type"},
         )
         for event in events
     ]
-    await sessions_q.set_current_event(db, session, event_id=appended[0].id)
     await db.commit()
 
-    # After the commit, never before: the worker may start the moment it is
-    # told to, and it must be able to see what it is starting on.
+    # The whole batch goes, not the first of it. A paused graph is resumed with
+    # one decision per call it stopped on, counted; handing over a subset would
+    # fail inside the turn instead of here.
     await _dispatch_turn(
         db,
         session_id=session_id,
         generation=session.lock_version,
-        message=events[0],
+        events=events,
     )
     return appended
 
@@ -297,7 +297,6 @@ async def cancel_session(
     if session.status == TERMINATED:
         raise Conflict(f"Session {session_id} is terminated")
 
-    interrupted_event_id = session.current_event_id
     event = await sessions_q.append_event(
         db,
         session,
@@ -307,11 +306,10 @@ async def cancel_session(
     )
 
     if session.status == RUNNING:
+        # Nothing beyond the type: the client knows what it sent, and a field
+        # here listing "what was cut off" beside `requires_action`'s list of
+        # "what to answer" is two meanings one glance apart.
         stop_reason: dict[str, Any] = {"type": STOP_INTERRUPTED}
-        if interrupted_event_id is not None:
-            # Name what was cut off, so the client can mark that message rather
-            # than inferring it from where the events happen to stop.
-            stop_reason["event_ids"] = [interrupted_event_id]
         await sessions_q.release_session(db, session, status=IDLE, stop_reason=stop_reason)
         # The engine emits this itself when a turn ends normally; an interrupted
         # turn unwinds through an exception instead, so nobody else will.
@@ -320,7 +318,7 @@ async def cancel_session(
             session,
             type=event_types.SESSION_STATUS_IDLE,
             source="system",
-            payload={"status": IDLE, "stop_reason": stop_reason},
+            payload={"stop_reason": stop_reason},
         )
 
     await db.commit()
@@ -417,7 +415,7 @@ async def _dispatch_turn(
     *,
     session_id: str,
     generation: int,
-    message: dict[str, Any],
+    events: list[dict[str, Any]],
 ) -> None:
     """Get the turn running, by whichever route this deployment uses.
 
@@ -431,11 +429,11 @@ async def _dispatch_turn(
     else, instead of from a 500 on a request that actually succeeded.
     """
     if get_settings().turn_dispatch == "cloud":
-        await _enqueue_task(session_id=session_id, generation=generation, message=message)
+        await _enqueue_task(session_id=session_id, generation=generation, events=events)
         return
 
     try:
-        await process_session(db, session_id=session_id, message=message)
+        await process_session(db, session_id=session_id, events=events)
     except Exception:
         logger.exception("inline_turn_failed", session_id=session_id)
 
@@ -447,11 +445,11 @@ async def process_session(
     db: AsyncSession,
     *,
     session_id: str,
-    message: dict[str, Any],
+    events: list[dict[str, Any]],
 ) -> None:
     """Run one turn. The API already claimed the session before enqueueing us.
 
-    `message` is the event the client sent, carried in the task payload. There
+    `events` is the batch the client sent, carried in the task payload. There
     is no need to reconstruct it from the event log: the history the agent
     needs lives in the graph checkpoint, not in our tables.
     """
@@ -504,17 +502,24 @@ async def process_session(
     try:
         from app.runtime.engine import execute_agent
 
-        await asyncio.wait_for(
-            execute_agent(
-                session=session,
-                version=version,
-                message=message,
-                sandbox=container,
-                attached_files=attached,
-                emit=_emitter(db, session, generation),
-            ),
-            timeout=TURN_TIMEOUT_SECONDS,
-        )
+        # The denominator. Every other timing in a turn is a slice of this one,
+        # and what the slices do not add up to is what nothing is watching yet.
+        async with timed(
+            "turn_finished",
+            session_id=session_id,
+            trigger=events[0].get("type") if events else None,
+        ):
+            await asyncio.wait_for(
+                execute_agent(
+                    session=session,
+                    version=version,
+                    events=events,
+                    sandbox=container,
+                    attached_files=attached,
+                    emit=_emitter(db, session, generation),
+                ),
+                timeout=TURN_TIMEOUT_SECONDS,
+            )
     except SessionCancelled:
         # cancel_session already released the session and recorded the stop.
         # The agent may still have finished something before it was cut off,
@@ -571,7 +576,9 @@ def _emitter(db: AsyncSession, session: Session, generation: int) -> Emit:
     return emit
 
 
-async def _enqueue_task(*, session_id: str, generation: int, message: dict[str, Any]) -> None:
+async def _enqueue_task(
+    *, session_id: str, generation: int, events: list[dict[str, Any]]
+) -> None:
     """Hand the turn to Cloud Tasks, which calls back into this service to run it.
 
     The task is named after the turn it runs, so a retry that was already
@@ -598,7 +605,7 @@ async def _enqueue_task(*, session_id: str, generation: int, message: dict[str, 
             http_method=tasks_v2.HttpMethod.POST,
             url=f"{worker_url}/internal/sessions/{quote(session_id, safe='')}/process",
             headers={"Content-Type": "application/json"},
-            body=json.dumps({"message": message}).encode(),
+            body=json.dumps({"events": events}).encode(),
             # Cloud Tasks signs the call, and the endpoint checks the signature.
             # Without it anything that learned the URL could start turns.
             oidc_token=tasks_v2.OidcToken(
@@ -844,22 +851,6 @@ async def _require_agent(db: AsyncSession, *, agent_id: str, organization_id: st
     return agent
 
 
-def _as_utc(value: datetime) -> datetime:
-    """Treat a stored timestamp as UTC.
-
-    Postgres hands back tz-aware values; SQLite drops the offset. Comparing the
-    two shapes raises, so anything read from a column is normalized before it
-    meets `_now()`.
-    """
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-
-
-def _lease_remaining(session: Session) -> int:
-    if session.lease_expires_at is None:
-        return 0
-    return max(0, int((_as_utc(session.lease_expires_at) - _now()).total_seconds()))
-
-
 def _sandbox_is_gone(sandbox: SessionSandbox) -> bool:
     """True once the sandbox can no longer be used.
 
@@ -879,13 +870,26 @@ def _sandbox_is_gone(sandbox: SessionSandbox) -> bool:
 
 
 async def _terminate(db: AsyncSession, session: Session, *, reason: str) -> None:
-    """End the session for good and tell the client why."""
+    """End the session for good and tell the client why.
+
+    Two events, in this order: what went wrong, then that the session is over.
+    A client reads the first to explain itself and the second to stop waiting,
+    and it must be able to stop waiting even if it does not understand the
+    reason it was given.
+    """
     await sessions_q.append_event(
         db,
         session,
         type=event_types.SESSION_ERROR,
         source="system",
         payload={"error": {"type": reason}},
+    )
+    await sessions_q.append_event(
+        db,
+        session,
+        type=event_types.SESSION_STATUS_TERMINATED,
+        source="system",
+        payload={},
     )
     await sessions_q.release_session(
         db,
@@ -897,7 +901,14 @@ async def _terminate(db: AsyncSession, session: Session, *, reason: str) -> None
 
 
 async def _fail(db: AsyncSession, session: Session, exc: BaseException) -> None:
-    """Record a failed turn but leave the session usable."""
+    """Record a failed turn but leave the session usable.
+
+    The `session.status_idle` is not decoration. `idle` is the only thing that
+    means "the turn is over, your go", and a client on the stream has nothing
+    else to wait for — a failed turn that skipped it would leave that client
+    waiting for an event that is never coming, on a session that is in fact
+    ready for its next message.
+    """
     await sessions_q.append_event(
         db,
         session,
@@ -905,10 +916,17 @@ async def _fail(db: AsyncSession, session: Session, exc: BaseException) -> None:
         source="system",
         payload={"error": {"type": type(exc).__name__, "message": str(exc)}},
     )
+    await sessions_q.append_event(
+        db,
+        session,
+        type=event_types.SESSION_STATUS_IDLE,
+        source="system",
+        payload={"stop_reason": {"type": STOP_ERROR}},
+    )
     await sessions_q.release_session(
         db,
         session,
         status=IDLE,
-        stop_reason={"type": "error"},
+        stop_reason={"type": STOP_ERROR},
     )
     await db.commit()

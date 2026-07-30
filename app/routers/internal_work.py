@@ -22,12 +22,14 @@ router = APIRouter(
 class ProcessSessionRequest(ApiModel):
     """What the queue hands back to us.
 
-    The message travels in the payload rather than being looked up, because
-    the history the agent needs is in the graph checkpoint, not our tables —
-    this endpoint has no reason to read the event log at all.
+    The batch travels in the payload rather than being looked up, because the
+    history the agent needs is in the graph checkpoint, not our tables — this
+    endpoint has no reason to read the event log at all. It is the whole batch
+    because a paused graph is resumed with one decision per call it stopped on,
+    counted.
     """
 
-    message: dict[str, Any]
+    events: list[dict[str, Any]]
 
 
 @router.post("/{session_id}/process", status_code=204)
@@ -44,6 +46,6 @@ async def process_session(session_id: str, body: ProcessSessionRequest, db: Db) 
     cannot succeed, against a session that has already been told it is over.
     """
     try:
-        await service.process_session(db, session_id=session_id, message=body.message)
+        await service.process_session(db, session_id=session_id, events=body.events)
     except Exception:
         logger.exception("cloud_turn_failed", session_id=session_id)
