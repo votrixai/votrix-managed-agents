@@ -359,6 +359,8 @@ check_environment_secrets() {
   do
     check_secret "vma-${base}${SECRET_SUFFIX}"
   done
+  check_secret "anthropic-api-key${SECRET_SUFFIX}"
+  check_secret "gemini-api-key${SECRET_SUFFIX}"
 }
 
 case "$TARGET" in
@@ -417,8 +419,7 @@ if [ "$TARGET" = production ] || [ "$TARGET" = all ]; then
   fi
 fi
 
-warn "verify the private E2B template 'vma-hardened' exists for both configured E2B credentials"
-warn "preflight checks secret metadata only; the staging migration and acceptance smoke validate secret values, Postgres, R2, E2B, and the model Vault"
+warn "preflight checks secret metadata only; deployment validates secret values, Postgres, R2, E2B, and model providers"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "Preflight failed: ${FAILURES} failure(s), ${WARNINGS} warning(s)." >&2

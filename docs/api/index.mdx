@@ -1,38 +1,31 @@
 ---
 title: API Reference
-description: Explore and call every Votrix Managed Agents endpoint.
+description: Historical API reference generated from the pre-rewrite application.
 ---
 
-The Votrix Managed Agents API is an Organization-scoped REST API for defining agents,
-creating durable sessions, managing execution environments, and operating the
-resources that long-running agents need.
+<Callout title="Pre-rewrite schema" type="warn">
 
-The public-beta document contains API keys, Agents, Environments, Sessions,
-Files, Skills, Vaults/native model Credentials, Model Providers, and the
-capability manifest. Experimental repository routes such as Memory Stores,
-Deployments, User Profiles, Session Threads, presigned-upload completion, and
-webhook delivery are intentionally excluded from the GA schema.
+This committed API reference was generated from the archived application. It is
+not the API implemented by the active `app/` rewrite and has been removed from
+the current documentation navigation.
 
-<Callout title="Authentication">
-  Every `/v1` request requires the current `votrix-managed-agents-beta` header plus
-  either an `x-api-key` header or the same key as a Bearer token. Authentication
-  values entered in the playground stay in your browser.
 </Callout>
 
-Every response echoes or generates `request-id` and `x-request-id`. Standard
-API error envelopes expose a stable `error.code` and include the request ID;
-quota denials also include `X-RateLimit-*` or `X-Quota-*` reset metadata.
+Do not use the generated playground against a live service. The checked-in
+`public/openapi/vma.json` and its endpoint pages contain the historical API-key,
+Vault, provider, quota, and deployment surface.
 
-## Base URL
+Start the active service with:
 
-```text
-https://api.vma.votrixai.com
+```bash
+uv run uvicorn app.main:app --reload
 ```
 
-Choose an endpoint from the sidebar to inspect its request schema, copy a code
-sample, or send a real HTTP request from the interactive playground.
+Then read its current schema from:
 
-## OpenAPI document
+```text
+http://127.0.0.1:8000/openapi.json
+```
 
-The reference is generated at build time from the same FastAPI application that
-serves production traffic. You can also [download the complete OpenAPI schema](/openapi/vma.json).
+The documentation exporter must be ported to `app.server.create_app` before
+this generated reference can become current again.

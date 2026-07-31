@@ -138,4 +138,4 @@ echo "  Documentation:  ${DOCS_BASE_URL}/docs/"
 echo "  API Playground: ${DOCS_BASE_URL}/docs/api/agents/list_agents_v1_agents_get/"
 echo
 echo "OpenAPI schema: http://127.0.0.1:${PORT}/openapi.json"
-uvicorn votrix_managed_agents:create_app --factory --host 0.0.0.0 --port "$PORT" --reload
+uvicorn app.server:create_app --factory --host 0.0.0.0 --port "$PORT" --reload

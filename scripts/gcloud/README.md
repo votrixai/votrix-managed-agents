@@ -312,8 +312,8 @@ code; there is deliberately no queue-level deadline setting.
 Before raising `maxScale` or the per-instance turn limit, recalculate PostgreSQL,
 model-provider, E2B, CPU, memory, and spend budgets. A manual Cloud Run scaling
 change is temporary because the next manifest replacement restores the
-checked-in bounds. Validate changes with `scripts/performance_smoke.py` in
-staging and update the manifest, static tests, and runbook together.
+checked-in bounds. Validate changes in staging and update the manifest, static
+tests, and runbook together.
 
 ## Staging acceptance gates
 
@@ -330,37 +330,6 @@ uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
 model Credential selected by the smoke Agent. The hosted service intentionally
 has no platform model API key, so the acceptance would otherwise fail closed
 with `model_credential_required` before exercising E2B or R2.
-
-Then use an existing staging Vault containing the selected model Credential to
-run the ten-Session burst:
-
-```bash
-VMA_PERF_BASE_URL=https://YOUR-STAGING-CLOUD-RUN-URL \
-VMA_PERF_API_KEY=... \
-VMA_PERF_VAULT_IDS=vault_... \
-uv run python scripts/performance_smoke.py
-```
-
-The performance smoke creates disposable Sessions and, unless existing IDs are
-provided, a disposable Agent and Environment. It never modifies a supplied
-Vault, Agent, or Environment; cleanup deletes Sessions and the Environment and
-archives the Agent. It reports provision, trigger, queue, first-event, and
-total latency with p50/p95/max summaries. The run makes real model and E2B calls
-and therefore consumes the corresponding provider quotas.
-
-For the first controlled rollout, the GCP wrapper can migrate an existing
-operator-owned model-key Secret Manager value into an encrypted VMA Vault and
-run the one-Session smoke without exposing either credential:
-
-```bash
-VMA_SMOKE_MODEL_API_KEY_SECRET=YOUR_OPERATOR_MODEL_KEY_SECRET \
-  ./scripts/gcloud/7-run-acceptance.sh staging
-```
-
-The named source is never mounted into Cloud Run and is used only by the
-trusted operator command. After the Vault-backed smoke passes, retire any
-transitional model-key secret; the active encrypted Credential belongs to the
-staging Organization Vault.
 
 ## Bootstrap the first tenant API key
 
@@ -494,7 +463,6 @@ and concurrent-dispatch bound.
 | `scripts/gcloud/4-setup-triggers.sh` | GitHub Cloud Build triggers |
 | `scripts/gcloud/5-allow-public.sh` | Repair the public Invoker IAM-check setting |
 | `scripts/gcloud/6-bootstrap-operator.sh` | Securely bootstrap an operator API key to Secret Manager and Postgres |
-| `scripts/gcloud/7-run-acceptance.sh` | Provision the BYOK smoke Vault and run real R2/E2B/model acceptance |
 | `scripts/gcloud/8-setup-cloud-tasks.sh` | Idempotently configure queues and OIDC dispatch IAM |
 | `scripts/gcloud/preflight.sh` | Read-only GCP, IAM, secret metadata, manifest, and git readiness |
 | `scripts/gcloud/status.sh` | Deployed service and job status |

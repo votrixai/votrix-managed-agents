@@ -1,6 +1,6 @@
 ---
 title: Session Events
-description: The fourteen session event types, the four a client can send, and the eight rules that are not visible in the schema.
+description: The thirteen session event types, the four a client can send, and the rules that are not visible in the schema.
 ---
 
 A session is an append-only log of events. You append; the agent appends; both
@@ -22,7 +22,7 @@ model in a real container.
 | **`is_error` invites a retry** | A failed tool result reaches the model as a failure, and a model told its tool failed will usually try again. |
 | **Deliverables live in `outputs/`** | A file written anywhere else is real, readable by the agent, and never collected. |
 | **An interrupt is not instant** | Cancellation lands between the model's steps, not inside one. |
-| **A failed turn still goes idle** | `session.status_idle` always arrives, so waiting for it is safe. |
+| **Idle marks the graph stop** | Output collection and the final row release currently happen just after the event is committed. |
 
 The rest of this page is those eight, one at a time.
 
@@ -86,7 +86,7 @@ show a spinner that never resolves.
 is passed to the agent, which counts it and fails the turn.
 
 Answers cannot be mixed with anything else in the same batch. A batch is either
-all answers, or one message, or one interrupt.
+all answers, one or more messages, or one interrupt.
 
 ## Rule 3 — order is yours
 
@@ -165,10 +165,12 @@ The container has three directories that matter:
 /home/user           everything else: scratch
 ```
 
-When a turn ends, everything under `outputs/` is collected and becomes a file
-you can list and download. **Nothing outside it is.** A file at
-`/home/user/report.txt` is real, the agent can read it back, and it will never
-appear in `GET /v1/files?scope_id={session_id}` — not because collection
+When a turn ends, eligible files under `outputs/` are collected and become
+Files you can list and download. Collection considers at most 50 files by
+default and skips an individual file over 100 MiB by default; see
+[Service limits](./limits.md). **Nothing outside `outputs/` is collected.** A
+file at `/home/user/report.txt` is real, the agent can read it back, and it will
+never appear in `GET /v1/files?scope_id={session_id}` — not because collection
 failed, but because being a deliverable means being in `outputs/`.
 
 Subdirectories are kept, and the path becomes the filename:
@@ -179,6 +181,11 @@ Subdirectories are kept, and the path becomes the filename:
 
 `POST /v1/sessions/{id}/live/files` takes one file out mid-turn without waiting
 for the turn to end; its `path` is relative to `outputs/`.
+
+Automatic collection starts immediately after the runtime writes
+`session.status_idle`. Because those are separate commits, a client reacting to
+the event immediately can briefly receive a File list that does not yet contain
+the turn's outputs.
 
 ## Rule 7 — an interrupt is not instant
 
@@ -193,27 +200,36 @@ The turn then ends with:
 { "type": "session.status_idle", "stop_reason": { "type": "interrupted" } }
 ```
 
-Nothing is appended after that, and the next message continues the
-conversation normally.
+No later **Agent** event from the cancelled generation is accepted. The
+cancelled worker still attempts output collection, so a system
+`session.error` about collection can follow the idle event.
 
-## Rule 8 — every turn ends with idle
+## Rule 8 — idle marks the graph stop
 
-`session.status_idle` is the only signal that means "your go". It always
-arrives, including when the turn failed:
+`session.status_idle` reports why the graph stopped. It arrives for normal
+completion, a pause, an interrupt, and a failed turn:
 
 | `stop_reason.type` | Meaning |
 | --- | --- |
-| `end_turn` | finished; send the next message whenever |
+| `end_turn` | the graph finished |
 | `requires_action` | waiting on you — see `tool_use_ids` |
 | `interrupted` | you stopped it |
 | `error` | it failed; the `session.error` event just before says why |
 
-Waiting for `session.status_idle` is therefore always safe. Waiting for
-`end_turn` specifically is not.
+In the current rewrite, the event is not atomic with cleanup. On a normal turn
+it is committed before output collection and before the Session row is released
+to `idle`. An SSE client can therefore observe it, immediately send the next
+message, and briefly receive `409 session_busy`; the output File list can lag in
+the same window. Re-read the Session until its `status` is `idle`, or retry a
+busy response. Waiting for `end_turn` specifically is still wrong because
+`requires_action`, `interrupted`, and `error` also end the current graph run.
 
-A session whose container is gone ends differently and for good:
-`session.error` with `sandbox_unavailable`, then `session.status_terminated`,
-and every later message is refused with `409`.
+A Session whose sandbox row is missing or already marked failed/terminated ends
+differently and for good: `session.error` with `sandbox_unavailable`, then
+`session.status_terminated`, and every later message is refused with `409`.
+A remote E2B sandbox that disappears while its row still looks usable currently
+produces an ordinary failed turn and returns to `idle`; that mismatch is a known
+runtime gap.
 
 ## While the agent is busy
 
@@ -226,5 +242,6 @@ There is no queue. A second message sent mid-turn is refused with `409` and
 
 No retry hint comes with it. How long the agent still needs is not something
 this service can know, and a header saying otherwise would send well-behaved
-clients back at exactly the wrong moment. Poll the session, or watch the
-stream, and act on `session.status_idle`.
+clients back at exactly the wrong moment. Watch the stream for
+`session.status_idle`, then confirm the Session row is idle or retry a transient
+`session_busy`.

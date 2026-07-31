@@ -416,7 +416,9 @@ async def _checkpoint_saver(session_id: str) -> AsyncIterator[Any]:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
         async with timed("checkpoint_connected", session_id=session_id, backend="postgres"):
-            connection = AsyncPostgresSaver.from_conn_string(_postgres_dsn(url))
+            connection = AsyncPostgresSaver.from_conn_string(
+                _postgres_dsn(url, get_settings().database_schema)
+            )
             saver = await connection.__aenter__()
         try:
             async with timed("checkpoint_setup", session_id=session_id, backend="postgres"):
@@ -517,11 +519,18 @@ def _require_key(key: str, entry: Any) -> str:
     return key
 
 
-def _postgres_dsn(value: str) -> str:
+def _postgres_dsn(value: str, schema: str = "") -> str:
     if value.startswith("postgres://"):
         value = "postgresql://" + value[len("postgres://") :]
     for driver in ("+asyncpg", "+psycopg", "+psycopg_async"):
         value = value.replace(driver, "")
+    if schema:
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        parts = urlsplit(value)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["options"] = f"-csearch_path={schema}"
+        value = urlunsplit(parts._replace(query=urlencode(query)))
     return value
 
 

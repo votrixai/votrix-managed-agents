@@ -1,312 +1,576 @@
 ---
-title: Votrix Core Architecture
-description: Ownership boundaries across the public API, durable control plane, and agent runtime.
+title: Rewrite Architecture
+description: The active peteryue branch layers, state ownership, Session lifecycle, and runtime topology.
 ---
 
-VMA is the self-hosted, Organization-scoped Votrix core of a managed-agents platform. It exposes a Claude Managed Agents-shaped control plane and uses Deep Agents 0.6.12 as the execution kernel. A private hosted product should compose this package with enterprise identity, policy, infrastructure, and commercial services rather than fork the core.
+Snapshot: 2026-07-30
 
-The boundary is architectural, not a claim that the current core already provides Claude-equivalent managed infrastructure. See the [compatibility matrix](./compatibility-matrix.md) and [known incompatibilities](./known-incompatibilities.md).
+Active source: `app/` and `tests/`
+
+This page describes the rewrite on the `peteryue` branch. It does not describe
+the previous public-beta implementation now stored under `app_archived/`.
+See [rewrite status](./rewrite-status.md) before relying on another page in this
+documentation set.
+
+## Repository boundary
+
+The merge commit `1960056` deliberately retained the rewrite while recording
+the old staging history. The resulting repository has two architectures:
+
+```text
+app/                 active service
+tests/               active isolated test suite
+tests_live/          active external-service test suite
+
+app_archived/        previous service; not imported by the active app
+tests_archived/      previous test suite; not in pytest's default test path
+```
+
+Only the first group is authoritative for runtime behavior. Shared top-level
+deployment files, SDKs, and older documentation have not all been migrated.
+
+## System shape
+
+```text
+                         HTTP / SSE
+                             |
+                             v
+                    +-----------------+
+                    | FastAPI routers |
+                    +-----------------+
+                      | parse / render
+                      v
+                    +-----------------+
+                    |    services     |
+                    | use-case rules  |
+                    +-----------------+
+                      |       |       |
+             SQL rows |       |       | external orchestration
+                      v       |       +-----------> Cloud Tasks
+              +---------------+       +-----------> E2B
+              | queries / ORM |       +-----------> S3-compatible storage
+              +---------------+
+                      |
+                      v
+             SQLite or PostgreSQL
+
+Turn execution:
+
+Session input event
+  -> atomic Session lease
+  -> inline execution OR OIDC-signed Cloud Tasks callback
+  -> Deep Agents graph
+       -> configured model provider
+       -> E2B filesystem and shell tools
+       -> LangGraph checkpoint store
+  -> durable Session events
+  -> polling SSE clients
+```
+
+The rewrite is a single Python package with explicit layers, not a collection
+of independently deployed domain services. Cloud mode may run the same ASGI app
+behind separate API and callback URLs, but both processes use the same code and
+database.
 
 ## Layer model
 
-```text
-Hosted/private product
-  members, RBAC, SSO, RLS, paid billing, audit operations, support
-  hosted model gateway, secret manager, sandbox fleet, broker, scheduler
-                              |
-                              v
-Votrix Managed Agents core
-  Organization auth -> FastAPI compatibility routes -> durable resources/events
-                              |
-                              v
-Deep Agents execution adapter
-  LangChain model + MCP tools + LangGraph checkpoint + sandbox backend
+### Composition
+
+`app/server.py` builds the FastAPI application, includes every active router,
+and maps domain exceptions to HTTP responses. `app/main.py` exposes the ASGI
+object as `app`.
+
+The supported development entry point is:
+
+```bash
+uv run uvicorn app.main:app --reload
 ```
 
-Deep Agents is below the public service boundary. Public callers should never need to know about LangChain messages, LangGraph checkpoint IDs, middleware names, provider profile registries, or backend-native sandbox IDs.
+The `votrix_managed_agents` package export and top-level `entrypoint.sh` still
+refer to modules from the previous implementation. They are migration work,
+not active composition points for this branch.
 
-## Core responsibilities
+### HTTP layer
 
-The Votrix core owns:
+`app/routers/` owns transport concerns:
 
-- FastAPI paths and models for the covered `/v1` Managed Agents-shaped resources.
-- Beta/version-header validation and official-SDK contract tests.
-- Organization-scoped authentication interfaces and API-key implementations.
-- Database API-key create/list/retrieve/revoke/rotate lifecycle, expiration,
-  `api`/`api_keys:manage`/`worker` scopes, and trusted first-key bootstrap.
-- Request IDs, stable error codes, and authenticated request audit correlation.
-- Agent/version immutability and session version pinning.
-- Environment and session resources, append-only events, session state, and work records.
-- Deep Agents graph compilation and translation of runtime events into public events.
-- Server-controlled model-provider routing for Anthropic, OpenAI, DeepSeek, and
-  approved extensions, with model keys supplied only by Session-mounted
-  Organization Vault model Credentials.
-- LangGraph checkpointer selection.
-- A sandbox factory interface plus a safe no-shell default.
-- S3-compatible file and custom-skill bytes.
-- Organization-scoped memory and credential resources.
-- Optional self-hosted worker mechanics and an importable deployment scheduler tick.
-- Durable work leases/generations, heartbeat, expired-attempt recovery, and
-  stale-worker terminal-write fencing.
-- Atomic Organization request, active-work, daily model-token, and stored-byte
-  quotas with append-only raw audit/usage ledgers.
-- Generic tenant idempotency for Session creation plus transactional event
-  submission idempotency.
-- A bootstrapped Organization experience for local development.
+- paths, methods, headers, query parameters, and response codes;
+- FastAPI dependency injection;
+- conversion from ORM rows to explicit public response models;
+- SSE framing.
 
-The core may expose extension interfaces, but it must stay useful without a private repository.
+`app/models/` owns Pydantic request and response shapes. All API models use
+`extra="forbid"`, so unknown request fields are rejected rather than ignored.
 
-## Hosted/private responsibilities
+Routers call services and do not issue domain queries directly, with small
+read-only conversions as the exception. A router should not decide when a
+transaction commits or know how E2B and object storage work.
 
-A hosted or enterprise layer owns:
+### Service layer
 
-- Users, memberships, invitations, teams, and human/service-account identity.
-- RBAC/ABAC, SSO/SAML/OIDC, SCIM, trust grants, and support impersonation policy.
-- Advanced policy beyond the core's narrow Organization quotas, including sandbox
-  compute/egress, tool/MCP, retention, and monetary spend controls.
-- Commercial billing after the BYOK/free beta: price books, currency amounts,
-  balances/credits, top-ups, refunds, Stripe, invoices, plans, seats, and taxes.
-- Enterprise audit export, automated retention, legal hold, external tamper
-  anchoring, and administrator/support access logging.
-- Hosted model gateways and tenant credential policy, while preserving VMA's
-  rule that tenant model traffic never falls back to a VMA-owned model key.
-- KMS-backed secret management, credential rotation, OAuth enrollment/refresh, and revocation.
-- Remote sandbox fleet selection, isolation, images, lifecycle, snapshots, and regional placement.
-- Preview-transport operation and database connection budgeting. The core ships
-  both a local in-process transport and a PostgreSQL `pg_notify` transport for
-  hosted API/worker deployments.
-- Production queues, dead-letter handling, scheduler operation, webhook delivery, and retry SLOs.
-- Compliance controls, data residency, deletion verification, incident response, and Organization support tooling.
+`app/services/` owns use cases and transaction boundaries:
 
-These concerns should not become required foreign keys or imports in the Votrix core data model.
+- Agent creation, immutable updates, and archive rules;
+- Environment recipe builds and readiness checks;
+- File and Skill validation and storage coordination;
+- Session creation, event admission, dispatch, turn execution, and output
+  collection.
 
-## Tenant model
+Services raise domain exceptions such as `NotFound`, `Conflict`,
+`SessionBusy`, and `SandboxUnavailable`. `app/server.py` is the only layer that
+turns those failures into HTTP status codes.
 
-The only tenant boundary inside the core is `organization_id`.
+Successful mutating service calls commit their own transaction. This keeps
+their behavior the same when called from HTTP, the Cloud Tasks callback, a
+worker loop, or a test.
 
-```text
-Hosted/private identity:
-  user or service account -> Organization -> role/policy
+### Persistence layer
 
-VMA core request:
-  AuthProvider -> CurrentOrganization(id=...) -> scoped resources and execution
-```
+`app/db/models/` contains SQLAlchemy rows. `app/db/queries/` contains reads,
+writes, atomic compare-and-set operations, and cursor pagination.
 
-Local self-hosting bootstraps an explicit Organization and database-backed key:
+The query layer:
 
-```text
-bootstrap CLI -> Organization record + one-time administrator key
-request API key -> authenticated organization_id
-```
+- accepts explicit `organization_id` for public resource lookups;
+- returns rows or `None`, leaving public error semantics to services;
+- flushes changes but normally leaves the final commit to the service;
+- uses database-side updates where concurrency matters.
 
-Public resource paths remain Organization-free:
+`app/db/engine.py` selects:
 
-```text
-/v1/agents
-/v1/sessions
-/v1/files
-```
+- `NullPool` for SQLite and non-PostgreSQL development URLs;
+- a bounded, observed queue pool for PostgreSQL;
+- `NullPool` for PostgreSQL only when `VMA_DB_POOL_SIZE=0`.
 
-The Organization comes from the authenticated request. Do not add public paths such as `/v1/organizations/{organization_id}/agents` to the compatibility API.
+Connection checkout and SQL statement durations are recorded without logging
+query parameters.
 
-Every core persistent resource and query must be scoped by Organization unless the function is explicitly internal and named accordingly. Object-storage keys must begin with an Organization partition. Public session IDs must resolve through an Organization-filtered database record before VMA uses the opaque internal LangGraph thread ID.
+### Runtime layer
 
-## Application composition
+`app/runtime/engine.py` adapts public Agent and event concepts to Deep Agents:
 
-The supported in-process extension point is:
+- constructs the configured LangChain chat model;
+- builds one Deep Agents graph per turn;
+- restores the graph by Session ID from LangGraph checkpoints;
+- maps user events to a fresh graph input or an interrupt resume command;
+- translates LangChain messages and tool calls into public Session events;
+- calculates the final `stop_reason` from graph state.
 
-```python
-from votrix_managed_agents import create_app
+The runtime does not own public Session state. It writes through an emitter
+provided by `app/services/sessions.py`, and that emitter checks the Session
+generation before every write.
 
-app = create_app(auth_provider=HostedAuthProvider())
-```
+### Infrastructure adapters
 
-An auth provider implements the public `AuthProvider` protocol and returns `CurrentOrganization`. Core routers and query helpers then operate inside that scope.
+`app/utils/` contains concrete infrastructure code:
 
-The repository includes:
+- `sandbox.py`: E2B images, sandboxes, transfers, Skills, and output discovery;
+- `storage.py`: private S3-compatible objects and signed URLs;
+- `id_generator.py`: prefixed, time-sortable UUIDv7 identifiers;
+- `timing.py`: structured duration reporting.
 
-- `DatabaseApiKeyAuthProvider` for keys stored in the core database.
-- The injectable `AuthProvider` path for hosted identity.
+These adapters may use provider-native identifiers internally. Response models
+publish VMA IDs rather than dedicated object-key or E2B-ID fields. Short-lived
+presigned transfer URLs may still contain an object key in their URL path; the
+service does not expose long-lived bucket credentials.
 
-Those providers authenticate an Organization. Core request/quota activity can be
-written to the append-only audit ledger, but the providers do not add
-membership, roles, SSO, paid billing, or enterprise audit policy.
+## Tenant and authentication boundary
 
-Prefer in-process provider injection over copying routers or placing an API-shape translation proxy in front of core. Run VMA as a separate internal service only when the deployment intentionally wants a network boundary and accepts the additional identity, tracing, and consistency work.
-
-## Execution-provider boundaries
-
-### Models
-
-Agent resources select a provider/model. Built-in settings and
-`VMA_MODEL_PROVIDERS` control approved adapters, endpoints, routing policy,
-defaults, capabilities, and an internal provider credential-slot name. They
-never contain a model API key, and VMA never reads model API keys from process
-environment. At creation each key-based Session fixes either a matching model
-Credential from its ordered `vault_ids` or an exact Organization platform-key
-row, according to its explicit funding request and Organization policy. No
-billing account preserves the existing BYOK-only behavior. Keyless `fake` and
-`ollama` adapters use source `none`.
-
-The public model-Credential API is deliberately distinct from generic Vault
-Credentials used by MCP servers or other integrations. The provider ID maps to
-the private slot internally, so callers do not submit names such as
-`OPENROUTER_API_KEY`. One immutable funding binding is stored per Session in
-the MVP, which requires a multiagent coordinator and its pinned subagents to
-use the same provider.
-
-VMA does not infer an Organization's end users. The Organization backend maps
-its own users and billing records to VMA Session IDs. VMA records raw usage by
-Organization and Session only.
-
-A hosted product may route a tenant-supplied Vault credential through a
-tenant-aware model gateway, but must preserve provider capability checks,
-credential isolation, and usage attribution. See [model providers](./openai-compatible-providers.md).
-
-### Sandboxes
-
-`VMA_SANDBOX_FACTORY=module:attribute` injects a backend for an Organization/Session/Environment. A hosted implementation should return a remote `SandboxBackendProtocol` backed by containers or VMs. It is responsible for all actual security policy and lifecycle behavior.
-
-The default `StateBackend` is safe because it has no shell, not because it is a production sandbox. The opt-in `LocalShellBackend` executes on the host and is excluded from untrusted production. See [sandbox runtime](./sandbox-runtime.md).
-
-### Checkpoints and stores
-
-LangGraph checkpoints preserve graph state and interrupts. VMA chooses Postgres for production-style DSNs and a separate SQLite checkpoint database locally. Checkpoints are internal runtime state; SQLAlchemy resource/event tables remain the public control-plane source of truth.
-
-Cross-thread memory, files, and artifacts should use explicitly tenant-namespaced stores or object storage. No backend namespace may be derived from a caller-controlled public ID without an Organization lookup.
-
-### MCP and secrets
-
-Agent versions contain MCP names and URLs, not secrets. Sessions mount vault IDs. Runtime code matches credentials to server URLs and passes authorization only to the MCP client.
-
-The Votrix core currently persists optionally encrypted credential material and lacks full OAuth refresh. A hosted product should inject a KMS-backed secret manager and short-lived token service, keeping secret values out of public responses, checkpoints, previews, logs, and model prompts.
-
-## Process topology
-
-Local mode can execute inline in one web process and defaults to the
-`process_local` preview transport. The maintained Cloud Run deployment separates
-HTTP/SSE API instances from private worker instances. Hosted work is durably
-leased, heartbeated, recoverable, and terminal-write fenced; LangGraph
-checkpoints and control-plane state are shared in PostgreSQL.
+Every implemented public resource is scoped by an Organization:
 
 ```text
-API Cloud Run -> Postgres work/event record -> worker Cloud Run
-      ^                                          |
-      |                                          +-> model/MCP/E2B
-      +---- Postgres NOTIFY preview channel <----+
+request
+  -> x-organization-id
+  -> service organization_id argument
+  -> query predicate
 ```
 
-The maintained horizontally scaled topology includes:
-
-- Database-backed work and Session execution leases with generation fencing.
-- PostgreSQL for control-plane data, LangGraph checkpoints, and the best-effort
-  hosted preview transport.
-- Private S3-compatible object storage for bytes and artifacts.
-- A private Cloud Tasks-driven worker service with a five-turn per-instance
-  limit and a permanent PostgreSQL reconciler for missed dispatches and expired
-  leases. Production and staging initially run `minScale=1 / maxScale=2`.
-  Production can raise its independent bound after the larger fleet passes the
-  database, E2B, provider, and spend gates in the scaling runbook.
-
-Hosted manifests use `VMA_PREVIEW_BROKER=pg_notify`; workers publish and API
-processes hold one dedicated PostgreSQL `LISTEN` connection each. Local and
-simple self-hosted deployments retain `process_local` as the zero-infrastructure
-default. Both transports are best-effort: clients reconcile against durable
-events after reconnect or frame loss. Supabase deployments use the transaction
-pooler on port `6543` for control-plane, checkpoint, and `NOTIFY` publishing
-traffic. A separate session-mode URL on port `5432` carries the lifetime
-`LISTEN` connection and janitor advisory lock. Reserve one connection per API
-(or combined-role) process beyond the ordinary application pool; migrations
-use their own session/direct URL.
-
-This topology is horizontally operable but not an exactly-once side-effect
-engine. Provider calls, MCP tools, and sandbox commands still need their own
-idempotency and cancellation semantics. Cloud Tasks provides per-turn push
-dispatch and worker autoscaling, while PostgreSQL work rows and the reconciler
-remain authoritative. A production scheduler for due Deployments and webhook
-delivery remain separate future services.
-
-## Data ownership
-
-Core tables should remain independently migratable:
+Object storage adds the same partition to each key:
 
 ```text
-Core:
-  organizations
-  api_keys
-  agents
-  agent_versions
-  environments
-  sessions
-  session_events
-  managed_resources and versions
-  organization_quotas and quota counters/reservations
-  audit_ledger and usage_ledger
-  tenant_idempotency and session_event_idempotency
-
-Hosted/private:
-  organization_members
-  roles and grants
-  service_accounts
-  billing_accounts, price books, balances, invoices, and payments
-  enterprise audit export/retention state
-  sso_connections
-  support_access
+organizations/{organization_id}/{category}/{date}/{object}
 ```
 
-Hosted tables may reference core Organizations. Core migrations and queries must not require hosted tables to exist.
+This is tenant **scoping**, but it is not authentication. The current dependency
+in `app/routers/deps.py`:
 
-The same rule applies to code dependencies: hosted code may import VMA, but VMA must not import private hosted packages. Provider hooks may accept implementations from the application at runtime.
+- requires `x-organization-id`;
+- accepts an optional `x-api-key`;
+- does not validate the API key or the caller's membership;
+- trusts the caller's Organization selection.
 
-## Deployment surface
+Therefore the active app must not be exposed to untrusted clients. The previous
+database API-key provider, scopes, quotas, and hosted identity injection belong
+to `app_archived/` and are not part of this architecture.
 
-Google Cloud Run is the repository's only maintained hosted deployment target. Core provider and storage boundaries remain explicit, but VMA does not publish or test deployment templates for other platforms.
+The internal turn-processing endpoint has a different boundary. In cloud mode
+it validates a Google OIDC token for:
+
+- the configured `WORKER_URL` audience; and
+- the exact `TASKS_SERVICE_ACCOUNT` email.
+
+In inline mode that endpoint returns `404`, because no external caller has a
+legitimate reason to use it.
+
+## Domain and data ownership
+
+The active Alembic chain starts a new schema lineage for the rewrite. Its first
+revision has `down_revision = None`, so it is intended for a fresh database. It
+does not reset or automatically upgrade a database stamped with the archived
+lineage; preserving pre-rewrite data needs an explicit migration plan. The new
+lineage owns:
+
+| Table | Purpose |
+| --- | --- |
+| `organizations` | Organization identity data |
+| `organization_owners` | Owner records; API handlers are not implemented yet |
+| `agents` | Stable Agent handle and active version pointer |
+| `agent_versions` | Immutable Agent configuration snapshots |
+| `environments` | E2B image recipe and build state |
+| `sessions` | Conversation state, pinned version, lease, and generation |
+| `session_events` | Append-only client-visible transcript |
+| `session_files` | Fixed input File paths attached to a Session |
+| `session_sandboxes` | The one E2B sandbox bound to a Session |
+| `files` | File metadata and private object key |
+| `skills` | Validated Skill metadata and private archive key |
+
+There are two different durable histories:
 
 ```text
-Dockerfile
-cloudbuild.yaml
-service.production.yaml
-service.staging.yaml
-scripts/start-web.sh
-scripts/start-worker.sh
-scripts/migrate.sh
-scripts/gcloud/
+session_events
+  Client-facing event log, sequence ordered, listable and streamable.
+
+LangGraph checkpoints
+  Runtime graph state: messages, interrupts, and where execution resumes.
 ```
 
-Production and staging use separate VMA-owned Postgres databases or schemas and run migrations through a once-per-release Cloud Run Job before traffic moves. The control plane may use S3-compatible object storage and external providers even though its service runs on GCP. In particular, E2B sandboxes remain external sandbox resources rather than Cloud Run containers.
+They are intentionally separate. Rebuilding the Agent's internal graph state
+from public events is not supported, and LangGraph checkpoint rows are not a
+public authorization or audit surface.
 
-The optional worker still supports queued `self_hosted` Environment execution; it is a product-level execution protocol, not another supported control-plane hosting target, and it is not itself a remote sandbox. Scheduled Deployments retain their importable idempotent tick, but the checked-in Cloud Run MVP does not yet include an operated production scheduler.
+PostgreSQL uses its own checkpoint tables in the configured database. SQLite
+uses a separate `*.checkpoints.sqlite3` file beside the resource database, so
+LangGraph migrations never mix with the Alembic-managed schema.
 
-See the [Cloud Run deployment guide](./deployment-platforms.md), [GCP operations guide](https://github.com/votrixai/votrix-managed-agents/tree/main/scripts/gcloud), and [work queue](./work-queue.md).
+## Resource semantics
 
-## Votrix core invariants
+### Agents and versions
 
-- Every persistent core resource is Organization-scoped.
-- Every public lookup resolves the current Organization before returning or mutating data.
-- Object-storage keys include an Organization partition.
-- Public session IDs are never accepted as raw checkpoint authorization.
-- Agent revisions are immutable; sessions resume with their pinned revision.
-- Model endpoints and routing are server-controlled; model API keys are
-  Organization Vault-only. Model keys, MCP headers, and sandbox IDs are redacted.
-- Tenant-specific Deep Agents provider/harness profiles are never registered globally.
-- Tenant shell execution never occurs in the web/worker host unless explicit unsafe local mode is enabled.
-- Durable public events are persisted independently from best-effort previews.
-- Durable work attempts are leased, heartbeated, recoverable, and fenced by
-  lease generation before terminal writes.
-- Audit and usage facts are append-only; raw usage is not priced billing.
-- Hosted features may extend core but cannot become prerequisites for basic self-hosting.
-- New resource families include cross-Organization non-visibility tests.
-- Documentation labels wire compatibility separately from runtime and production semantics.
+An Agent is a mutable pointer to an immutable snapshot:
 
-## Current boundary gaps
+```text
+agents.active_version -> agent_versions.version
+```
 
-The interfaces for hosted implementations are not equally mature. Organization
-auth, narrow quotas, raw append-only ledgers, sandbox injection,
-server-controlled model configuration, database-fenced multi-instance work,
-and PostgreSQL cross-process previews exist. Exactly-once external side effects,
-KMS secret management, Postgres RLS, Organization RBAC/SSO, enterprise audit
-operations, webhook delivery, automatic queue-driven worker scaling, and
-optional commercial billing still need formalization. Hosted implementations
-should avoid embedding those assumptions into unrelated core resource tables.
+Creation writes version `1`. An update must name the version it was based on;
+a stale version returns `409`. Omitted fields keep their active values, while
+provided fields replace the whole value. If the resulting snapshot is
+identical, no new version is written.
 
-The complete gap ledger is [known incompatibilities](./known-incompatibilities.md).
+A Session stores `agent_id` and `agent_version` at creation. Later Agent edits
+do not change a running conversation.
+
+### Environments and images
+
+An Environment is an E2B image recipe:
+
+- CPU and memory are part of the recipe.
+- Packages may be declared for apt, Cargo, RubyGems, Go, npm, and pip.
+- An empty recipe uses the provider's base image immediately.
+- A non-empty recipe starts an asynchronous E2B template build.
+- Reads refresh a pending build's state because E2B does not call back into VMA.
+- A Session may be created only when its Environment is ready.
+
+Renaming or changing a description does not rebuild the image. Changing CPU,
+memory, or packages does. Existing Sessions keep their already-created
+sandboxes.
+
+### Files and Skills
+
+File bytes and Skill archives live in private S3-compatible storage; SQL rows
+carry metadata and opaque storage keys.
+
+File upload is a single bounded multipart request. The service measures size
+and SHA-256 from received bytes, writes the object, then writes the row.
+Downloads are `307` redirects to short-lived signed URLs.
+
+Skill upload validates and normalizes a zip before storing it:
+
+- the package must contain one valid `<name>/SKILL.md`;
+- its frontmatter supplies the canonical name and description;
+- unsafe paths, excessive expansion, too many entries, and invalid names are
+  rejected;
+- response models do not contain a dedicated storage-key field.
+
+When a Session starts, its Skill archives and input Files move directly between
+object storage and E2B through short-lived URLs. Those URLs may encode the
+object key, but long-lived bucket credentials are not copied into the sandbox.
+
+## Session lifecycle
+
+### Creation
+
+```text
+POST /v1/sessions
+  -> resolve Organization-scoped Agent
+  -> pin active or requested Agent version
+  -> resolve and validate ready Environment
+  -> create Session row
+  -> resolve and record fixed input Files
+  -> start one E2B sandbox
+  -> install Skills and inputs
+  -> commit
+```
+
+Provisioning happens during Session creation, not on the first message. A
+successful create proves the Environment and E2B sandbox are usable, but it
+does not yet validate the stored toolset, model ID, or provider credential;
+those can still fail on the first turn. Creation therefore needs E2B and can
+take a network round trip.
+
+The Session uses the same E2B sandbox for every turn. E2B may pause it after an
+idle timeout; `LazyE2BBackend` reconnects before each backend operation. The
+service never silently creates a replacement. A missing sandbox row, or one
+already marked `terminated`/`failed`, ends the Session. If E2B reports a remote
+sandbox missing while the row still looks usable, reconnect currently becomes
+an ordinary failed turn and returns the Session to `idle`; it is not translated
+into terminal Session state.
+
+### Event admission and the single-turn gate
+
+`POST /v1/sessions/{id}/events` accepts a batch as one turn trigger.
+
+For ordinary events:
+
+1. one SQL `UPDATE` claims an `idle` Session, or a `running` Session whose lease
+   expired;
+2. a busy Session returns `409` and writes nothing;
+3. every input event receives an atomic, increasing `seq`;
+4. the input and lease are committed;
+5. the turn is dispatched.
+
+There is no per-Session message backlog. A second message arriving during a
+turn is refused rather than queued.
+
+The expired-lease branch does not increment `lock_version`. If the old worker
+is still alive after its heartbeat was delayed, both it and the replacement
+turn retain the same generation; the old worker can continue renewing the lease
+and emitting events. The explicit interrupt/release paths do increment the
+generation, but lease takeover is not yet equivalently fenced.
+
+`user.interrupt` is the exception: it must be sent alone and may reach a
+`running` Session. It records the interruption, returns the Session to `idle`,
+and increments `lock_version`.
+
+### Dispatch
+
+`TURN_DISPATCH` selects one of two paths.
+
+#### Inline
+
+The request calls `process_session` after committing its input. It returns only
+after the turn completes or pauses. This needs no queue and is the default for
+development.
+
+#### Cloud Tasks
+
+The API creates a task named from the Session ID and generation:
+
+```text
+turn-{session_id}-{lock_version}
+```
+
+Cloud Tasks sends the event batch to:
+
+```text
+POST /internal/sessions/{session_id}/process
+```
+
+with an OIDC token. A repeated enqueue with the same name is ignored.
+
+This is enqueue-name deduplication, not delivery fencing or exactly-once
+execution. The callback payload contains the event batch but not the generation
+encoded in the task name. It only checks whether the Session is currently
+`running`, then adopts the row's current generation. Consequently:
+
+- two concurrent callbacks can both execute the same generation because the
+  worker does not atomically claim it;
+- a delayed callback for an older task can arrive while a newer turn is
+  `running` and execute its old event batch as though it belonged to that turn;
+- model calls, sandbox commands, and other external effects still need their
+  own idempotency semantics.
+
+There is also a dispatch-loss window: the API commits the input events and
+`running` lease before it calls Cloud Tasks. An enqueue failure is not backed by
+an outbox, reconciler, or compensating state change, so the accepted turn may
+remain unprocessed until its lease expires.
+
+### Runtime execution
+
+For one turn, `process_session`:
+
+1. reloads the Session without trusting a public Organization header;
+2. checks that it is still `running`;
+3. resolves the Session's sandbox and pinned Agent version;
+4. starts a lease heartbeat on a separate database session;
+5. builds the Deep Agents graph;
+6. streams translated graph output through the fenced emitter;
+7. collects new output files;
+8. releases the Session to `idle`.
+
+The turn budget is 600 seconds. The lease lasts 120 seconds and is renewed every
+45 seconds.
+
+Every emitted event is committed separately. The emitter refreshes `status`,
+`lock_version`, and `last_event_seq` immediately before writing. If an explicit
+interrupt, release, or other path advanced the generation, the stale worker
+raises `SessionCancelled` and stops. This check cannot distinguish workers
+after the unfenced expired-lease takeover described above.
+
+### Checkpoints, tools, and pauses
+
+The runtime requires the Agent to declare `agent_toolset_20260401`, which gives
+Deep Agents its sandbox filesystem and shell tools. Tool permission settings
+are converted to Deep Agents interrupts.
+
+The active runtime also supports:
+
+- `read_image`, implemented with `gemini-3.6-flash`;
+- custom tools that always pause for a client-supplied result;
+- Skills loaded by Deep Agents from `/home/user/skills`;
+- tool confirmations resumed through LangGraph `Command`.
+
+Current limitations:
+
+- MCP server definitions are accepted and stored but not loaded.
+- the stored `multiagent` roster is accepted and versioned but not consumed;
+  Deep Agents' built-in general-purpose `task` delegation remains available
+  independently;
+- `web_fetch` is not installed.
+- `web_search` is installed when requested but currently raises
+  `NotImplementedError`; it is not production-ready.
+- Only text content blocks are accepted on the current event surface.
+
+### Output collection
+
+The sandbox workspace is:
+
+```text
+/home/user/uploads   fixed Session input Files
+/home/user/skills    installed Skill packages
+/home/user/outputs   deliverables collected after each turn
+```
+
+Output discovery is additive. The service hashes each eligible file and skips a
+path whose latest collected version has the same digest. A changed file creates
+a new File row rather than mutating the old ID.
+
+On a normal turn, collection finishes before the Session row is released to
+`idle`. The graph currently emits and commits `session.status_idle` before
+control returns to `process_session` for collection, however. An SSE client can
+therefore observe the idle event before output rows are visible or before the
+next input can claim the Session. An interrupt also releases the row before the
+cancelled worker performs its best-effort collection. This ordering is a
+rewrite gap, not a readiness guarantee.
+
+## Event delivery
+
+`session_events` is the delivery source of truth. Sequence numbers are allocated
+with an atomic database update so a user interrupt and worker output cannot
+receive the same value.
+
+The SSE route:
+
+- replays from the beginning when no cursor is supplied;
+- resumes after `after_seq` or `Last-Event-ID`;
+- polls up to 100 durable events every 300 ms;
+- opens a fresh short database session per poll;
+- sends a keep-alive comment after 15 seconds of silence;
+- closes after 30 minutes or when the Session terminates.
+
+There is no process-local preview bus or PostgreSQL `NOTIFY` broker in the
+rewrite. SSE may add up to one poll interval of latency, but reconnecting does
+not lose already committed events.
+
+## Model boundary
+
+`app/models/llm.py` contains a hard-coded catalog for Anthropic, Google,
+OpenAI, and DeepSeek models. `app/runtime/engine.py` maps each entry to its
+LangChain integration.
+
+Provider credentials are process settings:
+
+```text
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+OPENAI_API_KEY
+DEEPSEEK_API_KEY
+```
+
+A caller chooses a known model ID but never supplies a credential. There is no
+per-Organization Vault, BYOK binding, provider registry, fallback routing, or
+usage ledger in the active app.
+
+## Background process
+
+`python -m app.worker` runs a sweeper, not a turn worker. Once a minute it finds
+`running` Sessions with expired leases, appends `session.error`, and returns
+them to `idle`.
+
+The expired lease already lets the next input claim the Session. The sweeper
+only makes failure visible before a client happens to send that input.
+
+## Configuration boundary
+
+`app/config.py` intentionally keeps a small settings surface:
+
+- database URL and PostgreSQL pool sizing;
+- one API key per supported model provider;
+- S3-compatible storage credentials;
+- E2B credentials and bounded sandbox/output settings;
+- inline versus Cloud Tasks dispatch.
+
+Other `VMA_*` settings used by the previous architecture are ignored because
+Pydantic is configured with `extra="ignore"`. The checked-in `.env.example`
+mirrors the active settings surface; `app/config.py` remains the source of
+truth.
+
+## Invariants
+
+- `app/` must not import `app_archived/`.
+- Public resource queries must include `organization_id`.
+- Public responses must be constructed explicitly and must not expose
+  Organization IDs, storage keys, sandbox IDs, lease data, or lock versions.
+- Agent versions are immutable; Sessions pin an exact version.
+- A Session owns exactly one sandbox.
+- The public admission gate accepts only one ordinary turn at a time; expired
+  takeover and cloud callback execution are not independently fenced.
+- An emitter whose captured generation differs from `lock_version` may not
+  append an Agent event.
+- Client-visible events are durable before SSE can publish them.
+- LangGraph checkpoint state and public event state remain separate.
+- Object keys start with an Organization partition.
+- A File row is not written until its object exists.
+
+## Current integration gaps
+
+The active core is internally coherent, but the repository around it is still
+mid-migration:
+
+- authentication and authorization are not implemented;
+- Organization and model route handlers are placeholders;
+- several previous resource families have not been ported;
+- the embedding package imports removed modules;
+- OpenAPI export, local run scripts, Docker entrypoint, Cloud Run manifests,
+  SDKs, and older narrative docs were written for the archived app;
+- cloud dispatch has neither an enqueue outbox, a worker-side atomic claim, nor
+  task-generation validation;
+- expired-lease takeover does not advance the generation;
+- a remotely missing E2B sandbox is not made terminal unless its database row
+  is already missing or marked unusable;
+- `session.status_idle`, output collection, and row release are not yet one
+  atomic completion boundary;
+- deployment behavior has not been revalidated for the rewrite.
+
+The exact inventory and documentation authority are maintained in
+[rewrite status](./rewrite-status.md).

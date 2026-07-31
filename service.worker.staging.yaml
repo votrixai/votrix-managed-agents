@@ -36,44 +36,26 @@ spec:
           env:
             - name: APP_ENV
               value: "staging"
+            - name: DATABASE_SCHEMA
+              value: "vma_rewrite_staging"
             - name: VMA_PUBLIC_BUILD_ID
               value: "__VMA_PUBLIC_BUILD_ID__"
             - name: LOG_LEVEL
               value: "INFO"
             - name: WEB_CONCURRENCY
               value: "1"
-            - name: VMA_SERVICE_ROLE
-              value: "worker"
-            - name: VMA_PREVIEW_BROKER
-              value: "pg_notify"
-            - name: VMA_EMBEDDED_WORKER_ENABLED
-              value: "true"
-            - name: VMA_WORK_DISPATCH_MODE
-              value: "hybrid"
-            - name: VMA_TASKS_QUEUE
+            - name: TURN_DISPATCH
+              value: "cloud"
+            - name: TASKS_PROJECT
+              value: "votrixai-480422"
+            - name: TASKS_QUEUE
               value: "vma-turns-staging"
-            - name: VMA_TASKS_LOCATION
+            - name: TASKS_LOCATION
               value: "us-central1"
-            - name: VMA_TASKS_SERVICE_ACCOUNT
+            - name: TASKS_SERVICE_ACCOUNT
               value: "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
-            - name: VMA_WORKER_URL
+            - name: WORKER_URL
               value: "__VMA_WORKER_URL__"
-            - name: VMA_WORKER_TURN_LIMIT
-              value: "5"
-            - name: VMA_WORKER_CONCURRENCY
-              value: "1"
-            - name: VMA_WORKER_POLL_INTERVAL_SECONDS
-              value: "20"
-            - name: VMA_WORKER_LEASE_SECONDS
-              value: "120"
-            - name: VMA_WORK_MAX_ATTEMPTS
-              value: "3"
-            - name: VMA_CHECKPOINT_POOL_MAX_SIZE
-              value: "3"
-            - name: VMA_EVENT_POLL_INTERVAL_SECONDS
-              value: "1.0"
-            - name: VMA_MAX_SESSION_INPUT_BYTES
-              value: "67108864"
             - name: VMA_DB_POOL_SIZE
               value: "4"
             - name: VMA_DB_MAX_OVERFLOW
@@ -96,10 +78,6 @@ spec:
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
               value: "https://staging.vma.votrixai.com,https://docs.vma.votrixai.com"
-            - name: VMA_DEFAULT_MODEL_PROVIDER
-              value: "openrouter"
-            - name: VMA_MODEL_PROVIDERS
-              value: '{"openrouter":{"adapter":"openrouter","api_key_env":"OPENROUTER_API_KEY","base_url":"https://openrouter.ai/api/v1","default_model":"deepseek/deepseek-v4-pro","model_kwargs":{"openrouter_provider":{"order":["fireworks","together"],"only":["fireworks","together"],"allow_fallbacks":true,"require_parameters":true,"data_collection":"deny"}},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":false,"reasoning":true,"native_structured_output":false}}}'
             - name: VMA_SANDBOX_PROVIDER
               value: "e2b"
             - name: VMA_E2B_TEMPLATE
@@ -127,6 +105,16 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url-staging
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: anthropic-api-key-staging
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: gemini-api-key-staging
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

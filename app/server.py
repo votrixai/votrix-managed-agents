@@ -10,6 +10,7 @@ from app.routers import (
     agents,
     environments,
     files,
+    health,
     internal_work,
     llm,
     sessions,
@@ -18,6 +19,7 @@ from app.routers import (
 from app.models.errors import Conflict, NotFound, SandboxUnavailable, SessionBusy
 
 ROUTERS = (
+    health.router,
     accounts.router,
     agents.router,
     sessions.router,

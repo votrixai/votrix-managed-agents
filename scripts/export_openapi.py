@@ -10,7 +10,7 @@ from typing import Any
 
 from app.auth import VOTRIX_MANAGED_AGENTS_BETA
 from app.public_surface import public_ga_openapi
-from votrix_managed_agents import create_app
+from app.server import create_app
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]

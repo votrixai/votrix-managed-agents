@@ -27,6 +27,7 @@ steps:
         WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"
         RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
         DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"
+        DATABASE_SCHEMA="vma_rewrite_${_APP_ENV}"
 
         if [ "${_APP_ENV}" = "production" ] && \
           grep -q 'Status: UNMEASURED' private-docs/scaling-runbook.md; then
@@ -53,7 +54,7 @@ steps:
           --region="${_REGION}" \
           --image="$$IMAGE" \
           --service-account="$$RUNTIME_SERVICE_ACCOUNT" \
-          --set-env-vars="APP_ENV=${_APP_ENV}" \
+          --set-env-vars="APP_ENV=${_APP_ENV},DATABASE_SCHEMA=$$DATABASE_SCHEMA" \
           --set-secrets="DATABASE_URL=$$DATABASE_SECRET:latest" \
           --command=sh \
           --args=scripts/migrate.sh \
@@ -82,7 +83,7 @@ steps:
             -e "s|IMAGE_URL|$$IMAGE|" \
             -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
             -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
-            -e 's|value: "hybrid"|value: "poll"|' \
+            -e 's|value: "cloud"|value: "inline"|' \
             "$$WORKER_SERVICE_CONFIG" | \
             gcloud run services replace \
               --project="${PROJECT_ID}" \

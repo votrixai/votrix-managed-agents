@@ -34,9 +34,9 @@ Availability and readiness labels match the [compatibility matrix](./compatibili
 | Tenant quotas and raw ledgers | Public beta — supported | Request, active-work, daily token, and stored-byte limits plus append-only audit/usage facts provide the public-beta baseline, not enterprise policy or priced billing. |
 | Billing and payments | Deferred product — not offered | Operator-provisioned, upstream-limited Organization keys can fund trials, but price books, authoritative balances/reservations, top-ups, refunds, Stripe, and invoices are outside this release. |
 
-## API and SDK surface
+## API integration surface
 
-### Strict SDK tests are not semantic parity
+### Strict client-model tests are not semantic parity
 
 Covered resources are parsed with strict validation by a pinned official Anthropic Python SDK. This establishes useful field and union compatibility for tested calls. It does not verify:
 
@@ -47,26 +47,14 @@ Covered resources are parsed with strict validation by a pinned official Anthrop
 
 The route-by-route inventory is [Managed Agents API coverage](./managed-agents-api-coverage.md).
 
-### Native VMA SDK and Anthropic compatibility are separate contracts
+### The HTTP API is the supported VMA integration surface
 
-New VMA integrations can use the independently packaged native Python clients:
-
-```python
-from votrix import AsyncVotrix
-from votrix import Votrix
-```
-
-`AsyncVotrix` keeps the familiar resource-oriented GA API while `Votrix`
-provides the synchronous API-key, model-provider, Vault, and native
-model-Credential administration subset. Both expose provider discovery and
-provider-based model-Credential creation. The SDK also supplies cursor
-pagination, true streamed downloads, reconnecting SSE on the async client,
-bounded replay-safe retries, and typed stable error codes. The official
-`AsyncAnthropic` client remains useful for the overlapping Claude Managed Agents
-wire surface. A native SDK test does not establish Anthropic compatibility, and
-an Anthropic strict-response test does not establish support for VMA extensions.
-Applications must keep resource IDs and persistence separated by control-plane
-provider during migration.
+VMA does not ship a native Python or TypeScript client. Integrations call the
+HTTP API directly. The official `AsyncAnthropic` client remains useful for the
+overlapping Claude Managed Agents wire surface, but strict response validation
+does not establish support for VMA extensions or behavioral parity. Applications
+must keep resource IDs and persistence separated by control-plane provider
+during migration.
 
 ### Session overrides cannot make providers behaviorally identical
 

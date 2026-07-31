@@ -1,4 +1,5 @@
 from functools import lru_cache
+import re
 from typing import Literal
 
 from pydantic import model_validator
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
+    database_schema: str = ""
 
     # Platform keys, one per provider. Callers name a model; they never supply
     # credentials, and no key is shared between providers.
@@ -104,6 +106,10 @@ class Settings(BaseSettings):
         A missing queue name would otherwise surface as a message that was
         accepted, committed, and then never run by anyone.
         """
+        if self.database_schema and not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", self.database_schema
+        ):
+            raise ValueError("DATABASE_SCHEMA must be a valid PostgreSQL identifier")
         if self.turn_dispatch != "cloud":
             return self
         missing = [

@@ -42,6 +42,20 @@ async def created(client, headers, agent, environment):
     return response.json()
 
 
+async def test_process_health_does_not_require_tenant_auth(client):
+    response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+async def test_database_health_runs_a_round_trip(client):
+    response = await client.get("/health/db")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 async def test_the_organization_header_is_required(client):
     response = await client.get("/v1/sessions", headers={"x-api-key": "anything"})
     assert response.status_code == 422

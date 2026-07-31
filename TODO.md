@@ -36,10 +36,6 @@ target, not a promise to clone every current or future Claude beta feature.
   dedicated transactional idempotency contract for Session event submission.
 - [x] Keep object storage private and hide presign/complete upload routes from
   the public GA schema.
-- [x] Publish a native async GA client plus a synchronous provisioning subset
-  with pagination, streaming, reconnecting SSE, retries, typed errors, API-key
-  administration, and native model-Credential lifecycle.
-
 This is a BYOK-first public-beta baseline with optional operator-provisioned
 Organization platform keys, not production HA or enterprise readiness.
 Exactly-once external side effects, Postgres RLS, Organization RBAC/SSO,
@@ -47,23 +43,6 @@ enterprise audit export/retention, and webhook delivery remain open. Platform
 funding does not yet constitute a commercial billing system. The maintained
 Cloud Run topology now separates API and worker services and uses PostgreSQL
 `pg_notify` for best-effort cross-instance previews.
-
-### Native Python SDK and provider BYOK
-
-- [x] Keep the server distribution/import surface unchanged and create an
-  independently buildable `votrix` project under
-  `sdks/python`, imported as `from votrix import AsyncVotrix`.
-- [x] Add an authenticated, secret-free model-provider catalog and a native
-  model-Credential create endpoint that accepts `provider` plus `api_key`
-  without exposing `api_key_env` or `secret_name`.
-- [x] Preserve the Claude-compatible low-level REST/`AsyncAnthropic` surface;
-  use the native SDK for VMA-specific provider discovery and BYOK helpers.
-- [ ] Publish `sdk-python-v0.1.0` through PyPI Trusted Publishing after the
-  isolated SDK CI, native server contract tests, and package metadata pass on
-  the release commit.
-- [ ] Migrate `votrix-backend` to `AsyncVotrix` behind its existing provider
-  enum only after the native consumer contract covers every production call;
-  never mix resource IDs between Claude and VMA.
 
 ### P0-0 — Freeze the backend consumer contract (in progress)
 

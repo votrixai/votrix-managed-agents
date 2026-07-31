@@ -54,7 +54,6 @@ def test_gcp_only_deployment_files_live_at_repo_root() -> None:
         "scripts/gcloud/trigger.yaml.in",
         "scripts/gcloud/5-allow-public.sh",
         "scripts/gcloud/6-bootstrap-operator.sh",
-        "scripts/gcloud/7-run-acceptance.sh",
         "scripts/gcloud/8-setup-cloud-tasks.sh",
         "scripts/gcloud/preflight.sh",
         "scripts/gcloud/status.sh",

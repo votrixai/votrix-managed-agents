@@ -12,26 +12,25 @@ Use Node.js 22 or newer:
 ```bash
 cd website
 npm install
-npm run openapi:sync
 npm run dev
 ```
 
 Open `http://localhost:3000`. Narrative docs live under `/docs`; the interactive
-API reference lives under `/docs/api`.
+API reference under `/docs/api` is the pre-rewrite snapshot.
 
 ## Validation
 
 ```bash
 cd website
-npm run openapi:sync
 npm run typecheck
 npm run lint
 npm run build
 ```
 
-`openapi:sync` exports the documentation schema from FastAPI. Set
-`VMA_OPENAPI_SERVER_URL` to the final, directly reachable API origin before
-building. The value becomes the server used by the browser-based playground.
+`openapi:sync` has not been migrated to the active `app/` rewrite. It imports
+removed pre-rewrite symbols and currently fails. Use the running rewrite's
+`/openapi.json` endpoint for its schema; do not publish
+`public/openapi/vma.json` as the current API until the exporter is ported.
 
 `npm install` also applies the pinned `patches/fumadocs-openapi+11.2.0.patch`.
 It avoids an upstream `structuredClone` failure on complex JSON request forms;
@@ -71,9 +70,9 @@ The site deliberately uses explicit `.md` URLs instead of HTTP `Accept`
 negotiation so it remains portable across static hosts. Verify the production
 headers after deployment with `curl -I`.
 
-The playground calls the API directly from the browser. The API must allow the
-documentation origin through CORS. VMA currently enables cross-origin methods
-and headers in `app/factory.py`, so no Fumadocs proxy route is used.
+The historical playground calls the API directly from the browser. The active
+rewrite does not currently install CORS middleware, so a cross-origin
+playground is part of the pending documentation/API migration.
 
 ## Structure
 
@@ -82,5 +81,5 @@ and headers in `app/factory.py`, so no Fumadocs proxy route is used.
 - `lib/source.ts`: combined Markdown and virtual OpenAPI content source.
 - `patches/`: pinned dependency fixes applied after installation.
 - `source.config.ts`: Fumadocs MDX collection configuration.
-- `public/openapi/vma.json`: generated OpenAPI document and public download.
+- `public/openapi/vma.json`: pre-rewrite generated OpenAPI snapshot.
 - `../docs/`: canonical narrative content and navigation metadata.

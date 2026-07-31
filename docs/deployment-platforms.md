@@ -116,24 +116,12 @@ The supported release sequence is:
    URL with staging credentials. This provisions and deletes one real E2B
    Session while verifying Postgres, R2, model execution, append-only files,
    pause/resume, generated outputs, scoped listing, and download.
-6. Run `scripts/performance_smoke.py` with ten independent Sessions and retain
-   its latency/failure summary with the release evidence.
 
 ```bash
 VMA_SMOKE_BASE_URL=https://staging-api.vma.votrixai.com \
 VMA_SMOKE_API_KEY=... \
 VMA_SMOKE_VAULT_IDS=vault_... \
 uv run --extra sandbox-e2b python scripts/pilot_acceptance.py
-```
-
-Then run the concurrent gate with a staging Vault that already contains the
-model Credential:
-
-```bash
-VMA_PERF_BASE_URL=https://staging-api.vma.votrixai.com \
-VMA_PERF_API_KEY=... \
-VMA_PERF_VAULT_IDS=vault_... \
-uv run python scripts/performance_smoke.py
 ```
 
 Migrations are a once-per-release operation. They are not an implicit side effect of every web container start.

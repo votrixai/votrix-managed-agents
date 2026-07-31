@@ -1,123 +1,141 @@
 ---
 title: Overview
-description: Understand what Votrix Managed Agents provides, where it is compatible, and how to start locally.
+description: Start the peteryue rewrite and understand its current scope.
 ---
 
-Votrix Managed Agents (VMA) is an open-source, self-hosted, multi-tenant control
-plane for long-running agents. It targets the public resource, lifecycle, and
-SDK shape of Claude Managed Agents while running agents with Deep Agents and
-LangGraph.
+Votrix Managed Agents is a proprietary service for running long-lived,
+versioned agents. The `peteryue` branch is a ground-up rewrite built with
+FastAPI, Deep Agents, LangGraph, E2B, and SQLAlchemy.
 
-<Callout title="Project maturity" type="warn">
+<Callout title="Rewrite branch" type="warn">
 
-VMA is an early `0.1.0` public-beta foundation. It is not an Anthropic service
-or a drop-in behavioral replacement. When `VMA_PUBLIC_GA_ONLY=true`, the
-published API is intentionally limited to tenant-isolated resources ready for
-the controlled beta; the repository also contains deferred routes.
-
-Start with the [compatibility matrix](./compatibility-matrix.md) and
-[known incompatibilities](./known-incompatibilities.md) before using it for
-real workloads. The checked-in Cloud Run shape separates horizontally scalable
-API instances from a private Cloud Tasks-driven worker service, keeps a
-PostgreSQL reconciler as the durable fallback, and preserves best-effort
-cross-instance previews through PostgreSQL. It is not an exactly-once,
-enterprise, or unrestricted high-availability claim.
+The active implementation is `app/`; `app_archived/` is the previous service.
+Authentication and several previous resource families have not yet been
+ported. Read [Rewrite status](./rewrite-status.md) before using older pages or
+deployment files.
 
 </Callout>
+
+## Current capabilities
+
+- immutable Agent versions and Session version pinning;
+- E2B Environment image recipes;
+- one persistent E2B sandbox per Session;
+- append-only Session events and resumable SSE;
+- Deep Agents filesystem tools, Skill loading, and human-in-the-loop tool
+  decisions;
+- private S3-compatible File and Skill storage;
+- SQLite or PostgreSQL resource state and separate LangGraph checkpoints;
+- inline turns or OIDC-authenticated Cloud Tasks push dispatch.
+
+Implemented resource routes trust `x-organization-id` and do not validate
+`x-api-key`. The Organization and model placeholders do not yet use that
+dependency. The service must not be exposed to untrusted clients.
 
 ## Choose a starting point
 
 | Goal | Read |
 | --- | --- |
-| Evaluate SDK and API compatibility | [Compatibility matrix](./compatibility-matrix.md) |
-| Integrate with the native Python client | [Python SDK](./python-sdk.md) |
-| Understand control-plane boundaries | [Votrix core architecture](./votrix-core-architecture.md) |
-| Configure model access | [Model providers](./openai-compatible-providers.md) |
-| Run isolated tenant code | [Sandbox runtime](./sandbox-runtime.md) |
-| Operate the current hosted topology | [Cloud Run deployment](./deployment-platforms.md) |
+| See what was ported | [Rewrite status](./rewrite-status.md) |
+| Understand the layers and data flows | [Rewrite architecture](./votrix-core-architecture.md) |
+| Integrate Session events | [Session events](./session-events.md) |
+| Resume an event stream | [Event streaming](./streaming.md) |
+| Handle failures | [Errors](./errors.md) |
+| Check enforced limits | [Service limits](./limits.md) |
+| Understand Agent snapshots | [Agent versioning](./agent-versioning.md) |
 
-## Run locally
+## Run the active app
 
-VMA requires Python 3.12 or newer and
-[`uv`](https://docs.astral.sh/uv/). From the repository root:
+Requirements:
+
+- Python 3.12 or newer
+- [`uv`](https://docs.astral.sh/uv/)
+
+From the repository root:
 
 ```bash
 cp .env.example .env
 uv sync
 uv run alembic upgrade head
-uv run python -m scripts.bootstrap_api_key \
-  --organization-id org_test \
-  --organization-slug test \
-  --organization-name "Local test"
-./run.sh
+uv run uvicorn app.main:app --reload
 ```
 
-Check the service:
+The OpenAPI document is available at
+`http://127.0.0.1:8000/openapi.json`.
+
+The rewrite's first Alembic revision starts a new lineage. Use a fresh database;
+`alembic upgrade head` does not upgrade the archived schema or its existing
+`alembic_version`. Moving pre-rewrite data requires a separate migration.
+
+List Agents with the current development tenant header:
 
 ```bash
-curl http://127.0.0.1:8080/health
-curl http://127.0.0.1:8080/health/db
+curl http://127.0.0.1:8000/v1/agents \
+  --header "x-organization-id: org_local"
 ```
 
-Local, development, staging, and production all fail closed through
-database-backed Organization keys with scopes, expiration, independent
-rotation/revocation, and one-time plaintext secrets. The bootstrap command
-creates the first Organization and administrator key; there is no anonymous or
-process-global authentication path. Supply its returned secret to local and
-development clients as `VMA_API_KEY` (or `VOTRIX_VMA_API_KEY`); the service
-still resolves it from the database. Hosted environments also require durable
-Postgres and private object storage.
+The database defaults to a local SQLite file. A full Session run additionally
+needs an E2B key and one model-provider key:
 
-New production credentials start with `vma_live_`; staging, development, local,
-and test credentials start with `vma_test_`.
-
-For the local SDK or pilot script, save the one-time plaintext in the client
-environment as `VMA_API_KEY`. In the API Playground, enter the same value in
-the `x-api-key` authentication field. Raw HTTP clients may use either standard
-authentication header:
-
-```bash
-export VMA_API_KEY='<secret from bootstrap output>'
-curl http://127.0.0.1:8080/v1/capabilities \
-  --header "x-api-key: $VMA_API_KEY" \
-  --header "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
+```dotenv
+E2B_API_KEY=...
+ANTHROPIC_API_KEY=...
 ```
 
-An `Authorization: Bearer $VMA_API_KEY` header is equivalent.
+Use `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, or `OPENAI_API_KEY` for a model from
+those providers. Files, Skills, attached inputs, and output collection need
+private S3-compatible storage:
 
-The public-beta platform enforces per-Organization request, active-work, daily
-model-token, and stored-byte limits. It records append-only raw audit and usage
-facts and exposes request IDs and stable error codes. The release is BYOK-first
-with optional operator-provisioned Organization platform funding. Usage supports
-quota enforcement and analysis, not pricing, authoritative balances,
-reservations, payments, refunds, Stripe, or invoices.
-
-## Documentation and API reference
-
-This site explains architecture, compatibility, runtime behavior, and
-operations. The interactive [API reference](/docs/api)
-is generated from the FastAPI OpenAPI schema and includes request examples,
-authentication, schemas, and a browser-based request explorer.
+```dotenv
+S3_ENDPOINT_URL=https://...
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_BUCKET_NAME=...
+```
 
 ## System shape
 
 ```text
-AsyncVotrix native SDK / AsyncAnthropic compatibility / HTTP client
-                              |
-                              v
-FastAPI compatibility and control plane
-  |         |             |
-  |         |             +-- private S3-compatible object storage
-  |         +---------------- Postgres resources, events, work, quotas, ledgers
-  +-------------------------- durable session and revision lookup
-            |
-            v
-Deep Agents + LangGraph checkpoints
-  |                 |                 |
-  v                 v                 v
-model provider   remote MCP       sandbox backend
+HTTP client
+  |
+  v
+FastAPI router -> service -> tenant-scoped SQLAlchemy query -> SQLite/Postgres
+                    |
+                    +-> E2B sandbox and image
+                    +-> private S3-compatible storage
+                    +-> inline turn or Cloud Tasks callback
+                                      |
+                                      v
+                              Deep Agents + LangGraph
+                                |       |       |
+                                v       v       v
+                              model   tools   checkpoint
+
+SSE reader <---- polls committed session_events
 ```
 
-The control plane owns public IDs, Organization isolation, immutable revisions,
-session state, durable events, and compatibility translation. The sandbox—not
-the model or middleware—is the security boundary for tenant code.
+Routers own HTTP, services own use-case rules and commits, queries own
+persistence, and the runtime translates between Deep Agents state and public
+events. The sandbox is the execution boundary; the relational event log is the
+client-facing source of truth.
+
+## Active versus historical docs
+
+[Rewrite architecture](./votrix-core-architecture.md), Session events,
+streaming, errors, limits, and Agent versioning have been reviewed against the
+active app.
+
+Pages grouped under **Pre-rewrite reference** document the archived
+implementation. They preserve design intent but do not describe this branch's
+current authentication, configuration, API surface, worker queue, model
+credentials, sandbox paths, or deployment topology.
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+The default suite is isolated and runs against in-memory SQLite. Real E2B,
+storage, model, and Cloud Tasks checks live under `tests_live/` and must be run
+deliberately.

@@ -28,7 +28,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra contract --extra sandbox-e2b
+        run: uv sync --extra dev --extra sandbox-e2b
 
       - name: Validate shell entrypoints
         run: |
@@ -37,78 +37,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
-
-  backend-consumer-contract:
-    name: votrix-backend consumer contract (Anthropic SDK 0.97.0)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install backend consumer contract dependencies
-        run: uv sync --extra dev --extra contract-backend
-
-      - name: Run backend consumer contract
-        run: |
-          .venv/bin/python -c 'import anthropic; assert anthropic.__version__ == "0.97.0"'
-          .venv/bin/python -m pytest tests/contract/test_votrix_backend_consumer_contract.py
-
-  postgres-idempotency:
-    name: PostgreSQL concurrent event idempotency
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: vma_idempotency_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d vma_idempotency_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/vma_idempotency_test
-      VMA_TEST_POSTGRES_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/vma_idempotency_test
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Validate migrations on PostgreSQL
-        run: |
-          uv run alembic upgrade head
-          uv run alembic check
-
-      - name: Prove concurrent request idempotency
-        run: uv run pytest tests/test_postgres_event_idempotency.py
 
   docs:
     name: Fumadocs static site
