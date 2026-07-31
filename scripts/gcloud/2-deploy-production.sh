@@ -72,6 +72,7 @@ if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; 
 fi
 
 TAG=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)
+FULL_COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)
 IMAGE="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${PRODUCTION_SERVICE}:${TAG}"
 
 echo "Building and pushing ${IMAGE}..."
@@ -114,6 +115,7 @@ if [ -z "$WORKER_URL" ]; then
   sed \
     -e "s|IMAGE_URL|${IMAGE}|" \
     -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+    -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
     -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
     -e 's|value: "cloud"|value: "inline"|' \
     "$WORKER_MANIFEST" | \
@@ -146,6 +148,7 @@ echo "Deploying ${PRODUCTION_WORKER_SERVICE} worker service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$WORKER_MANIFEST" | \
   gcloud run services replace \
@@ -158,6 +161,7 @@ echo "Deploying ${PRODUCTION_SERVICE} API service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$API_MANIFEST" | \
   gcloud run services replace \

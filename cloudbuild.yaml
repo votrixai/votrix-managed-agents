@@ -82,6 +82,7 @@ steps:
           sed \
             -e "s|IMAGE_URL|$$IMAGE|" \
             -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
+            -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
             -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
             -e 's|value: "cloud"|value: "inline"|' \
             "$$WORKER_SERVICE_CONFIG" | \
@@ -114,6 +115,7 @@ steps:
         sed \
           -e "s|IMAGE_URL|$$IMAGE|" \
           -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
+          -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
           -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
           "$$WORKER_SERVICE_CONFIG" | \
           gcloud run services replace \
@@ -126,6 +128,7 @@ steps:
         sed \
           -e "s|IMAGE_URL|$$IMAGE|" \
           -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
+          -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
           -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
           "${_SERVICE_CONFIG}" | \
           gcloud run services replace \

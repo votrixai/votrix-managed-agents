@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    app_env: str = "local"
+    vma_public_build_id: str = "dev"
+    vma_git_commit_sha: str = ""
+
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
     database_schema: str = ""
 

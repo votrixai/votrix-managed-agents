@@ -7,11 +7,13 @@ handlers — with only the database and E2B swapped out.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.routers import health as health_router
 from app.routers.deps import get_db
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
@@ -42,18 +44,45 @@ async def created(client, headers, agent, environment):
     return response.json()
 
 
-async def test_process_health_does_not_require_tenant_auth(client):
+async def test_process_health_does_not_require_tenant_auth(client, monkeypatch):
+    commit = "952e7d141ad3c8548af497d99a0e43ffc8d06486"
+    monkeypatch.setattr(
+        health_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            app_env="production",
+            vma_public_build_id="952e7d1",
+            vma_git_commit_sha=commit,
+        ),
+    )
+    monkeypatch.setattr(health_router, "_PROCESS_STARTED_AT", 100.0)
+    monkeypatch.setattr(health_router, "monotonic", lambda: 112.3456)
+
     response = await client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "environment": "production",
+        "build": "952e7d1",
+        "git_commit": commit,
+        "git_commit_url": (
+            "https://github.com/votrixai/votrix-managed-agents/commit/"
+            "952e7d141ad3c8548af497d99a0e43ffc8d06486"
+        ),
+        "uptime_seconds": 12.346,
+    }
 
 
 async def test_database_health_runs_a_round_trip(client):
     response = await client.get("/health/db")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["database"] == "ok"
+    assert body["database_latency_ms"] >= 0
+    assert body["uptime_seconds"] >= 0
 
 
 async def test_the_organization_header_is_required(client):

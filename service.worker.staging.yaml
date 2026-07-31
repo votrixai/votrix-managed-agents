@@ -40,6 +40,8 @@ spec:
               value: "vma_rewrite_staging"
             - name: VMA_PUBLIC_BUILD_ID
               value: "__VMA_PUBLIC_BUILD_ID__"
+            - name: VMA_GIT_COMMIT_SHA
+              value: "__VMA_GIT_COMMIT_SHA__"
             - name: LOG_LEVEL
               value: "INFO"
             - name: WEB_CONCURRENCY
