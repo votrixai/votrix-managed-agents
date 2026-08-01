@@ -1,6 +1,6 @@
 ---
 title: Service Limits
-description: Limits enforced by the active peteryue rewrite.
+description: Limits enforced by the active Votrix Managed Agents service.
 ---
 
 Snapshot: 2026-08-01

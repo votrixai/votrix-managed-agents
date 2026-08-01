@@ -11,19 +11,6 @@
     "session-events",
     "streaming",
     "errors",
-    "limits",
-    "---Pre-rewrite reference (historical)---",
-    "compatibility-matrix",
-    "known-incompatibilities",
-    "claude-managed-agents-alignment",
-    "managed-agents-api-coverage",
-    "anthropic-sdk-contract-tests",
-    "rate-limits",
-    "openai-compatible-providers",
-    "sandbox-runtime",
-    "work-queue",
-    "deployments",
-    "webhooks",
-    "deployment-platforms"
+    "limits"
   ]
 }

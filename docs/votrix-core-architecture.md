@@ -1,33 +1,29 @@
 ---
-title: Rewrite Architecture
-description: The active peteryue branch layers, state ownership, Session lifecycle, and runtime topology.
+title: Core Architecture
+description: Active service layers, state ownership, Session lifecycle, and runtime topology.
 ---
 
 Snapshot: 2026-07-30
 
 Active source: `app/` and `tests/`
 
-This page describes the rewrite on the `peteryue` branch. It does not describe
-the previous public-beta implementation now stored under `app_archived/`.
-See [rewrite status](./rewrite-status.md) before relying on another page in this
-documentation set.
+This page describes the active implementation on the main branch. Superseded
+code and migrations are available through Git history rather than being shipped
+inside the runtime repository tree.
 
 ## Repository boundary
 
-The merge commit `1960056` deliberately retained the rewrite while recording
-the old staging history. The resulting repository has two architectures:
+The runtime repository has one authoritative architecture:
 
 ```text
 app/                 active service
 tests/               active isolated test suite
 tests_live/          active external-service test suite
-
-app_archived/        previous service; not imported by the active app
-tests_archived/      previous test suite; not in pytest's default test path
 ```
 
-Only the first group is authoritative for runtime behavior. Shared top-level
-deployment files, SDKs, and older documentation have not all been migrated.
+Git history preserves the superseded implementation when migration archaeology
+is needed; it is not imported, packaged, tested, or published by the active
+service.
 
 ## System shape
 
@@ -86,9 +82,8 @@ The supported development entry point is:
 uv run uvicorn app.main:app --reload
 ```
 
-The `votrix_managed_agents` package export and top-level `entrypoint.sh` still
-refer to modules from the previous implementation. They are migration work,
-not active composition points for this branch.
+The `votrix_managed_agents` package export and top-level `entrypoint.sh` both
+resolve to this same application factory.
 
 ### HTTP layer
 
@@ -200,9 +195,9 @@ in `app/routers/deps.py`:
 - does not validate the API key or the caller's membership;
 - trusts the caller's Organization selection.
 
-Therefore the active app must not be exposed to untrusted clients. The previous
-database API-key provider, scopes, quotas, and hosted identity injection belong
-to `app_archived/` and are not part of this architecture.
+Therefore the active app must not be exposed to untrusted clients. A production
+API-key provider, scopes, quotas, and hosted identity injection are not part of
+the current architecture.
 
 The internal turn-processing endpoint has a different boundary. In cloud mode
 it validates a Google OIDC token for:
@@ -215,11 +210,10 @@ legitimate reason to use it.
 
 ## Domain and data ownership
 
-The active Alembic chain starts a new schema lineage for the rewrite. Its first
-revision has `down_revision = None`, so it is intended for a fresh database. It
-does not reset or automatically upgrade a database stamped with the archived
-lineage; preserving pre-rewrite data needs an explicit migration plan. The new
-lineage owns:
+The active Alembic chain starts with `down_revision = None`, so it is intended
+for a fresh database. It does not reset or automatically upgrade a database
+stamped with the superseded lineage; preserving that data needs an explicit
+migration built from Git history. The active lineage owns:
 
 | Table | Purpose |
 | --- | --- |
@@ -232,6 +226,10 @@ lineage owns:
 | `session_events` | Append-only client-visible transcript |
 | `session_files` | Fixed input File paths attached to a Session |
 | `session_sandboxes` | The one E2B sandbox bound to a Session |
+| `memory_stores` | Persistent Store metadata and provider Volume binding |
+| `memories` | Current path-addressed Memory heads |
+| `memory_versions` | Immutable Memory change history and attribution |
+| `session_memory_stores` | Creation-time Session mount snapshots |
 | `files` | File metadata and private object key |
 | `skills` | Validated Skill metadata and private archive key |
 
@@ -531,14 +529,12 @@ only makes failure visible before a client happens to send that input.
 - E2B credentials and bounded sandbox/output settings;
 - inline versus Cloud Tasks dispatch.
 
-Other `VMA_*` settings used by the previous architecture are ignored because
-Pydantic is configured with `extra="ignore"`. The checked-in `.env.example`
-mirrors the active settings surface; `app/config.py` remains the source of
-truth.
+Unknown environment settings are ignored because Pydantic is configured with
+`extra="ignore"`. The checked-in `.env.example` mirrors the active settings
+surface; `app/config.py` remains the source of truth.
 
 ## Invariants
 
-- `app/` must not import `app_archived/`.
 - Public resource queries must include `organization_id`.
 - Public responses must be constructed explicitly and must not expose
   Organization IDs, storage keys, sandbox IDs, lease data, or lock versions.
@@ -561,9 +557,6 @@ mid-migration:
 - authentication and authorization are not implemented;
 - Organization and model route handlers are placeholders;
 - several previous resource families have not been ported;
-- the embedding package imports removed modules;
-- OpenAPI export, local run scripts, Docker entrypoint, Cloud Run manifests,
-  SDKs, and older narrative docs were written for the archived app;
 - cloud dispatch has neither an enqueue outbox, a worker-side atomic claim, nor
   task-generation validation;
 - expired-lease takeover does not advance the generation;
@@ -571,7 +564,7 @@ mid-migration:
   is already missing or marked unusable;
 - `session.status_idle`, output collection, and row release are not yet one
   atomic completion boundary;
-- deployment behavior has not been revalidated for the rewrite.
+- production authentication and authorization remain unimplemented.
 
 The exact inventory and documentation authority are maintained in
 [rewrite status](./rewrite-status.md).

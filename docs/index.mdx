@@ -1,18 +1,18 @@
 ---
 title: Overview
-description: Start the peteryue rewrite and understand its current scope.
+description: Run Votrix Managed Agents and understand its current scope.
 ---
 
 Votrix Managed Agents is a proprietary service for running long-lived,
-versioned agents. The `peteryue` branch is a ground-up rewrite built with
-FastAPI, Deep Agents, LangGraph, E2B, and SQLAlchemy.
+versioned agents, built with FastAPI, Deep Agents, LangGraph, E2B, and
+SQLAlchemy.
 
-<Callout title="Rewrite branch" type="warn">
+<Callout title="Development authentication boundary" type="warn">
 
-The active implementation is `app/`; `app_archived/` is the previous service.
-Authentication and several previous resource families have not yet been
-ported. Read [Rewrite status](./rewrite-status.md) before using older pages or
-deployment files.
+The active implementation requires `x-organization-id` but does not yet
+authenticate that tenant selection. Do not expose it directly to untrusted
+clients. Read [implementation status](./rewrite-status.md) for the remaining
+production gaps.
 
 </Callout>
 
@@ -63,9 +63,9 @@ uv run uvicorn app.main:app --reload
 The OpenAPI document is available at
 `http://127.0.0.1:8000/openapi.json`.
 
-The rewrite's first Alembic revision starts a new lineage. Use a fresh database;
-`alembic upgrade head` does not upgrade the archived schema or its existing
-`alembic_version`. Moving pre-rewrite data requires a separate migration.
+The first active Alembic revision starts a new lineage. Use a fresh database;
+`alembic upgrade head` does not upgrade databases stamped with the superseded
+lineage. Moving that data requires a separate migration based on Git history.
 
 List Agents with the current development tenant header:
 
@@ -119,16 +119,11 @@ persistence, and the runtime translates between Deep Agents state and public
 events. The sandbox is the execution boundary; the relational event log is the
 client-facing source of truth.
 
-## Active versus historical docs
+## Documentation authority
 
-[Rewrite architecture](./votrix-core-architecture.md), the generated API
-reference, Memory Stores, Session events, streaming, errors, limits, and Agent
-versioning have been reviewed against the active app.
-
-Pages grouped under **Pre-rewrite reference** document the archived
-implementation. They preserve design intent but do not describe this branch's
-current authentication, configuration, API surface, worker queue, model
-credentials, sandbox paths, or deployment topology.
+The navigation contains only documentation reviewed against the active app.
+The API reference is generated from `app.server.create_app`; a snapshot test
+fails when its checked-in OpenAPI schema no longer matches the application.
 
 ## Tests
 

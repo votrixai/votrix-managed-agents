@@ -29,10 +29,10 @@ const paths = [
   {
     icon: ServerCog,
     eyebrow: 'Operate',
-    title: 'Deploy with confidence',
+    title: 'Review implementation status',
     description:
-      'Review the supported Cloud Run topology and current production constraints.',
-    href: '/docs/deployment-platforms',
+      'Review the active API surface, runtime capabilities, and current production gaps.',
+    href: '/docs/rewrite-status',
   },
 ] as const;
 
@@ -119,7 +119,7 @@ export default function HomePage() {
             execution surface.
           </p>
           <Link
-            href="/docs/known-incompatibilities"
+            href="/docs/rewrite-status"
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-fd-foreground hover:text-fd-primary"
           >
             Review the gaps <ArrowRight className="size-3.5" />
