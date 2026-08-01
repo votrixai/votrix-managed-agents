@@ -1964,6 +1964,87 @@
         }
       }
     },
+    "/v1/sessions/{session_id}/live/uploads": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Attach Live Upload",
+        "description": "Put an already uploaded File into an existing Session sandbox.\n\nUpload the durable object through ``POST /v1/files`` first, then pass its\nid here. The Session must be idle and its E2B sandbox must still exist;\nthis endpoint may wake a paused sandbox, but it never rebuilds one that has\ngone away. ``path`` is relative to ``uploads/`` and defaults to the File's\nfilename. The mounted bytes are read-only to the agent.\n\nRetrying the same File at the same path is idempotent. A different File at\nan occupied path, a busy Session, or a Session without a usable sandbox is\nrefused with 409.",
+        "operationId": "attach_live_upload_v1_sessions__session_id__live_uploads_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only return Memory Versions attributed to this Session.",
+            "example": "sess_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
+            "example": "org_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiveUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionFileResourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/environments": {
       "post": {
         "tags": [
@@ -6233,6 +6314,33 @@
         ],
         "title": "LiveFileRequest",
         "description": "Take one file out of a running session's sandbox, now.\n\n`path` is relative to the sandbox's `outputs/` directory. A session's\noutputs are collected when its turn ends; this is for the case where the\nagent has finished a deliverable and the user wants it before the rest of\nthe turn is."
+      },
+      "LiveUploadRequest": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "LiveUploadRequest",
+        "description": "Put one durable VMA File into an existing Session sandbox.\n\nThe file must already exist under ``/v1/files``. ``path`` is relative to\nthe sandbox's ``uploads/`` directory and defaults to the File's filename,\nmatching the file-resource contract used when a Session is created."
       },
       "MemoryCreateRequest": {
         "properties": {

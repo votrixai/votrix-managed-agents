@@ -182,6 +182,17 @@ Subdirectories are kept, and the path becomes the filename:
 `POST /v1/sessions/{id}/live/files` takes one file out mid-turn without waiting
 for the turn to end; its `path` is relative to `outputs/`.
 
+`POST /v1/sessions/{id}/live/uploads` moves in the other direction: it attaches
+an existing durable File from `/v1/files` to an existing Session. Send
+`{"file_id":"file_...","path":"optional/name.ext"}` while the Session is
+idle. The path is relative to `uploads/` (and defaults to the File's filename),
+the bytes land read-only at `/home/user/uploads/...`, and the response is the
+new Session file resource. `/mnt/session/uploads/...` is an alias of the same
+directory for shared CMA/VMA Agent contracts. The operation may wake a paused
+E2B sandbox, but it never rebuilds a missing or terminated one. An exact retry
+is idempotent; a busy Session or a different File already occupying the path
+returns 409.
+
 Automatic collection starts immediately after the runtime writes
 `session.status_idle`. Because those are separate commits, a client reacting to
 the event immediately can briefly receive a File list that does not yet contain

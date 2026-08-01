@@ -32,6 +32,7 @@ from app.db.models import (
     File,
     Session,
     SessionEvent,
+    SessionFile,
     SessionSandbox,
 )
 from app.db.models.memory import MEMORY_ACCESS_READ_WRITE
@@ -53,7 +54,7 @@ from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
 from app.services import memory_records
-from app.utils.sandbox import OUTPUTS_DIR, Image, Sandbox
+from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
 from app.utils.volume import (
     InvalidVolumeBinding,
@@ -788,6 +789,98 @@ async def capture_file(
     return file
 
 
+async def attach_live_file(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    organization_id: str,
+    file_id: str,
+    path: str | None = None,
+) -> SessionFile:
+    """Put an existing durable File into an existing Session sandbox.
+
+    This is the post-create counterpart to a ``file`` resource on Session
+    creation. It is deliberately accepted only while the Session is idle: the
+    next turn re-reads ``session_files`` for its prompt, whereas an already
+    running turn has already snapshotted that list and could observe the bytes
+    without knowing the user attached them.
+
+    The Session row stays locked across the E2B transfer and binding write.
+    ``send_events`` claims that same row, so a turn cannot start between those
+    two operations. The binding is flushed before the transfer but committed
+    only after it succeeds; a failed copy therefore leaves no phantom
+    resource. Repeating the exact request returns the original binding.
+    """
+    session = await sessions_q.get_session_for_update(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+    )
+    if session is None:
+        raise NotFound(f"Session {session_id} not found")
+    if session.archived_at is not None:
+        raise Conflict(f"Session {session_id} is archived")
+    if session.status == RUNNING:
+        raise SessionBusy()
+    if session.status != IDLE:
+        raise Conflict(
+            f"Session {session_id} cannot accept files while {session.status}"
+        )
+
+    sandbox = await sessions_q.get_sandbox(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+    )
+    if sandbox is None or _sandbox_is_gone(sandbox):
+        raise Conflict(f"Session {session_id} no longer has a sandbox to write to")
+    if sandbox.provider != "e2b":
+        raise Conflict(
+            f"Session {session_id} uses unsupported sandbox provider {sandbox.provider!r}"
+        )
+
+    file = await files_service.get_file(
+        db,
+        file_id=file_id,
+        organization_id=organization_id,
+    )
+    relative = _mount_path(path, fallback=file.filename)
+
+    for existing in await sessions_q.list_session_files(db, session_id=session_id):
+        if existing.path != relative:
+            continue
+        if existing.file_id == file.id:
+            await db.commit()
+            return existing
+        raise Conflict(
+            f"Another file is already attached at {relative!r} in Session {session_id}"
+        )
+
+    attached = await sessions_q.attach_file(
+        db,
+        session,
+        file_id=file.id,
+        path=relative,
+    )
+    container = Sandbox.from_id(
+        sandbox.external_sandbox_id,
+        session.id,
+        session.organization_id,
+    )
+    try:
+        await container.upload_file(db, f"{UPLOADS_DIR}/{relative}", file.id)
+    except Exception as exc:
+        # ``attach_file`` was intentionally flushed first so its unique path
+        # constraint is part of this transaction, but it must never survive a
+        # failed transfer as a resource that only exists on paper.
+        message = f"File {file.id} could not be copied into Session {session.id}"
+        await db.rollback()
+        raise SandboxUnavailable(message) from exc
+
+    await db.commit()
+    return attached
+
+
 def _output_path(requested: str) -> str:
     """Which file under `outputs/` is being asked for.
 
@@ -999,15 +1092,23 @@ def _mount_path(requested: str | None, *, fallback: str) -> str:
         raise Conflict("A file resource needs a path or a filename")
     if len(candidate) > 512:
         raise Conflict("That path is too long")
+    if "\x00" in candidate:
+        raise Conflict("A file resource path cannot contain NUL")
+    if "\\" in candidate:
+        raise Conflict("A file resource path must use forward slashes")
     # Stripping the leading slash off `/etc/passwd` would put the file in
     # `uploads/etc/passwd` — safe, and not what was asked for. A request that
     # cannot be honoured exactly is refused rather than turned into a different
     # one the client never made.
     if candidate.startswith("/"):
         raise Conflict(f"{candidate!r} must be relative to uploads/")
-    parts = PurePosixPath(candidate).parts
-    if any(part in ("..", ".") for part in parts):
+    raw_parts = candidate.split("/")
+    if any(part in ("", "..", ".") for part in raw_parts):
         raise Conflict(f"{candidate!r} is not a path inside uploads/")
+    # PurePosixPath is retained as a final platform-independent sanity check;
+    # unlike it, the raw split above deliberately refuses paths it would
+    # normalize (``a//b`` or ``a/./b``) rather than silently changing them.
+    parts = PurePosixPath(candidate).parts
     return "/".join(parts)
 
 

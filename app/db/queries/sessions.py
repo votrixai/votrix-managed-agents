@@ -77,6 +77,31 @@ async def get_session(
     return result.scalar_one_or_none()
 
 
+async def get_session_for_update(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    organization_id: str,
+) -> Session | None:
+    """Tenant-scoped Session lookup that serializes resource mutations.
+
+    A live upload holds this lock while the durable File is copied into E2B
+    and its ``session_files`` binding is committed. The ordinary turn claim is
+    an UPDATE of this same row, so a message cannot start in the narrow window
+    where the file exists in only one of those two places.
+    """
+    result = await db.execute(
+        select(Session)
+        .where(
+            Session.id == session_id,
+            Session.organization_id == organization_id,
+            Session.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_sessions(
     db: AsyncSession,
     *,

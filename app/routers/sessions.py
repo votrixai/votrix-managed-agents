@@ -6,12 +6,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import session_scope
-from app.db.models import Session as SessionRow, SessionEvent
+from app.db.models import Session as SessionRow, SessionEvent, SessionFile
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
 from app.models.events import EventResponse, SendEventsRequest, SendEventsResponse
-from app.models.files import FileResponse, LiveFileRequest
+from app.models.files import FileResponse, LiveFileRequest, LiveUploadRequest
 from app.models.sessions import (
     SessionCreateRequest,
     SessionFileResourceResponse,
@@ -289,6 +289,49 @@ async def capture_live_file(
     return to_file(file)
 
 
+@router.post(
+    "/{session_id}/live/uploads",
+    response_model=SessionFileResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_live_upload(
+    session_id: str,
+    body: LiveUploadRequest,
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """Put an already uploaded File into an existing Session sandbox.
+
+    Upload the durable object through ``POST /v1/files`` first, then pass its
+    id here. The Session must be idle and its E2B sandbox must still exist;
+    this endpoint may wake a paused sandbox, but it never rebuilds one that has
+    gone away. ``path`` is relative to ``uploads/`` and defaults to the File's
+    filename. The mounted bytes are read-only to the agent.
+
+    Retrying the same File at the same path is idempotent. A different File at
+    an occupied path, a busy Session, or a Session without a usable sandbox is
+    refused with 409.
+    """
+    attached = await service.attach_live_file(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+        file_id=body.file_id,
+        path=body.path,
+    )
+    return to_session_file_resource(attached)
+
+
+def to_session_file_resource(row: SessionFile) -> SessionFileResourceResponse:
+    return SessionFileResourceResponse(
+        id=row.id,
+        file_id=row.file_id,
+        mount_path=f"{UPLOADS_DIR}/{row.path}",
+        created_at=row.created_at,
+        updated_at=row.created_at,
+    )
+
+
 async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
     """Written out by hand rather than via `from_attributes`.
 
@@ -300,16 +343,7 @@ async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
     memory_stores = await service.list_session_memory_stores(
         db, session_id=session.id
     )
-    resources = [
-        SessionFileResourceResponse(
-            id=row.id,
-            file_id=row.file_id,
-            mount_path=f"{UPLOADS_DIR}/{row.path}",
-            created_at=row.created_at,
-            updated_at=row.created_at,
-        )
-        for row in files
-    ]
+    resources = [to_session_file_resource(row) for row in files]
     resources.extend(
         SessionMemoryStoreResourceResponse(
             id=row.id,

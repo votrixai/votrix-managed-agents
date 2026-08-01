@@ -321,6 +321,221 @@ async def test_a_session_with_no_resources_still_works(
     assert sandboxes[0]["files"] == []
 
 
+# --- attaching one after the session exists --------------------------------
+
+
+@pytest.fixture
+def live_uploader(monkeypatch):
+    """The E2B side of a durable File -> live sandbox transfer."""
+    from types import SimpleNamespace
+
+    from app.utils.sandbox import Sandbox
+
+    state = SimpleNamespace(calls=[], error=None)
+
+    class LiveSandbox:
+        async def upload_file(self, db, path, file_id):
+            state.calls.append((path, file_id))
+            if state.error is not None:
+                raise state.error
+
+    monkeypatch.setattr(
+        Sandbox,
+        "from_id",
+        classmethod(lambda cls, *args: LiveSandbox()),
+    )
+    return state
+
+
+async def attach_live(client, headers, session_id, file_id, path=None):
+    body = {"file_id": file_id}
+    if path is not None:
+        body["path"] = path
+    return await client.post(
+        f"/v1/sessions/{session_id}/live/uploads",
+        headers=headers,
+        json=body,
+    )
+
+
+async def test_a_durable_file_can_be_added_to_an_existing_session(
+    client,
+    headers,
+    bucket,
+    agent,
+    environment,
+    live_uploader,
+):
+    from app.utils.sandbox import UPLOADS_DIR
+
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+
+    response = await attach_live(client, headers, session_id, file_id)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["file_id"] == file_id
+    assert body["mount_path"] == f"{UPLOADS_DIR}/sales.csv"
+    assert live_uploader.calls == [(f"{UPLOADS_DIR}/sales.csv", file_id)]
+    session = (await client.get(f"/v1/sessions/{session_id}", headers=headers)).json()
+    assert len(session["resources"]) == 1
+    assert session["resources"][0]["id"] == body["id"]
+    assert session["resources"][0]["file_id"] == file_id
+    assert session["resources"][0]["mount_path"] == body["mount_path"]
+
+
+async def test_a_live_upload_may_name_a_subdirectory(
+    client, headers, bucket, agent, environment, live_uploader
+):
+    from app.utils.sandbox import UPLOADS_DIR
+
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+
+    response = await attach_live(
+        client, headers, session_id, file_id, path="references/q3/sales.csv"
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["mount_path"] == f"{UPLOADS_DIR}/references/q3/sales.csv"
+
+
+async def test_retrying_the_same_live_upload_is_idempotent(
+    client, headers, bucket, agent, environment, live_uploader, db
+):
+    from app.db.queries import sessions as sessions_q
+
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+
+    first = await attach_live(client, headers, session_id, file_id)
+    second = await attach_live(client, headers, session_id, file_id)
+
+    assert first.status_code == second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    assert len(live_uploader.calls) == 1
+    rows = await sessions_q.list_session_files(db, session_id=session_id)
+    assert [(row.file_id, row.path) for row in rows] == [(file_id, "sales.csv")]
+
+
+async def test_a_live_upload_does_not_overwrite_an_occupied_path(
+    client, headers, bucket, agent, environment, live_uploader
+):
+    first = await upload(client, headers, bucket, "first.csv")
+    second = await upload(client, headers, bucket, "second.csv")
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+    assert (
+        await attach_live(client, headers, session_id, first, path="data.csv")
+    ).status_code == 201
+
+    response = await attach_live(client, headers, session_id, second, path="data.csv")
+
+    assert response.status_code == 409
+    assert "already attached at" in response.json()["error"]["message"]
+    assert len(live_uploader.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../skills/pptx/SKILL.md",
+        "/etc/passwd",
+        "a/../../b",
+        "a//b",
+        "a/./b",
+        "windows\\path.txt",
+        "nul\x00byte.txt",
+    ],
+)
+async def test_a_live_upload_cannot_escape_or_ambiguously_name_uploads(
+    client, headers, bucket, agent, environment, live_uploader, path
+):
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+
+    response = await attach_live(client, headers, session_id, file_id, path=path)
+
+    assert response.status_code == 409, f"{path!r} was accepted"
+    assert live_uploader.calls == []
+
+
+async def test_a_busy_session_refuses_a_live_upload(
+    client, headers, bucket, agent, environment, live_uploader, db
+):
+    from app.db.queries import sessions as sessions_q
+
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+    assert await sessions_q.claim_session(db, session_id=session_id)
+    await db.commit()
+
+    response = await attach_live(client, headers, session_id, file_id)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "session_busy"
+    assert live_uploader.calls == []
+
+
+async def test_an_archived_session_refuses_a_live_upload(
+    client, headers, bucket, agent, environment, live_uploader
+):
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+    await client.post(f"/v1/sessions/{session_id}/archive", headers=headers)
+
+    response = await attach_live(client, headers, session_id, file_id)
+
+    assert response.status_code == 409
+    assert live_uploader.calls == []
+
+
+async def test_a_live_upload_requires_a_usable_sandbox(
+    client, headers, bucket, agent, environment, live_uploader, db, org
+):
+    from app.db.queries import sessions as sessions_q
+
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+    sandbox = await sessions_q.get_sandbox(
+        db, session_id=session_id, organization_id=org
+    )
+    await sessions_q.update_sandbox_state(db, sandbox, state="terminated")
+    await db.commit()
+
+    response = await attach_live(client, headers, session_id, file_id)
+
+    assert response.status_code == 409
+    assert live_uploader.calls == []
+
+
+async def test_another_tenants_file_cannot_be_live_uploaded(
+    client, headers, agent, environment, live_uploader
+):
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+
+    response = await attach_live(client, headers, session_id, "file_someone_else")
+
+    assert response.status_code == 404
+    assert live_uploader.calls == []
+
+
+async def test_a_failed_live_transfer_leaves_no_resource_binding(
+    client, headers, bucket, agent, environment, live_uploader, db
+):
+    from app.db.queries import sessions as sessions_q
+
+    file_id = await upload(client, headers, bucket)
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+    live_uploader.error = RuntimeError("E2B is unavailable")
+
+    response = await attach_live(client, headers, session_id, file_id)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "sandbox_unavailable"
+    assert await sessions_q.list_session_files(db, session_id=session_id) == []
+
+
 # --- what the agent is told --------------------------------------------------
 
 
@@ -682,6 +897,25 @@ async def test_the_sandbox_fetches_an_attached_file_itself(
     # Read-only once it lands: an agent that edited an input would leave the
     # client's own copy disagreeing with what the run actually used.
     assert "chmod 444" in curl
+
+
+async def test_a_failed_sandbox_fetch_is_not_reported_as_an_attachment(
+    db, org, bucket, client, headers, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.utils.sandbox import UPLOADS_DIR, Sandbox
+
+    file_id = await upload(client, headers, bucket)
+
+    async def _run(self, command, **kwargs):
+        return SimpleNamespace(exit_code=22)
+
+    monkeypatch.setattr(Sandbox, "run", _run)
+    with pytest.raises(RuntimeError, match="could not fetch"):
+        await Sandbox.from_id("sbx_1", "ses_1", org).upload_file(
+            db, f"{UPLOADS_DIR}/sales.csv", file_id
+        )
 
 
 async def test_fetching_a_file_that_does_not_exist_fails_loudly(db, org, monkeypatch):

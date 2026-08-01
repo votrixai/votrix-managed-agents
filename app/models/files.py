@@ -42,3 +42,15 @@ class LiveFileRequest(ApiModel):
     """
 
     path: str = Field(min_length=1, max_length=512)
+
+
+class LiveUploadRequest(ApiModel):
+    """Put one durable VMA File into an existing Session sandbox.
+
+    The file must already exist under ``/v1/files``. ``path`` is relative to
+    the sandbox's ``uploads/`` directory and defaults to the File's filename,
+    matching the file-resource contract used when a Session is created.
+    """
+
+    file_id: str = Field(min_length=1, max_length=64)
+    path: str | None = Field(default=None, max_length=512)

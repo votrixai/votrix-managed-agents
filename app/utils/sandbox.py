@@ -66,6 +66,15 @@ SKILLS_DIR = f"{WORKDIR}/skills"
 UPLOADS_DIR = f"{WORKDIR}/uploads"
 OUTPUTS_DIR = f"{WORKDIR}/outputs"
 
+# Compatibility layout consumed by the shared CMA/VMA Agent prompts and
+# Skills.  VMA keeps its canonical E2B paths under /home/user; these aliases
+# let one checked-in Agent contract address both providers without copying or
+# rewriting skill content.
+COMPAT_WORKDIR = "/workspace"
+COMPAT_SKILLS_DIR = "/mnt/skills"
+COMPAT_UPLOADS_DIR = "/mnt/session/uploads"
+COMPAT_OUTPUTS_DIR = "/mnt/session/outputs"
+
 # Order matters only in that apt comes first, so a later manager can rely on the
 # toolchain it brings in.
 PACKAGE_MANAGERS = ("apt", "cargo", "gem", "go", "npm", "pip")
@@ -424,7 +433,7 @@ class Sandbox:
     # ---- layout -----------------------------------------------------------
 
     async def prepare_directories(self) -> None:
-        """Lay out the three working directories, empty or not.
+        """Lay out the canonical directories and shared-contract aliases.
 
         The system prompt names all of them, so all of them have to exist — an
         agent told to write to `outputs/` should not have to create it, and an
@@ -432,13 +441,21 @@ class Sandbox:
         missing one.
 
         `outputs` belongs to the agent; the other two are filled by us and left
-        read-only, so they stay owned by root.
+        read-only, so they stay owned by root.  The aliases are created as root
+        and point only at these canonical paths. `ln -T` deliberately fails if
+        a base image ever puts a real directory at an alias path; silently
+        merging two layouts would make resource isolation ambiguous.
         """
         await self.run(
             f"mkdir -p {shlex.quote(SKILLS_DIR)} {shlex.quote(UPLOADS_DIR)} "
             f"{shlex.quote(OUTPUTS_DIR)} "
             f"&& chmod 755 {shlex.quote(SKILLS_DIR)} {shlex.quote(UPLOADS_DIR)} "
-            f"&& chown {GUEST_USER}:{GUEST_USER} {shlex.quote(OUTPUTS_DIR)}",
+            f"&& chown {GUEST_USER}:{GUEST_USER} {shlex.quote(OUTPUTS_DIR)} "
+            "&& mkdir -p /mnt/session "
+            f"&& ln -sfnT {shlex.quote(WORKDIR)} {shlex.quote(COMPAT_WORKDIR)} "
+            f"&& ln -sfnT {shlex.quote(SKILLS_DIR)} {shlex.quote(COMPAT_SKILLS_DIR)} "
+            f"&& ln -sfnT {shlex.quote(UPLOADS_DIR)} {shlex.quote(COMPAT_UPLOADS_DIR)} "
+            f"&& ln -sfnT {shlex.quote(OUTPUTS_DIR)} {shlex.quote(COMPAT_OUTPUTS_DIR)}",
             user="root",
         )
 
@@ -464,12 +481,20 @@ class Sandbox:
             file.storage_key, expires_in=get_settings().transfer_url_ttl_seconds
         )
         parent = str(PurePosixPath(path).parent)
-        await self.run(
+        result = await self.run(
             f"mkdir -p {shlex.quote(parent)} "
             f"&& curl -fsSL -o {shlex.quote(path)} {shlex.quote(url)} "
             f"&& chmod 444 {shlex.quote(path)}",
             user="root",
         )
+        exit_code = getattr(result, "exit_code", 0)
+        if exit_code != 0:
+            # E2B reports ordinary command failures in the result rather than
+            # raising them. Treating a failed curl as success would let the API
+            # commit a Session resource whose bytes never reached the sandbox.
+            raise RuntimeError(
+                f"The sandbox could not fetch File {file_id} (exit code {exit_code})"
+            )
 
     async def download_file(
         self,
