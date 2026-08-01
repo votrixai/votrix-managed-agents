@@ -12,6 +12,7 @@ return, because every reader downstream goes to the event log instead.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -398,6 +399,35 @@ async def _setup_once(saver: Any, key: str) -> None:
         _setup_done.add(key)
 
 
+async def _configure_checkpoint_schema(saver: Any, schema: str) -> None:
+    """Set a session-level schema on LangGraph's dedicated connection.
+
+    Supabase's pooler does not preserve PostgreSQL startup ``options``. The
+    checkpointer uses one session-affine connection for its lifetime, so an
+    explicit session setting is both durable and isolated from SQLAlchemy's
+    transaction-pooled connections.
+    """
+
+    if not schema:
+        return
+    await saver.conn.execute(
+        "SELECT set_config('search_path', %s, false)",
+        (schema,),
+    )
+    cursor = await saver.conn.execute("SELECT current_schema() AS current_schema")
+    row = await cursor.fetchone()
+    current_schema = (
+        row.get("current_schema")
+        if isinstance(row, Mapping)
+        else row[0] if row else None
+    )
+    if current_schema != schema:
+        raise RuntimeError(
+            "Checkpoint connection did not select the configured database schema: "
+            f"expected {schema!r}, got {current_schema!r}"
+        )
+
+
 def _instrument_saver(saver: Any, session_id: str) -> Any:
     """Time the checkpointer's calls by shadowing them on the instance.
 
@@ -433,19 +463,25 @@ async def _checkpoint_saver(session_id: str) -> AsyncIterator[Any]:
     is a migration check that runs on every turn and almost never has anything
     to do.
     """
-    url = str(get_settings().database_url)
+    settings = get_settings()
+    url = (
+        settings.vma_checkpoint_database_url.strip()
+        or str(settings.database_url)
+    )
+    schema = settings.database_schema
 
     if url.startswith(("postgres://", "postgresql://", "postgresql+")):
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
         async with timed("checkpoint_connected", session_id=session_id, backend="postgres"):
             connection = AsyncPostgresSaver.from_conn_string(
-                _postgres_dsn(url, get_settings().database_schema)
+                _postgres_dsn(url, schema)
             )
             saver = await connection.__aenter__()
         try:
+            await _configure_checkpoint_schema(saver, schema)
             async with timed("checkpoint_setup", session_id=session_id, backend="postgres"):
-                await _setup_once(saver, url)
+                await _setup_once(saver, f"{url}#{schema}")
             yield _instrument_saver(saver, session_id)
         finally:
             await connection.__aexit__(None, None, None)

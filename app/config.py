@@ -24,6 +24,11 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
     database_schema: str = ""
+    # LangGraph uses a dedicated, session-affine psycopg connection outside
+    # SQLAlchemy's transaction pool. The runtime also sets search_path
+    # explicitly after connecting because Supabase's pooler drops the startup
+    # `options=-csearch_path=...` parameter.
+    vma_checkpoint_database_url: str = ""
 
     # Platform keys, one per provider. Callers name a model; they never supply
     # credentials, and no key is shared between providers.

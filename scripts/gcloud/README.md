@@ -44,14 +44,14 @@ is unavailable. API request autoscaling and Agent-turn capacity are independent.
 - Use managed PostgreSQL. SQLite is not durable or multi-instance safe on Cloud
   Run.
 - Keep development, staging, and production in three separate Supabase projects;
-  these environments must never share a database. Runtime SQLAlchemy and
-  LangGraph checkpoint traffic use the Supavisor transaction pooler on port
-  `6543`. The preview listener and janitor advisory lock use a separate
-  session-mode URL on port `5432`, while the migration Job receives its own
-  session/direct secret. A transaction-mode pooler cannot hold a lifetime
-  `LISTEN` connection or a session-scoped advisory lock. The local `.env` uses
-  the development project; the two Secret Manager files below use staging and
-  production.
+  these environments must never share a database. Runtime SQLAlchemy traffic
+  uses the Supavisor transaction pooler on port `6543`. LangGraph checkpoints,
+  the preview listener, and the janitor advisory lock use session-affine URLs
+  on port `5432`; the migration Job receives the same environment's direct
+  secret. A transaction-mode pooler cannot preserve the checkpoint schema's
+  session setting, a lifetime `LISTEN` connection, or a session-scoped
+  advisory lock. The local `.env` uses the development project; the two Secret
+  Manager files below use staging and production.
 - Build the operator-owned `vma-hardened` template in the E2B account before
   creating an E2B-backed session.
 
@@ -132,10 +132,14 @@ only these names:
 | `S3_SECRET_ACCESS_KEY` | `vma-s3-secret-access-key` | `vma-s3-secret-access-key-staging` |
 | `S3_BUCKET_NAME` | `vma-s3-bucket-name` | `vma-s3-bucket-name-staging` |
 
-The API and worker manifests set `VMA_CHECKPOINT_DATABASE_URL` explicitly from
-the same transaction-pooler secret as `DATABASE_URL`. They set
-`VMA_LISTEN_DATABASE_URL` from the session-mode secret. The migration Job alone
-maps `vma-database-url-direct[-staging]` to its `DATABASE_URL`.
+The API and worker manifests set `VMA_CHECKPOINT_DATABASE_URL` from the
+port-5432 session/direct secret. LangGraph uses its own session-affine psycopg
+connection and explicitly sets `search_path` after connecting; Supabase's
+pooler discards the equivalent startup option. `VMA_LISTEN_DATABASE_URL` also
+uses the session-mode secret, while ordinary application SQL continues to use
+the transaction-pooler `DATABASE_URL`. The migration Job maps
+`vma-database-url-direct[-staging]` to `DATABASE_URL` and initializes both the
+Alembic schema and LangGraph checkpoint schema before traffic changes.
 
 The Supabase URL and publishable key enable hosted owner and superadmin JWT
 authentication. They must match the Votrix web application in each environment;
@@ -206,11 +210,11 @@ VMA_CORS_ORIGINS=https://<matching-vma-developer-app>,https://docs.vma.votrixai.
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and
 one-time E2B injection. E2B turns resume from the sealed filesystem and do not
-rehydrate all inputs from R2. Runtime and checkpoint pools use transaction mode,
-so their client connections do not each pin a scarce Postgres backend. Every API
-process keeps one session-mode `LISTEN` connection, and a janitor leader holds a
-transient session-mode advisory-lock connection. Worker publishers use their
-existing SQLAlchemy pool and do not add a dedicated listener connection.
+rehydrate all inputs from R2. Runtime SQLAlchemy uses transaction mode.
+Each in-flight Agent turn holds one session-mode checkpoint connection, every
+API process keeps one session-mode `LISTEN` connection, and a janitor leader
+holds a transient session-mode advisory-lock connection. Worker publishers use
+their existing SQLAlchemy pool and do not add a dedicated listener connection.
 PostgreSQL preview delivery is best-effort; SSE
 clients reconcile dropped or missed frames against durable Session events. The
 hosted Organization defaults admit bursts of up to 20 queued/running turns.

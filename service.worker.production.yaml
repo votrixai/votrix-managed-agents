@@ -121,7 +121,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   key: latest
-                  name: vma-database-url
+                  name: vma-database-url-direct
             - name: VMA_LISTEN_DATABASE_URL
               valueFrom:
                 secretKeyRef:
