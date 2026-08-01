@@ -215,8 +215,11 @@ def volumes(monkeypatch):
         def __init__(self) -> None:
             self.created = []
             self.destroyed = []
+            self.files = {}
             self.create_error = None
             self.destroy_error = None
+            self.write_error = None
+            self.remove_error = None
 
     provider = Provider()
 
@@ -228,6 +231,7 @@ def volumes(monkeypatch):
             "volume_name": cls.provider_name(store.id),
         }
         provider.created.append({"memory_store_id": store.id, **locator})
+        provider.files.setdefault(store.id, {})
         return locator
 
     async def _destroy(cls, store):
@@ -239,7 +243,20 @@ def volumes(monkeypatch):
                 "volume_locator": dict(store.volume_locator or {}),
             }
         )
+        provider.files.pop(store.id, None)
+
+    async def _write_file(cls, store, path, content):
+        if provider.write_error is not None:
+            raise provider.write_error
+        provider.files.setdefault(store.id, {})[path] = content
+
+    async def _remove_file(cls, store, path):
+        if provider.remove_error is not None:
+            raise provider.remove_error
+        provider.files.setdefault(store.id, {}).pop(path, None)
 
     monkeypatch.setattr(Volume, "provision", classmethod(_provision))
     monkeypatch.setattr(Volume, "destroy", classmethod(_destroy))
+    monkeypatch.setattr(Volume, "write_file", classmethod(_write_file))
+    monkeypatch.setattr(Volume, "remove_file", classmethod(_remove_file))
     return provider

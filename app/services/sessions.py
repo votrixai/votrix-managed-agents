@@ -52,6 +52,7 @@ from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TER
 from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
+from app.services import memory_records
 from app.utils.sandbox import OUTPUTS_DIR, Image, Sandbox
 from app.utils.timing import timed
 from app.utils.volume import (
@@ -530,6 +531,18 @@ async def process_session(
         session.organization_id,
     )
 
+    async def _sync_after_filesystem_tool(_tool_name: str) -> None:
+        # The callback runs after the tool result has been emitted, so every
+        # write is complete before its mounted files are hashed. Failures are
+        # retried by the final reconciliation rather than failing the model's
+        # otherwise successful turn.
+        await collect_memories(
+            db,
+            session,
+            container,
+            report_failure=False,
+        )
+
     heartbeat = asyncio.create_task(_hold_lease(session_id))
     try:
         from app.runtime.engine import execute_agent
@@ -549,6 +562,11 @@ async def process_session(
                     sandbox=container,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
+                    tool_completed=(
+                        _sync_after_filesystem_tool
+                        if attached_memory_stores
+                        else None
+                    ),
                     emit=_emitter(db, session, generation),
                 ),
                 timeout=TURN_TIMEOUT_SECONDS,
@@ -557,10 +575,12 @@ async def process_session(
         # cancel_session already released the session and recorded the stop.
         # The agent may still have finished something before it was cut off,
         # and a half-written deliverable is the user's too.
+        await collect_memories(db, session, container)
         await collect_outputs(db, session, container)
         await db.commit()
         return
     except BaseException as exc:
+        await collect_memories(db, session, container)
         await collect_outputs(db, session, container)
         await _fail(db, session, exc)
         raise
@@ -570,6 +590,7 @@ async def process_session(
     # Before the release, never after: the client takes `idle` as the sign that
     # the turn is done, and everything the turn produced has to be fetchable by
     # then. It is also the last moment the container is certainly awake.
+    await collect_memories(db, session, container)
     await collect_outputs(db, session, container)
     await sessions_q.release_session(db, session, status=IDLE)
     await db.commit()
@@ -816,6 +837,68 @@ async def collect_outputs(db: AsyncSession, session: Session, sandbox: Sandbox) 
         return
     if collected:
         logger.info("outputs_collected", session_id=session.id, count=len(collected))
+
+
+async def collect_memories(
+    db: AsyncSession,
+    session: Session,
+    sandbox: Sandbox,
+    *,
+    report_failure: bool = True,
+) -> bool:
+    """Index mounted Volume changes without turning delivery into turn failure."""
+    try:
+        result = await memory_records.reconcile_session_memory_stores(
+            db,
+            session_id=session.id,
+            organization_id=session.organization_id,
+            sandbox=sandbox,
+        )
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("memory_reconciliation_failed", session_id=session.id)
+        if report_failure:
+            await sessions_q.append_event(
+                db,
+                session,
+                type=event_types.SESSION_ERROR,
+                source="system",
+                payload={
+                    "error": {
+                        "type": "memory_reconciliation_failed",
+                        "message": str(exc),
+                    }
+                },
+            )
+        return False
+
+    if result.changed:
+        logger.info(
+            "memories_reconciled",
+            session_id=session.id,
+            changed=result.changed,
+        )
+    if result.issues:
+        logger.warning(
+            "memory_reconciliation_rejected_files",
+            session_id=session.id,
+            count=len(result.issues),
+        )
+        if report_failure:
+            await sessions_q.append_event(
+                db,
+                session,
+                type=event_types.SESSION_ERROR,
+                source="system",
+                payload={
+                    "error": {
+                        "type": "memory_write_rejected",
+                        "message": "Some mounted files could not become CMA Memories",
+                        "issues": list(result.issues[:20]),
+                    }
+                },
+            )
+    return True
 
 
 async def _attach_files(

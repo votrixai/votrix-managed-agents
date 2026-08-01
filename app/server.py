@@ -7,8 +7,11 @@ from fastapi.responses import JSONResponse
 
 from app.models.errors import (
     Conflict,
+    InvalidRequest,
+    MemoryPreconditionFailed,
     MemoryStoreUnavailable,
     NotFound,
+    PayloadTooLarge,
     SandboxUnavailable,
     SessionBusy,
 )
@@ -62,6 +65,40 @@ def _install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Conflict)
     async def _conflict(request: Request, exc: Conflict) -> JSONResponse:
         return JSONResponse(status_code=409, content={"error": {"type": "conflict", "message": str(exc)}})
+
+    @app.exception_handler(MemoryPreconditionFailed)
+    async def _memory_precondition_failed(
+        request: Request, exc: MemoryPreconditionFailed
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "type": "memory_precondition_failed_error",
+                    "message": str(exc),
+                }
+            },
+        )
+
+    @app.exception_handler(InvalidRequest)
+    async def _invalid_request(request: Request, exc: InvalidRequest) -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {"type": "invalid_request_error", "message": str(exc)}
+            },
+        )
+
+    @app.exception_handler(PayloadTooLarge)
+    async def _payload_too_large(
+        request: Request, exc: PayloadTooLarge
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": {"type": "request_too_large", "message": str(exc)}
+            },
+        )
 
     @app.exception_handler(SessionBusy)
     async def _session_busy(request: Request, exc: SessionBusy) -> JSONResponse:

@@ -37,6 +37,8 @@ from app.utils.sandbox import OUTPUTS_DIR, SKILLS_DIR, UPLOADS_DIR, WORKDIR, San
 from app.utils.timing import timed
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
+ToolCompleted = Callable[[str], Awaitable[None]]
+_FILESYSTEM_MUTATORS = {"write_file", "edit_file", "execute"}
 
 
 class UnsupportedEventError(RuntimeError):
@@ -64,6 +66,7 @@ async def execute_agent(
     emit: Emit,
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
+    tool_completed: ToolCompleted | None = None,
 ) -> None:
     """Run one turn to completion, or to the next point it needs the user.
 
@@ -178,7 +181,14 @@ async def execute_agent(
                 steps += 1
                 messages = values.get("messages", [])
                 for msg in messages[last_index:]:
-                    await _translate(msg, emit, tool_kind, interrupt_on, announced)
+                    await _translate(
+                        msg,
+                        emit,
+                        tool_kind,
+                        interrupt_on,
+                        announced,
+                        tool_completed,
+                    )
                 last_index = len(messages)
             span["steps"] = steps
             span["messages"] = last_index
@@ -292,6 +302,7 @@ async def _translate(
     tool_kind: dict[str, str],
     interrupt_on: dict[str, Any],
     announced: set[str],
+    tool_completed: ToolCompleted | None = None,
 ) -> None:
     if isinstance(message, AIMessage):
         # `content_blocks` is LangChain's normalised view: every provider's own
@@ -343,6 +354,13 @@ async def _translate(
                 "is_error": message.status == "error",
             },
         )
+        tool_name = str(message.name or "")
+        if (
+            tool_completed is not None
+            and message.status != "error"
+            and tool_name in _FILESYSTEM_MUTATORS
+        ):
+            await tool_completed(tool_name)
         return
 
     # System/Human messages coming back off the checkpoint are the input we just

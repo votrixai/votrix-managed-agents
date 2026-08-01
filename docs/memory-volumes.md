@@ -1,17 +1,15 @@
 ---
 title: Memory Stores on E2B Volumes
-description: The active rewrite's persistent Memory Store and Session mount contract.
+description: How a VMA Memory Store is provisioned, mounted, exposed to Deep Agents, and indexed after writes.
 ---
 
 Snapshot: 2026-08-01
 
-The active runtime represents a Memory Store as a VMA-owned logical resource
-backed by one provider Volume. For the current provider, that is a native E2B
-Volume mounted when the Session Sandbox is created.
+The active E2B adapter represents one logical VMA Memory Store with one native
+E2B Volume. The Volume survives individual Sandbox lifecycles and is mounted
+when a Session Sandbox is created.
 
-## Ownership model
-
-`memory_stores.id` is the public identity. Provider details remain internal:
+## Ownership and provider binding
 
 ```text
 MemoryStore
@@ -22,20 +20,22 @@ MemoryStore
   provisioning_status   provisioning | ready | failed | deleting | deleted
 ```
 
-The locator is provider-specific on purpose. E2B uses the immutable Volume ID
-for destruction and the Volume name as the Sandbox mount handle. A future R2
-adapter could store a bucket and prefix in the same column, but an R2 prefix is
-not natively mountable by E2B; it would need a separate materialize/writeback
-adapter or filesystem gateway.
+`volume_locator` is provider-specific. E2B uses `volume_id` to reconnect or
+destroy the Volume and `volume_name` as the Sandbox mount handle. A future R2
+adapter can store a bucket and prefix in the same field, but R2 is not natively
+mountable by E2B and would require a materialize/writeback adapter or filesystem
+gateway.
 
-Creating a Store commits its control-plane row before calling E2B. Provider
-success records the locator and makes the Store attachable. Provider failure
-is retained internally so an operator or future reconciler can inspect it; it
-is not returned by normal retrieve or list operations.
+Creating a Store commits its control-plane row before provisioning E2B. A
+successful provider call records the locator and marks the Store ready. A
+failure remains internal for operator diagnosis. Store deletion destroys the
+Volume and purges Memories and Versions, but is rejected after the Store has
+ever been attached because existing Session/Sandbox teardown is a separate
+lifecycle boundary; use archive for those Stores.
 
 ## Session attachment
 
-A Session declares a Memory Store in `resources`:
+A Session attaches a Store at creation:
 
 ```json
 {
@@ -46,10 +46,9 @@ A Session declares a Memory Store in `resources`:
 }
 ```
 
-Attachment is creation-only. The service resolves the Store in the Session's
-Organization, snapshots its name and description, derives a stable path such
-as `/mnt/memory/content-creator`, and passes this native E2B mapping at Sandbox
-creation:
+The service resolves the Store inside the Session's Organization, snapshots
+its display fields, derives a filesystem-safe path, and passes a native mapping
+to E2B:
 
 ```python
 volume_mounts={
@@ -57,46 +56,90 @@ volume_mounts={
 }
 ```
 
-At most eight Memory Stores may be attached. The same Store cannot appear
-twice, and two Stores whose names resolve to the same slug are rejected. A
-later Store rename affects future Sessions only; an existing Session keeps the
-snapshotted name, description, and mount path returned in its resources.
+At most eight Stores may be attached. Attachment is creation-only. Duplicate
+Stores and colliding mount slugs are rejected. A later Store rename affects
+future Sessions only; an existing Session keeps the returned mount path and
+snapshotted description.
 
-## How runtime updates persist
+E2B 2.31.0 does not expose a read-only Volume mount. VMA therefore rejects
+`access: "read_only"` instead of pretending that tool filtering is a security
+boundary: the `execute` tool could otherwise write through the mount.
 
-There is no end-of-turn copy or database writeback loop. The agent's ordinary
-file tools operate on the mounted directory. E2B persists writes below the
-exact mount path directly into the Volume, so another Session that later mounts
-the same Volume sees those bytes. Writes elsewhere under `/mnt/memory` are not
-part of a Store.
+## How the agent discovers memory
 
-The runtime adds every Store's exact path, access mode, description, and
-per-attachment instructions to the system prompt. Client Agent Skills must use
-the absolute path—for example:
+VMA adds a Memory Stores section to the runtime system prompt with each exact
+mount path, name, description, access mode, and per-Session instructions. It
+does not inject every Memory's body into the context window.
 
-```text
-/mnt/memory/content-creator/context.md
+A client Skill such as:
+
+```md
+## Session Start
+
+Read `/mnt/memory/content-creator/context.md` before content work.
 ```
 
-`mnt/memory/...` without the leading slash is relative to the Sandbox workdir
-and does not address the mounted Store.
+causes Deep Agents to discover the Skill and, when it applies, use `read_file`
+against the persistent mount. The leading `/` matters: `mnt/memory/...` is
+relative to `/home/user` and does not reference the mounted Store.
 
-## Current boundary
+## Write and indexing flow
 
-- E2B Volumes are a private-beta capability and must be enabled for the E2B
-  project behind `E2B_API_KEY`.
-- No new deployment secret is required. `E2B_API_KEY` is reused, and `APP_ENV`
-  separates deterministic provider names between environments.
-- The pinned E2B SDK has no read-only Volume mount option. `read_only` requests
-  are rejected rather than represented as secure; tool filtering cannot stop
-  the shell from writing to a writable filesystem.
-- The filesystem is the content source of truth in this MVP. The Claude-style
-  Memories API, immutable versions, content hashes, audit attribution, limits,
-  and point-in-time restore are not implemented here.
-- Concurrent read-write Sessions share normal filesystem semantics. There is
-  no optimistic-concurrency layer above E2B Volume writes.
-- A Store that has been attached is archived instead of provider-deleted until
-  Session/Sandbox teardown has an explicit lifecycle contract.
+```text
+agent filesystem tool
+        |
+        v
+/mnt/memory/<slug>/<path>  -- native mount -->  E2B Volume
+        |
+        | successful write_file / edit_file / execute boundary
+        v
+hash mounted tree -> read changed UTF-8 files -> PostgreSQL Memory head
+                                           `-> immutable session_actor Version
+```
+
+The E2B mount persists bytes immediately. VMA reconciliation supplies the CMA
+API projection and audit history:
+
+- unchanged hashes transfer no content;
+- new or changed files create `created` or `modified` Versions;
+- missing indexed paths create `deleted` Versions;
+- non-UTF-8, invalid-path, oversized, and over-limit files remain on the
+  Volume but are rejected from the Memory API projection and reported through
+  a Session error event at final reconciliation.
+
+Reconciliation runs after successful filesystem-mutating tool results and at
+turn exit. It observes the final state of a shell command, not every syscall
+inside that command.
+
+## Direct Memory API flow
+
+Direct API create/update/delete calls use E2B's Volume file API and then commit
+the corresponding relational head and API-attributed Version. Basic and full
+reads are served from PostgreSQL, so listing does not resume a Sandbox or scan
+the provider on every request.
+
+This dual write is not atomic. A provider success followed by a database crash
+can leave an unindexed file until a later mounted reconciliation observes it.
+Conversely, VMA does not commit a new head when the provider call fails.
+
+E2B explicitly says standalone Volume SDK methods are intended for a Volume
+that is not mounted. Direct API mutation while a persistent Session Sandbox
+still has the Volume mounted has not been certified as a supported concurrent
+provider operation and remains an experimental limitation.
+
+## Current provider boundary
+
+- E2B Volumes are private beta and must be enabled for the E2B project behind
+  `E2B_API_KEY`.
+- No separate Volume secret is required. Provider names reuse `E2B_API_KEY`
+  and include `APP_ENV` for environment separation.
+- Multiple read-write Sessions have no cross-Sandbox optimistic filesystem
+  concurrency. Content-hash preconditions protect direct API updates against
+  the indexed head, not arbitrary concurrent shell writes.
+- Archiving blocks API writes and new attachments. An already-mounted Session
+  cannot be made filesystem-read-only by the pinned E2B SDK.
+- There is no durable dual-write outbox, Volume generation/fencing token, or
+  automatic provider/database repair worker.
 
 The opt-in real-provider proof is
 `VMA_TEST_E2B_VOLUMES=1 pytest tests_live/test_memory_volume.py`.

@@ -66,6 +66,62 @@ async def test_volume_lifecycle_uses_a_deterministic_name_and_stable_id(
     ]
 
 
+async def test_volume_file_operations_connect_by_id_and_preserve_paths(
+    monkeypatch, e2b_settings
+):
+    calls = []
+
+    class MissingPath(Exception):
+        pass
+
+    class NativeVolume:
+        @staticmethod
+        async def connect(volume_id, **options):
+            calls.append(("connect", volume_id, options["api_key"]))
+            return NativeVolume()
+
+        async def make_dir(self, path, **options):
+            calls.append(("make_dir", path, options))
+
+        async def write_file(self, path, content, **options):
+            calls.append(("write_file", path, content, options))
+
+        async def remove(self, path):
+            calls.append(("remove", path))
+            if path == "/already-gone.md":
+                raise MissingPath()
+
+    monkeypatch.setattr(volume_utils, "AsyncVolume", NativeVolume)
+    monkeypatch.setattr(volume_utils, "NotFoundException", MissingPath)
+    store = SimpleNamespace(
+        id="memstore_abc123",
+        volume_provider="e2b",
+        volume_locator={
+            "volume_id": "vol_123",
+            "volume_name": "vma-staging-us-memstore-abc123",
+        },
+    )
+
+    await Volume.write_file(store, "/projects/context.md", "durable context")
+    await Volume.remove_file(store, "/projects/context.md")
+    await Volume.remove_file(store, "/already-gone.md")
+
+    assert calls == [
+        ("connect", "vol_123", "e2b-test-key"),
+        ("make_dir", "/projects", {"force": True}),
+        (
+            "write_file",
+            "/projects/context.md",
+            "durable context",
+            {"force": True},
+        ),
+        ("connect", "vol_123", "e2b-test-key"),
+        ("remove", "/projects/context.md"),
+        ("connect", "vol_123", "e2b-test-key"),
+        ("remove", "/already-gone.md"),
+    ]
+
+
 def test_mount_rejects_a_locator_without_the_provider_volume_name():
     store = SimpleNamespace(
         id="memstore_broken",

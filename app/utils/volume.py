@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
-from e2b import AsyncVolume
+from e2b import AsyncVolume, NotFoundException
 
 from app.config import get_settings
 from app.db.models import MemoryStore
@@ -65,6 +66,24 @@ class Volume:
         await AsyncVolume.destroy(volume_id, api_key=settings.e2b_api_key)
 
     @classmethod
+    async def write_file(cls, store: MemoryStore, path: str, content: str) -> None:
+        """Write one CMA Memory document to its provider Volume."""
+        native = await cls._connect(store)
+        parent = str(PurePosixPath(path).parent)
+        if parent != "/":
+            await native.make_dir(parent, force=True)
+        await native.write_file(path, content, force=True)
+
+    @classmethod
+    async def remove_file(cls, store: MemoryStore, path: str) -> None:
+        """Remove one document; an already absent path is an idempotent success."""
+        native = await cls._connect(store)
+        try:
+            await native.remove(path)
+        except NotFoundException:
+            return
+
+    @classmethod
     def mount(cls, store: MemoryStore, mount_path: str) -> SandboxVolumeMount:
         if store.volume_provider != VOLUME_PROVIDER_E2B:
             raise InvalidVolumeBinding(
@@ -75,6 +94,20 @@ class Volume:
             # AsyncSandbox.create sends a Volume name to E2B even when handed
             # an AsyncVolume object, so the name is the actual mount handle.
             volume_name=cls._locator_value(store, "volume_name"),
+        )
+
+    @classmethod
+    async def _connect(cls, store: MemoryStore) -> AsyncVolume:
+        if store.volume_provider != VOLUME_PROVIDER_E2B:
+            raise InvalidVolumeBinding(
+                f"Volume provider {store.volume_provider!r} is not implemented"
+            )
+        settings = get_settings()
+        if not settings.e2b_api_key.strip():
+            raise RuntimeError("E2B_API_KEY is not configured")
+        return await AsyncVolume.connect(
+            cls._locator_value(store, "volume_id"),
+            api_key=settings.e2b_api_key,
         )
 
     @staticmethod

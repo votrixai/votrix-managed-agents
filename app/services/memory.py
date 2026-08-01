@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -88,6 +89,8 @@ async def list_memory_stores(
     *,
     organization_id: str,
     include_archived: bool = False,
+    created_at_gte: datetime | None = None,
+    created_at_lte: datetime | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
     before_id: str | None = None,
     after_id: str | None = None,
@@ -96,6 +99,8 @@ async def list_memory_stores(
         db,
         organization_id=organization_id,
         include_archived=include_archived,
+        created_at_gte=created_at_gte,
+        created_at_lte=created_at_lte,
         provisioning_status=VOLUME_READY,
         limit=limit,
         before_id=before_id,
@@ -191,6 +196,11 @@ async def delete_memory_store(
         await db.commit()
         raise MemoryStoreUnavailable("The Memory Store Volume could not be deleted") from exc
 
+    await memory_q.purge_memory_store_contents(
+        db,
+        memory_store_id=store.id,
+        organization_id=store.organization_id,
+    )
     await memory_q.mark_memory_store_deleted(db, store)
     await db.commit()
     return store

@@ -566,7 +566,13 @@ class Sandbox:
         await self.ensure_connected()
         return bytes(await self._native.files.read(path, format="bytes", user=GUEST_USER))
 
-    async def list_files(self, path: str) -> list[OutputFile]:
+    async def list_files(
+        self,
+        path: str,
+        *,
+        max_files: int | None = None,
+        include_oversized: bool = False,
+    ) -> list[OutputFile]:
         """Everything under `path`, with a hash, as the container sees it.
 
         The hash is what makes collection repeatable: it says whether a file is
@@ -580,9 +586,10 @@ class Sandbox:
         # the hashes and then a `stat` per file, which is one round trip per
         # deliverable on top of the one that found them. Over this network a
         # round trip is most of a second.
+        file_limit = max_files or get_settings().max_output_files
         result = await self.run(
             f"cd {shlex.quote(path)} 2>/dev/null "
-            f"&& find . -type f 2>/dev/null | head -n {get_settings().max_output_files} "
+            f"&& find . -type f 2>/dev/null | head -n {file_limit} "
             "| while IFS= read -r f; do "
             'printf "%s " "$(stat -c %s "$f" 2>/dev/null || echo -1)"; '
             'sha256sum "$f" 2>/dev/null; done'
@@ -598,7 +605,9 @@ class Sandbox:
             if not digest or not relative or not raw_size.lstrip("-").isdigit():
                 continue
             size = int(raw_size)
-            if size < 0 or size > get_settings().max_output_bytes:
+            if size < 0:
+                continue
+            if not include_oversized and size > get_settings().max_output_bytes:
                 continue
             found.append(OutputFile(path=relative, size_bytes=size, sha256=digest))
         return found

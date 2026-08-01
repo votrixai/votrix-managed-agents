@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -71,3 +71,161 @@ class MemoryStoreResponse(ApiModel):
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+
+
+class MemoryStoreListResponse(ApiModel):
+    data: list[MemoryStoreResponse]
+    next_page: str | None = None
+    # Existing VMA cursor fields remain additive on this CMA-specific route.
+    has_more: bool = False
+    first_id: str | None = None
+    last_id: str | None = None
+
+
+class DeletedMemoryStoreResponse(ApiModel):
+    id: str
+    type: Literal["memory_store_deleted"] = "memory_store_deleted"
+
+
+MAX_MEMORY_PATH_BYTES = 1024
+MAX_MEMORY_CONTENT_BYTES = 100 * 1024
+MAX_MEMORIES_PER_STORE = 2000
+
+
+def normalize_memory_path(value: str) -> str:
+    """Validate the exact slash-prefixed path used by the CMA API."""
+    if not isinstance(value, str):
+        raise ValueError("Memory path must be a string")
+    if not value.startswith("/"):
+        raise ValueError("Memory path must start with '/'")
+    if len(value.encode("utf-8")) > MAX_MEMORY_PATH_BYTES:
+        raise ValueError("Memory path must be at most 1024 bytes")
+    if unicodedata.normalize("NFC", value) != value:
+        raise ValueError("Memory path must be NFC-normalized")
+
+    parts = value.split("/")[1:]
+    if not parts or parts == [""]:
+        raise ValueError("Memory path must contain at least one segment")
+    if any(part == "" for part in parts):
+        raise ValueError("Memory path must not contain empty segments")
+    if any(part in {".", ".."} for part in parts):
+        raise ValueError("Memory path must not contain '.' or '..' segments")
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf"}
+        for part in parts
+        for character in part
+    ):
+        raise ValueError("Memory path must not contain control or format characters")
+    return value
+
+
+def normalize_memory_path_prefix(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("path_prefix must be a string")
+    if value == "/":
+        return value
+    if not value.endswith("/"):
+        raise ValueError("path_prefix must end with '/'")
+    normalize_memory_path(value[:-1])
+    return value
+
+
+class MemoryCreateRequest(ApiModel):
+    path: str
+    # CMA's generated SDK types this nullable, while its prose says to pass an
+    # explicit empty string. Accepting null as empty keeps both clients usable.
+    content: str | None
+
+    _path_is_valid = field_validator("path")(normalize_memory_path)
+
+
+class MemoryPrecondition(ApiModel):
+    type: Literal["content_sha256"]
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class MemoryUpdateRequest(ApiModel):
+    content: str | None = None
+    path: str | None = None
+    precondition: MemoryPrecondition | None = None
+
+    @field_validator("path")
+    @classmethod
+    def _path_is_valid(cls, value: str | None) -> str | None:
+        return normalize_memory_path(value) if value is not None else None
+
+
+class ApiActor(ApiModel):
+    type: Literal["api_actor"] = "api_actor"
+    api_key_id: str
+
+
+class SessionActor(ApiModel):
+    type: Literal["session_actor"] = "session_actor"
+    session_id: str
+
+
+class UserActor(ApiModel):
+    type: Literal["user_actor"] = "user_actor"
+    user_id: str
+
+
+MemoryActor = Annotated[ApiActor | SessionActor | UserActor, Field(discriminator="type")]
+
+
+class MemoryResponse(ApiModel):
+    id: str
+    type: Literal["memory"] = "memory"
+    memory_store_id: str
+    memory_version_id: str
+    path: str
+    content: str | None = None
+    content_sha256: str
+    content_size_bytes: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryPrefixResponse(ApiModel):
+    type: Literal["memory_prefix"] = "memory_prefix"
+    path: str
+
+
+MemoryListItem = Annotated[
+    MemoryResponse | MemoryPrefixResponse,
+    Field(discriminator="type"),
+]
+
+
+class MemoryListResponse(ApiModel):
+    data: list[MemoryListItem]
+    next_page: str | None = None
+    # Additive compatibility with the rest of VMA's cursor responses.
+    has_more: bool = False
+
+
+class DeletedMemoryResponse(ApiModel):
+    id: str
+    type: Literal["memory_deleted"] = "memory_deleted"
+
+
+class MemoryVersionResponse(ApiModel):
+    id: str
+    type: Literal["memory_version"] = "memory_version"
+    memory_store_id: str
+    memory_id: str
+    operation: Literal["created", "modified", "deleted"]
+    created_at: datetime
+    content: str | None = None
+    content_sha256: str | None = None
+    content_size_bytes: int | None = None
+    path: str | None = None
+    created_by: MemoryActor | None = None
+    redacted_at: datetime | None = None
+    redacted_by: MemoryActor | None = None
+
+
+class MemoryVersionListResponse(ApiModel):
+    data: list[MemoryVersionResponse]
+    next_page: str | None = None
+    has_more: bool = False

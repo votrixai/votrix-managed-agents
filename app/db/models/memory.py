@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +41,15 @@ VOLUME_PROVISIONING_STATES = (
 MEMORY_ACCESS_READ_WRITE = "read_write"
 MEMORY_ACCESS_READ_ONLY = "read_only"
 MEMORY_ACCESS_MODES = (MEMORY_ACCESS_READ_WRITE, MEMORY_ACCESS_READ_ONLY)
+
+MEMORY_VERSION_CREATED = "created"
+MEMORY_VERSION_MODIFIED = "modified"
+MEMORY_VERSION_DELETED = "deleted"
+MEMORY_VERSION_OPERATIONS = (
+    MEMORY_VERSION_CREATED,
+    MEMORY_VERSION_MODIFIED,
+    MEMORY_VERSION_DELETED,
+)
 
 
 class MemoryStore(TimestampMixin, Base):
@@ -100,6 +110,118 @@ class MemoryStore(TimestampMixin, Base):
 
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Memory(TimestampMixin, Base):
+    """The current, API-visible head of one text document.
+
+    E2B holds the mounted filesystem bytes. This row is the control-plane
+    index and the latest audited snapshot, so list/retrieve do not need to
+    connect to a provider Volume and continue to work while that Volume is
+    mounted in a running Session.
+
+    Deletes are physical here. ``MemoryVersion.memory_id`` deliberately is
+    not a foreign key, which lets the immutable history survive after its live
+    head has been removed, matching the CMA contract.
+    """
+
+    __tablename__ = "memories"
+    __table_args__ = (
+        UniqueConstraint(
+            "memory_store_id",
+            "path",
+            name="uq_memories_store_path",
+        ),
+        Index(
+            "ix_memories_store_path",
+            "memory_store_id",
+            "path",
+        ),
+        Index(
+            "ix_memories_organization_store_updated",
+            "organization_id",
+            "memory_store_id",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    memory_store_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class MemoryVersion(Base):
+    """One immutable Memory snapshot plus narrowly mutable redaction fields."""
+
+    __tablename__ = "memory_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "operation IN ('created', 'modified', 'deleted')",
+            name="ck_memory_versions_operation",
+        ),
+        Index(
+            "ix_memory_versions_store_created",
+            "memory_store_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_memory_versions_store_memory_created",
+            "memory_store_id",
+            "memory_id",
+            "created_at",
+        ),
+        Index(
+            "ix_memory_versions_store_api_key_created",
+            "memory_store_id",
+            "api_key_id",
+            "created_at",
+        ),
+        Index(
+            "ix_memory_versions_store_session_created",
+            "memory_store_id",
+            "session_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    memory_store_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # No FK: versions outlive a deleted Memory head.
+    memory_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    path: Mapped[str | None] = mapped_column(String(1024))
+    content: Mapped[str | None] = mapped_column(Text)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    content_size_bytes: Mapped[int | None] = mapped_column(Integer)
+
+    created_by: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    actor_type: Mapped[str | None] = mapped_column(String(32))
+    api_key_id: Mapped[str | None] = mapped_column(String(64))
+    session_id: Mapped[str | None] = mapped_column(String(64))
+    user_id: Mapped[str | None] = mapped_column(String(64))
+
+    redacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    redacted_by: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
 
 
 class SessionMemoryStore(TimestampMixin, Base):

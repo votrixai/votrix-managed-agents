@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.db.models import SessionMemoryStore, SessionSandbox
 from app.db.queries import memory as memory_q
+from app.services import memory_records
 from app.utils.sandbox import Sandbox
 from app.utils.volume import Volume
 
@@ -77,6 +78,11 @@ async def memory_store(api):
                 except Exception:
                     pass
         await Volume.destroy(store)
+        await memory_q.purge_memory_store_contents(
+            db,
+            memory_store_id=store.id,
+            organization_id=store.organization_id,
+        )
         await memory_q.mark_memory_store_deleted(db, store)
         await db.commit()
 
@@ -98,7 +104,7 @@ async def _container(session_id: str) -> Sandbox:
 
 
 async def test_a_write_is_visible_after_the_first_sandbox_is_destroyed(
-    new_session, memory_store
+    api, new_session, memory_store
 ):
     resource = {
         "type": "memory_store",
@@ -114,6 +120,27 @@ async def test_a_write_is_visible_after_the_first_sandbox_is_destroyed(
     first = await _container(first_id)
     written = await first.to_deep_agent_backend.awrite(path, token)
     assert written.error is None, written
+
+    from app.db.engine import session_scope
+
+    async with session_scope() as db:
+        synced = await memory_records.reconcile_session_memory_stores(
+            db,
+            session_id=first_id,
+            organization_id=api.headers["x-organization-id"],
+            sandbox=first,
+        )
+    assert synced.changed == 1
+
+    indexed = await api.get(
+        f"/v1/memory_stores/{memory_store['id']}/memories",
+        params={"view": "full"},
+    )
+    indexed.raise_for_status()
+    assert [(item["path"], item["content"]) for item in indexed.json()["data"]] == [
+        ("/context.md", token)
+    ]
+
     await first.kill()
 
     second_id = await new_session(resources=[resource])
