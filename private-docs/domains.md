@@ -199,8 +199,8 @@ certificate, CORS, browser, SDK, and negative-path checks pass.
       `tests/test_documentation_surface.py`, `sdks/typescript/README.md`, and
       the production cases in `sdks/typescript/tests/client.test.ts` to
       `https://api.vma.votrixai.com`.
-- [x] Change the staging smoke/performance targets in
-      `docs/deployment-platforms.md` and the staging cases in
+- [x] Change the staging smoke/performance targets in the active deployment
+      configuration and the staging cases in
       `sdks/typescript/tests/client.test.ts` to
       `https://staging-api.vma.votrixai.com`. Update the non-canonical override
       example in `sdks/python/tests/test_client.py` so it does not claim the

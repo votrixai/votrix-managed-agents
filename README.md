@@ -1,8 +1,8 @@
 # Votrix Managed Agents
 
-This branch contains a ground-up rewrite of the Votrix Managed Agents service.
-The active implementation is under `app/`; the previous implementation was
-moved to `app_archived/` and its tests to `tests_archived/`.
+This repository contains the active Votrix Managed Agents service under `app/`
+and its isolated test suite under `tests/`. The superseded implementation was
+removed from the main branch and remains recoverable from Git history.
 
 > **Rewrite status (2026-07-30):** this is an integration branch, not the
 > previously documented public-beta release. Authentication, several resource
@@ -94,9 +94,9 @@ uv run uvicorn app.main:app --reload
 OpenAPI is available at `http://127.0.0.1:8000/openapi.json`.
 
 The active Alembic history starts a new lineage (`down_revision = None`). Run
-it against a fresh rewrite database. It does not upgrade an existing
-pre-rewrite database or reconcile its `alembic_version`; preserving old data
-requires a separately designed migration.
+it against a fresh database. It does not upgrade a database stamped with the
+superseded lineage or reconcile its `alembic_version`; preserving such data
+requires a separately designed migration using the repository's Git history.
 
 The database defaults to a local SQLite file. Resource routes require an
 Organization header:
@@ -203,6 +203,7 @@ The rewrite owns these relational tables:
 - `agents` and `agent_versions`
 - `environments`
 - `sessions`, `session_events`, `session_files`, and `session_sandboxes`
+- `memory_stores`, `memories`, `memory_versions`, and `session_memory_stores`
 - `files`
 - `skills`
 
@@ -223,8 +224,7 @@ uv run pytest
 
 It uses an in-memory SQLite database and stubs E2B, storage, models, and Cloud
 Tasks where needed. `tests_live/` is the explicit external-service suite and is
-not part of the default pytest path. `tests_archived/` tests the previous
-implementation and is retained only as migration reference.
+not part of the default pytest path.
 
 ## Documentation
 
@@ -232,15 +232,14 @@ Current rewrite documentation:
 
 - [Rewrite status](docs/rewrite-status.md)
 - [Core architecture](docs/votrix-core-architecture.md)
+- [API reference](docs/api/index.mdx)
+- [Memory Stores](docs/memory-stores.md)
+- [Memory Stores on E2B Volumes](docs/memory-volumes.md)
 - [Agent versioning](docs/agent-versioning.md)
 - [Session events](docs/session-events.md)
 - [Event streaming](docs/streaming.md)
 - [Errors](docs/errors.md)
 - [Service limits](docs/limits.md)
-
-Other pages under `docs/` describe the pre-rewrite implementation until they are
-ported. They remain available as historical design material and are grouped as
-such in the documentation navigation.
 
 To run the narrative documentation site:
 
@@ -250,9 +249,9 @@ npm install
 npm run dev
 ```
 
-The checked-in OpenAPI exporter and generated API reference still target the
-archived application. Until they are migrated, use the live active schema at
-`http://127.0.0.1:8000/openapi.json`.
+Run `npm run openapi:sync` after changing an API route or model. The checked-in
+schema and generated API reference are derived from `app.server.create_app`;
+CI fails when the snapshot drifts from the active application.
 
 ## Current gaps
 
@@ -262,8 +261,8 @@ archived application. Until they are migrated, use the live active schema at
 - MCP definitions are persisted but not loaded. The stored `multiagent` roster
   is not consumed; Deep Agents' built-in general-purpose `task` delegation is
   still available independently.
-- Memory, Vaults, deployments, webhooks, quotas, audit/usage ledgers, and the
-  previous SDK compatibility layer have not been ported.
+- Vaults, deployments, webhooks, quotas, audit/usage ledgers, and production
+  authentication have not been implemented in the active service.
 - E2B is the only active sandbox backend; there is no no-shell local fallback.
 - Event streaming polls durable rows; the old in-process/PostgreSQL preview bus
   is not part of the rewrite.
@@ -281,9 +280,6 @@ archived application. Until they are migrated, use the live active schema at
 - The runtime currently commits `session.status_idle` before output collection
   and the final row release. An SSE client can briefly observe that event before
   outputs are visible or the next turn is accepted.
-- The checked-in `entrypoint.sh`, Cloud Run manifests, release scripts, and
-  `votrix_managed_agents` compatibility exports still target the archived
-  implementation and must be migrated before deployment.
 
 ## License
 
