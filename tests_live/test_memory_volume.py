@@ -1,4 +1,4 @@
-"""Real E2B proof that one Memory Store survives a Sandbox replacement.
+"""Real E2B proof of the complete Memory API/Volume/Sandbox round trip.
 
 Volumes are still an E2B private-beta feature, so this scenario is opt-in even
 inside the live suite. Run it with ``VMA_TEST_E2B_VOLUMES=1`` after E2B has
@@ -27,6 +27,26 @@ if os.environ.get("VMA_TEST_E2B_VOLUMES") != "1":
         "set VMA_TEST_E2B_VOLUMES=1 for the E2B private-beta Volume scenario",
         allow_module_level=True,
     )
+
+
+@pytest.fixture(scope="session")
+def settings():
+    """This scenario needs E2B and a database, but never calls a model or S3."""
+    from app.config import get_settings
+
+    resolved = get_settings()
+    missing = [
+        name
+        for name in ("database_url", "e2b_api_key")
+        if not str(getattr(resolved, name, "")).strip()
+    ]
+    if missing:
+        pytest.skip("live test needs: " + ", ".join(name.upper() for name in missing))
+    if not str(resolved.database_url).startswith(("postgresql", "postgres://")):
+        pytest.skip(
+            f"live test needs Postgres, DATABASE_URL is {resolved.database_url!r}"
+        )
+    return resolved
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -87,6 +107,57 @@ async def memory_store(api):
         await db.commit()
 
 
+@pytest_asyncio.fixture(loop_scope="session")
+async def new_memory_session(api):
+    """Create only the control-plane records needed to provision a Sandbox."""
+    environment_response = await api.post(
+        "/v1/environments",
+        json={"name": f"memory-live-{uuid.uuid4().hex[:8]}", "config": {}},
+    )
+    environment_response.raise_for_status()
+    environment = environment_response.json()
+    assert environment["build_state"] == "ready", environment
+
+    agent_response = await api.post(
+        "/v1/agents",
+        json={
+            "name": f"memory-live-{uuid.uuid4().hex[:8]}",
+            "model": "claude-opus-5",
+            "system": "Memory Volume live smoke test.",
+            "tools": [],
+            "skills": [],
+        },
+    )
+    agent_response.raise_for_status()
+    agent = agent_response.json()
+    made: list[str] = []
+
+    async def _create(*, resources):
+        response = await api.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent["id"],
+                "environment_id": environment["id"],
+                "resources": resources,
+            },
+        )
+        response.raise_for_status()
+        session_id = response.json()["id"]
+        made.append(session_id)
+        return session_id
+
+    yield _create
+
+    for session_id in made:
+        try:
+            await (await _container(session_id)).kill()
+        except Exception:
+            pass
+        await api.delete(f"/v1/sessions/{session_id}")
+    await api.post(f"/v1/agents/{agent['id']}/archive")
+    await api.post(f"/v1/environments/{environment['id']}/archive")
+
+
 async def _container(session_id: str) -> Sandbox:
     from app.db.engine import session_scope
 
@@ -103,8 +174,8 @@ async def _container(session_id: str) -> Sandbox:
         )
 
 
-async def test_a_write_is_visible_after_the_first_sandbox_is_destroyed(
-    api, new_session, memory_store
+async def test_memory_api_seed_mount_runtime_update_and_version_round_trip(
+    api, new_memory_session, memory_store
 ):
     resource = {
         "type": "memory_store",
@@ -112,14 +183,24 @@ async def test_a_write_is_visible_after_the_first_sandbox_is_destroyed(
         "access": "read_write",
         "instructions": "Use context.md for durable project context.",
     }
-    token = f"VMA-MEMORY-{uuid.uuid4().hex}"
+    seed = f"VMA-MEMORY-SEED-{uuid.uuid4().hex}"
+    updated = f"VMA-MEMORY-UPDATED-{uuid.uuid4().hex}"
     mount_path = f"{memory_store['name'].lower().replace(' ', '-')}"
     path = f"/mnt/memory/{mount_path}/context.md"
 
-    first_id = await new_session(resources=[resource])
+    created_response = await api.post(
+        f"/v1/memory_stores/{memory_store['id']}/memories",
+        json={"path": "/context.md", "content": seed},
+    )
+    created_response.raise_for_status()
+    created = created_response.json()
+
+    first_id = await new_memory_session(resources=[resource])
     first = await _container(first_id)
-    written = await first.to_deep_agent_backend.awrite(path, token)
-    assert written.error is None, written
+    assert await first.read_bytes(path, max_bytes=1024) == seed.encode()
+
+    edited = await first.to_deep_agent_backend.aedit(path, seed, updated)
+    assert edited.error is None, edited
 
     from app.db.engine import session_scope
 
@@ -133,16 +214,28 @@ async def test_a_write_is_visible_after_the_first_sandbox_is_destroyed(
     assert synced.changed == 1
 
     indexed = await api.get(
-        f"/v1/memory_stores/{memory_store['id']}/memories",
-        params={"view": "full"},
+        f"/v1/memory_stores/{memory_store['id']}/memories/{created['id']}",
     )
     indexed.raise_for_status()
-    assert [(item["path"], item["content"]) for item in indexed.json()["data"]] == [
-        ("/context.md", token)
-    ]
+    assert indexed.json()["path"] == "/context.md"
+    assert indexed.json()["content"] == updated
+
+    versions_response = await api.get(
+        f"/v1/memory_stores/{memory_store['id']}/memory_versions",
+        params={"memory_id": created["id"], "view": "full"},
+    )
+    versions_response.raise_for_status()
+    versions = versions_response.json()["data"]
+    assert [item["operation"] for item in versions] == ["modified", "created"]
+    assert versions[0]["content"] == updated
+    assert versions[0]["created_by"] == {
+        "type": "session_actor",
+        "session_id": first_id,
+    }
+    assert versions[1]["content"] == seed
 
     await first.kill()
 
-    second_id = await new_session(resources=[resource])
+    second_id = await new_memory_session(resources=[resource])
     second = await _container(second_id)
-    assert await second.read_bytes(path, max_bytes=1024) == token.encode()
+    assert await second.read_bytes(path, max_bytes=1024) == updated.encode()
