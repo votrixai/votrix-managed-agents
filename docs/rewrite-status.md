@@ -40,9 +40,12 @@ The following routes are registered but still contain placeholder handlers:
 - Organizations and Organization owners;
 - the model catalog.
 
-Memory router/service/query modules exist as empty scaffolding and are not
-mounted. The previous API-key, Vault, provider-registry, usage, quota, memory,
-deployment, webhook, and environment-work APIs have not been ported.
+Memory Store persistence now has a tenant-scoped control-plane table and query
+layer. A store identifies its backing storage with `volume_provider` and a
+provider-specific `volume_locator`; provider provisioning, Session attachment,
+and the public Memory Store routes are still pending. The previous API-key,
+Vault, provider-registry, usage, quota, memory-record, deployment, webhook, and
+environment-work APIs have not been ported.
 
 ## Active runtime
 
