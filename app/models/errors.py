@@ -19,6 +19,18 @@ class Conflict(ServiceError):
     """The request is well formed but wrong for the current state."""
 
 
+class InvalidRequest(ServiceError):
+    """The request cannot be interpreted under this endpoint's contract."""
+
+
+class PayloadTooLarge(ServiceError):
+    """The request contains a bounded payload over its documented limit."""
+
+
+class MemoryPreconditionFailed(Conflict):
+    """A Memory changed since the caller computed its content hash."""
+
+
 class SessionBusy(ServiceError):
     """The session is mid-reply and there is no queue to hold the message.
 
@@ -43,3 +55,7 @@ class SessionCancelled(ServiceError):
 
 class SandboxUnavailable(ServiceError):
     """The session's sandbox is gone. The session cannot continue."""
+
+
+class MemoryStoreUnavailable(ServiceError):
+    """The provider could not create, mount, or destroy a Memory Store Volume."""

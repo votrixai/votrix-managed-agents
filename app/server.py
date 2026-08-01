@@ -5,6 +5,16 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.models.errors import (
+    Conflict,
+    InvalidRequest,
+    MemoryPreconditionFailed,
+    MemoryStoreUnavailable,
+    NotFound,
+    PayloadTooLarge,
+    SandboxUnavailable,
+    SessionBusy,
+)
 from app.routers import (
     accounts,
     agents,
@@ -13,10 +23,10 @@ from app.routers import (
     health,
     internal_work,
     llm,
+    memory,
     sessions,
     skills,
 )
-from app.models.errors import Conflict, NotFound, SandboxUnavailable, SessionBusy
 
 ROUTERS = (
     health.router,
@@ -26,6 +36,7 @@ ROUTERS = (
     environments.router,
     files.router,
     skills.router,
+    memory.router,
     llm.router,
     internal_work.router,
 )
@@ -55,6 +66,40 @@ def _install_error_handlers(app: FastAPI) -> None:
     async def _conflict(request: Request, exc: Conflict) -> JSONResponse:
         return JSONResponse(status_code=409, content={"error": {"type": "conflict", "message": str(exc)}})
 
+    @app.exception_handler(MemoryPreconditionFailed)
+    async def _memory_precondition_failed(
+        request: Request, exc: MemoryPreconditionFailed
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "type": "memory_precondition_failed_error",
+                    "message": str(exc),
+                }
+            },
+        )
+
+    @app.exception_handler(InvalidRequest)
+    async def _invalid_request(request: Request, exc: InvalidRequest) -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {"type": "invalid_request_error", "message": str(exc)}
+            },
+        )
+
+    @app.exception_handler(PayloadTooLarge)
+    async def _payload_too_large(
+        request: Request, exc: PayloadTooLarge
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": {"type": "request_too_large", "message": str(exc)}
+            },
+        )
+
     @app.exception_handler(SessionBusy)
     async def _session_busy(request: Request, exc: SessionBusy) -> JSONResponse:
         # No `Retry-After`. How long the agent has left to think is not
@@ -70,4 +115,15 @@ def _install_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=503,
             content={"error": {"type": "sandbox_unavailable", "message": str(exc)}},
+        )
+
+    @app.exception_handler(MemoryStoreUnavailable)
+    async def _memory_store_unavailable(
+        request: Request, exc: MemoryStoreUnavailable
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {"type": "memory_store_unavailable", "message": str(exc)}
+            },
         )

@@ -26,7 +26,7 @@ Availability and readiness labels match the [compatibility matrix](./compatibili
 | Claude durable multiagent threads | Not offered | Deep Agents synchronous subagents are ephemeral; background subagents use another protocol. |
 | MCP OAuth lifecycle | Not available | Stored/matched access tokens are not automatically refreshed or revoked. |
 | Anthropic system skills | Not offered | Their private packages and behavior are unavailable to VMA. |
-| Claude memory mount/writeback | Repository preview — no writeback | E2B receives a one-time bounded memory seed; sandbox edits persist there but are not written back to managed Memory Store versions. |
+| Claude memory mount/writeback | Repository preview — constrained writeback | E2B mounts the Store Volume directly and VMA indexes tool-boundary file changes into session-attributed Versions. Read-only mounts, per-syscall history, atomic dual writes, and concurrent-Session conflict resolution are not available. |
 | Production deployment scheduler | Operator tick only — no running service | An idempotent tick exists, but no always-on scheduler service is included. |
 | Webhook delivery | Not offered | Cryptographic helpers exist, but endpoint management and delivery do not; webhooks are not a public-beta product promise. |
 | User-profile enrollment and attribution | Repository preview — lifecycle only | Profile CRUD exists, but enrollment, trust grants, and forwarding a profile ID to model providers do not. |
@@ -391,14 +391,15 @@ presign/complete routes; beta callers use the bounded authenticated upload.
 Organization stored-byte quota is checked for File and Skill writes, but storage
 retention and garbage-collection policy still need operational ownership.
 
-VMA materializes Skills, Memory Store seeds, and create-time
-files into the one E2B sandbox during Session creation. A later file may be
+VMA materializes Skills and create-time Files into the one E2B sandbox and
+mounts attached Memory Store Volumes during Session creation. A later File may be
 added only through the bounded append protocol: the Session and sandbox must be
 idle/paused, the path must be one direct filename under
 `/mnt/session/uploads`, and the existing manifest must remain an unchanged
 subset of the next revision. VMA checks Organization ownership plus the copied
-object's size and SHA-256 before touching E2B. Skills and memory remain fixed;
-existing file mounts cannot be updated or removed. Immutable inputs cannot
+object's size and SHA-256 before touching E2B. Skill and Memory Store
+attachments remain fixed, while files inside a read-write Memory Store mount
+are persistent and mutable. Existing File mounts cannot be updated or removed. Immutable inputs cannot
 overlap `/workspace`, `/mnt/session/outputs`, or a read-write memory root. The
 control plane never performs per-turn input upload, repair, deletion, or
 continuous synchronization.
@@ -450,19 +451,33 @@ A compatible response containing a system-skill reference therefore does not mea
 
 ### Memory runtime semantics differ
 
-The VMA Memory Store API has path records, limits, optimistic content preconditions, immutable versions, deletion history, and filters. When an E2B-backed Session is created, the adapter loads a bounded subset—up to eight mounted stores, up to twenty records per store, and up to 1,000 characters per record—into that sandbox once. It creates an `AGENTS.md` source listing those files for Deep Agents memory guidance.
+The VMA Memory Store API has path records, limits, optimistic content
+preconditions, immutable Versions, deletion history, hierarchy, filters, and
+historical redaction. When an E2B-backed Session is created, the adapter mounts
+the complete provider Volume below `/mnt/memory/<slug>` and adds the returned
+path plus Store instructions to the Deep Agents system prompt. Memory bodies
+are read through filesystem tools rather than copied wholesale into model
+context.
 
-It does not currently provide:
+Runtime reconciliation hashes the mounted tree after successful
+`write_file`, `edit_file`, and `execute` tool results and at turn exit. New,
+changed, and removed UTF-8 files become session-attributed Versions. It does
+not currently provide:
 
-- A complete seed containing every memory path rather than the bounded selection.
-- Dedicated agent read/write/list/delete Memory Store tools and durable writeback. E2B protects `read_only` seeds, while `read_write` edits persist only inside that Session's sandbox.
-- Automatic persistence of model edits back into memory versions.
-- Actor/session attribution for writes produced by the graph.
+- A filesystem-level `read_only` Volume mount; E2B 2.31.0 does not expose one,
+  so VMA rejects read-only Memory Store attachments.
+- A per-syscall journal. Several writes inside one shell invocation are one
+  final tool-boundary snapshot.
+- Atomicity between E2B and PostgreSQL or a durable repair outbox.
 - Conflict resolution between concurrent sessions.
 - Semantic/vector retrieval.
 - Claude's exact memory instructions or dreaming/research-preview behavior.
 
-Deep Agents' `MemoryMiddleware` reads the generated `AGENTS.md`. Changes made to read-write seeded files survive later turns through the same sandbox, but they are not written back to database Memory Store versions. The sandbox filesystem and managed Memory Store API must not be described as equivalent.
+E2B says standalone Volume SDK file methods are intended for unmounted
+Volumes. VMA uses them for direct Memory API mutations, so API writes while an
+existing Session Sandbox still owns the mount remain experimental rather than
+a certified concurrent provider path. Content-hash preconditions compare with
+the indexed head and do not fence arbitrary concurrent shell writes.
 
 ## Checkpoints, resumption, and state
 

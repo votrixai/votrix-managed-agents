@@ -240,11 +240,15 @@ source `none`.
 
 ## Memory Stores
 
-Memory records enforce SDK-compatible slash-prefixed path validation, required create content, the official 100KB content limit, and the 2000 memories per store limit. Memory list supports `path_prefix`, `depth` rollups as `memory_prefix` items, `order`, `order_by`, and `view`. Every non-no-op create/update/delete produces an immutable memory version; stale content preconditions return the current memory when the requested content/path already matches. Delete supports `expected_content_sha256`, and deleted memory-version responses return `null` content/hash/size while preserving the deleted path. Store-level version listing and version retrieve keep working after the memory is deleted. Memory-version list supports SDK `memory_id`, `operation`, `api_key_id`, `session_id`, `view`, and created-at filters. Redaction rejects the current live head version, and archived stores remain readable but reject writes and new session attachments.
+Memory records enforce SDK-compatible slash-prefixed path validation, required create content, the official 100KB content limit, and the 2000 memories per store limit. Memory list supports `path_prefix`, `depth` rollups as `memory_prefix` items, opaque page cursors, and `view`. Every non-no-op create/update/delete produces an immutable memory version; stale content preconditions return the current memory when the requested content/path already matches. Delete supports `expected_content_sha256`, and deleted memory-version responses return `null` content/hash/size while preserving the deleted path. Store-level version listing and version retrieve keep working after the memory is deleted. Memory-version list supports SDK `memory_id`, `operation`, `api_key_id`, `session_id`, `view`, and created-at filters. Redaction rejects the current live head version, and archived stores remain readable but reject API writes and new session attachments.
 
-Memory Store route readiness is complete. The separate runtime limitation is
-that edits made inside a read-write sandbox are not synchronized back into
-managed Memory Store versions.
+The E2B runtime mounts a Store's provider Volume directly. After successful
+`write_file`, `edit_file`, and `execute` tool results, and again at turn exit,
+VMA hashes the mounted tree and records new, changed, and removed UTF-8 files
+as session-attributed Memory Versions. This is tool-boundary reconciliation,
+not a per-syscall journal. Read-only Volume mounts, cross-Sandbox conflict
+resolution, atomic provider/database commits, and direct Volume API writes
+while a Sandbox still owns the mount remain provider/runtime limitations.
 
 | Operation | Route | Public Beta | VMA Readiness | Claude Parity |
 | --- | --- | --- | --- | --- |

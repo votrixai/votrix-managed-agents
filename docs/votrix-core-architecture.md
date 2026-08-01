@@ -165,6 +165,7 @@ generation before every write.
 `app/utils/` contains concrete infrastructure code:
 
 - `sandbox.py`: E2B images, sandboxes, transfers, Skills, and output discovery;
+- `volume.py`: provider Volume lifecycle and native Memory Store mounts;
 - `storage.py`: private S3-compatible objects and signed URLs;
 - `id_generator.py`: prefixed, time-sortable UUIDv7 identifiers;
 - `timing.py`: structured duration reporting.

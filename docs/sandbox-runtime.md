@@ -53,19 +53,20 @@ VMA deliberately performs a narrow set of template privilege checks: the default
 The built-in E2B lifecycle has three invariants:
 
 1. One VMA Session is bound to exactly one opaque E2B `external_sandbox_id`.
-2. Skills, Memory Store seeds, and create-time files are materialized during
-   Session creation. A later file may only extend the immutable upload manifest
-   through the idle-only append API; no existing input is replaced or removed.
+2. Skills and create-time files are materialized during Session creation, and
+   Memory Stores are attached as native provider Volumes. A later file may only
+   extend the immutable upload manifest through the idle-only append API; no
+   existing immutable input or Memory Store attachment is replaced or removed.
 3. A later turn reconnects that exact sandbox and verifies the latest seal. A
    turn never re-uploads or repairs existing control-plane inputs.
 
 Session creation is therefore the provisioning boundary, not the first executable turn:
 
-1. VMA resolves the Session's pinned agent version, Skills, read-only input files, and initial Memory Store seed.
-2. It computes a deterministic create identity for the bundle, including the
-   original read-write memory seed, plus revision `0` of the immutable-file
-   manifest.
-3. It provisions one E2B sandbox, uploads the bundle, makes control-plane-owned
+1. VMA resolves the Session's pinned agent version, Skills, read-only input
+   files, and provider binding for every attached Memory Store.
+2. It computes a deterministic create identity for the immutable bundle and
+   Memory Store attachment set, plus revision `0` of the immutable-file manifest.
+3. It provisions one E2B sandbox with the native Volume mounts, uploads the bundle, makes control-plane-owned
    immutable files root-owned and non-writable to the guest, and writes a
    root-owned seal containing the expected digest, manifest, and revision.
 4. It records the opaque E2B ID, owner and policy fingerprints, template, and input digest as private database state.
@@ -87,8 +88,8 @@ idempotent. A different file at the same or overlapping path is rejected.
 
 For every subsequent turn, VMA:
 
-1. Recomputes the latest input identity from the pinned Skills and Memory seed
-   plus every committed create-time or appended file.
+1. Recomputes the latest input identity from the pinned Skills, Memory Store
+   attachments, and every committed create-time or appended file.
 2. Loads the one stored external ID and reconnects that exact E2B sandbox.
 3. Verifies the provider ownership/policy metadata, configured template,
    root-owned seal, latest manifest revision, immutable paths, permissions,
@@ -103,12 +104,12 @@ For every subsequent turn, VMA:
 
 VMA reconstructs the Python `AsyncSandbox`, `AsyncE2BSandbox`, and Deep Agents graph objects per run. It persists their identifiers and checkpoint state, not live Python objects.
 
-If a Skill, existing input, initial read-only or read-write memory source, mount
-identity, or configured template differs from the sealed identity, resume fails
+If a Skill, existing input, Memory Store mount identity, or configured template
+differs from the sealed identity, resume fails
 and the caller must create a new Session. File addition is the sole mutation
 exception: it must follow the append protocol above. Updates and deletion of
-mounted inputs remain rejected. Skills and memory cannot be appended or
-reseeded. There is no migration or replacement sandbox for the same Session.
+mounted inputs remain rejected. Skills and Memory Store attachments cannot be
+appended. There is no migration or replacement sandbox for the same Session.
 
 PostgreSQL and E2B cannot participate in one transaction. VMA therefore
 advances the provider seal before committing the database manifest. If the
@@ -130,9 +131,10 @@ The sandbox has distinct immutable and mutable areas:
 - Read-only create-time and append-only uploaded inputs are direct files below
   `/mnt/session/uploads`.
 - Custom Skills are materialized below `/skills/custom` and are immutable for the Session.
-- Read-only Memory Store seeds are immutable.
-- `/workspace`, `/mnt/session/outputs`, and Memory Stores mounted with
-  `read_write` access remain mutable inside the sandbox. The output root is
+- Memory Stores are native E2B Volume mounts. The pinned SDK has no read-only
+  mount option, so VMA rejects `read_only` Memory Store resources.
+- `/workspace`, `/mnt/session/outputs`, and attached Memory Store Volumes remain
+  mutable inside the sandbox. The output root is
   guest-owned; it is not part of the immutable upload manifest.
 
 Session files for E2B must be read-only and mounted as one normalized direct
@@ -170,10 +172,12 @@ resumed sandbox before each turn. That local disk work scales with immutable
 input size, but it does not move those bytes through R2 or Cloud Run and does
 not recreate Skill archives in control-plane memory.
 
-Files changed under `/workspace` and read-write memory roots survive later turns
-while the same E2B sandbox remains resumable, but they are not exported to
-S3-compatible storage. In particular, edits to a read-write Memory Store seed
-are **not** written back to VMA's managed Memory Store records or versions.
+Files changed under `/workspace` survive later turns while the same E2B sandbox
+remains resumable, but they are not exported to S3-compatible storage. Memory
+Store files are different: E2B persists them in the mounted Volume, and VMA
+hashes each mount after filesystem-mutating tools and at turn exit. New,
+changed, and removed UTF-8 files become session-attributed managed Memory
+Versions. This is a tool-boundary snapshot rather than a per-syscall journal.
 
 R2 or another S3-compatible store remains the durable source for uploaded file
 and Skill content. It is not continuously synchronized with the sandbox. At the

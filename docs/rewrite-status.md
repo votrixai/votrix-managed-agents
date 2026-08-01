@@ -3,7 +3,7 @@ title: Rewrite Status
 description: What is active on the peteryue branch, what is archived, and which documentation is authoritative.
 ---
 
-Snapshot: 2026-07-30
+Snapshot: 2026-08-01
 
 Branch: `peteryue`
 
@@ -33,15 +33,20 @@ service and query layers:
 - Sessions, Session events, event retrieval, and SSE;
 - live and end-of-turn Session output capture;
 - Files;
-- Skill archives.
+- Skill archives;
+- E2B Volume-backed Memory Store lifecycle and creation-time Session mounts.
 
 The following routes are registered but still contain placeholder handlers:
 
 - Organizations and Organization owners;
 - the model catalog.
 
-Memory router/service/query modules exist as empty scaffolding and are not
-mounted. The previous API-key, Vault, provider-registry, usage, quota, memory,
+Memory Stores now have public lifecycle routes, tenant-scoped control-plane
+rows, native E2B Volume provisioning, creation-time Session attachment, and
+runtime prompt guidance. The current mount is `read_write` only. The
+Claude-style Memories/version API and filesystem-level `read_only` enforcement
+are still pending; see [Memory Stores on E2B Volumes](./memory-volumes.md).
+The previous API-key, Vault, provider-registry, usage, quota, memory-record,
 deployment, webhook, and environment-work APIs have not been ported.
 
 ## Active runtime
@@ -50,6 +55,7 @@ The rewrite currently uses:
 
 - Deep Agents 0.6.12 and LangGraph;
 - one E2B sandbox per Session;
+- one native E2B Volume per ready Memory Store;
 - a hard-coded model catalog with one process-level key per provider;
 - SQLite or PostgreSQL for relational state;
 - a separate LangGraph checkpoint file or PostgreSQL checkpoint tables;

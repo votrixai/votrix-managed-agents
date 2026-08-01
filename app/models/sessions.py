@@ -37,6 +37,15 @@ class FileResource(ApiModel):
     path: str | None = Field(default=None, max_length=512)
 
 
+class MemoryStoreResource(ApiModel):
+    """A persistent Store mounted once, when the Session Sandbox is created."""
+
+    type: Literal["memory_store"] = "memory_store"
+    memory_store_id: str
+    access: Literal["read_write", "read_only"] = "read_write"
+    instructions: str | None = Field(default=None, max_length=4096)
+
+
 class SessionCreateRequest(ApiModel):
     agent_id: str
     environment_id: str
@@ -44,11 +53,36 @@ class SessionCreateRequest(ApiModel):
     title: str | None = Field(default=None, max_length=255)
     # Attached once, when the container is built. A session cannot be given
     # more later — the sandbox is created with the session and never rebuilt.
-    resources: list[FileResource] = Field(default_factory=list, max_length=100)
+    resources: list[FileResource | MemoryStoreResource] = Field(
+        default_factory=list,
+        max_length=100,
+    )
 
 
 class SessionUpdateRequest(ApiModel):
     title: str | None = Field(default=None, max_length=255)
+
+
+class SessionFileResourceResponse(ApiModel):
+    id: str
+    type: Literal["file"] = "file"
+    file_id: str
+    mount_path: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionMemoryStoreResourceResponse(ApiModel):
+    id: str
+    type: Literal["memory_store"] = "memory_store"
+    memory_store_id: str
+    access: Literal["read_write", "read_only"]
+    instructions: str | None = None
+    mount_path: str
+    name: str
+    description: str = ""
+    created_at: datetime
+    updated_at: datetime
 
 
 class SessionResponse(ApiModel):
@@ -61,6 +95,9 @@ class SessionResponse(ApiModel):
     status: str
     stop_reason: dict[str, Any] | None = None
     last_event_seq: int
+    resources: list[
+        SessionFileResourceResponse | SessionMemoryStoreResourceResponse
+    ] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None

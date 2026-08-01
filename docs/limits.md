@@ -3,7 +3,7 @@ title: Service Limits
 description: Limits enforced by the active peteryue rewrite.
 ---
 
-Snapshot: 2026-07-30
+Snapshot: 2026-08-01
 
 These values come from the active `app/` code. Most are code constants rather
 than deployment settings.
@@ -14,6 +14,11 @@ than deployment settings.
 | --- | ---: |
 | Single File upload | 100 MiB |
 | File resources attached when creating a Session | 100 |
+| Memory Stores attached when creating a Session | 8 |
+| Memory Store attachment instructions | 4,096 characters |
+| Live Memories in one Memory Store | 2,000 |
+| One Memory path | 1,024 UTF-8 bytes |
+| One Memory content body | 102,400 UTF-8 bytes |
 | Attached File path length | 512 characters |
 | Skill archive upload | 25 MiB |
 | Skill archive members | 1,000 |

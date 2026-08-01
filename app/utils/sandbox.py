@@ -45,6 +45,7 @@ from app.db.queries import sessions as sessions_q
 from app.db.queries import skills as skills_q
 from app.utils import storage
 from app.utils.timing import timed
+from app.utils.volume import SandboxVolumeMount
 
 # The base image, and the two facts that come with it: where work happens and
 # which unprivileged user the agent runs as. Swapping the image means revisiting
@@ -264,10 +265,13 @@ class Sandbox:
         image: Image,
         skill_ids: list[str],
         files: list[tuple[str, str]],
+        memory_mounts: list[SandboxVolumeMount] | None = None,
     ) -> Sandbox:
         """Start the container a session will live in, and fill it.
 
         `files` is `(file_id, path)` pairs, each path relative to `uploads/`.
+        Memory Stores are different: E2B mounts their provider Volumes while
+        creating the container, before anything inside it can run.
         Whatever the environment declared is already in the image, so nothing
         is installed here — which is what keeps this to about a second.
 
@@ -280,6 +284,11 @@ class Sandbox:
             template=image.image_id,
             timeout=get_settings().sandbox_timeout_seconds,
             api_key=get_settings().e2b_api_key,
+            volume_mounts={
+                mount.mount_path: mount.volume_name
+                for mount in (memory_mounts or [])
+            }
+            or None,
             # An idle container pauses instead of dying, keeping its filesystem
             # and nothing else. Commands run one at a time here, so there is no
             # process worth the price of a memory snapshot. Waking it is
@@ -557,7 +566,13 @@ class Sandbox:
         await self.ensure_connected()
         return bytes(await self._native.files.read(path, format="bytes", user=GUEST_USER))
 
-    async def list_files(self, path: str) -> list[OutputFile]:
+    async def list_files(
+        self,
+        path: str,
+        *,
+        max_files: int | None = None,
+        include_oversized: bool = False,
+    ) -> list[OutputFile]:
         """Everything under `path`, with a hash, as the container sees it.
 
         The hash is what makes collection repeatable: it says whether a file is
@@ -571,9 +586,10 @@ class Sandbox:
         # the hashes and then a `stat` per file, which is one round trip per
         # deliverable on top of the one that found them. Over this network a
         # round trip is most of a second.
+        file_limit = max_files or get_settings().max_output_files
         result = await self.run(
             f"cd {shlex.quote(path)} 2>/dev/null "
-            f"&& find . -type f 2>/dev/null | head -n {get_settings().max_output_files} "
+            f"&& find . -type f 2>/dev/null | head -n {file_limit} "
             "| while IFS= read -r f; do "
             'printf "%s " "$(stat -c %s "$f" 2>/dev/null || echo -1)"; '
             'sha256sum "$f" 2>/dev/null; done'
@@ -589,7 +605,9 @@ class Sandbox:
             if not digest or not relative or not raw_size.lstrip("-").isdigit():
                 continue
             size = int(raw_size)
-            if size < 0 or size > get_settings().max_output_bytes:
+            if size < 0:
+                continue
+            if not include_oversized and size > get_settings().max_output_bytes:
                 continue
             found.append(OutputFile(path=relative, size_bytes=size, sha256=digest))
         return found

@@ -178,8 +178,24 @@ def sandboxes(monkeypatch):
 
     calls = []
 
-    async def _provision(cls, db, session, *, image, skill_ids, files):
-        calls.append({"image": image.image_id, "skill_ids": skill_ids, "files": files})
+    async def _provision(
+        cls,
+        db,
+        session,
+        *,
+        image,
+        skill_ids,
+        files,
+        memory_mounts,
+    ):
+        calls.append(
+            {
+                "image": image.image_id,
+                "skill_ids": skill_ids,
+                "files": files,
+                "memory_mounts": memory_mounts,
+            }
+        )
         row = await sessions_q.create_sandbox(
             db, session, provider="e2b", external_sandbox_id="sbx_fake"
         )
@@ -188,3 +204,59 @@ def sandboxes(monkeypatch):
 
     monkeypatch.setattr(Sandbox, "provision", classmethod(_provision))
     return calls
+
+
+@pytest.fixture
+def volumes(monkeypatch):
+    """Stand in for E2B Volume lifecycle calls while keeping DB state real."""
+    from app.utils.volume import Volume
+
+    class Provider:
+        def __init__(self) -> None:
+            self.created = []
+            self.destroyed = []
+            self.files = {}
+            self.create_error = None
+            self.destroy_error = None
+            self.write_error = None
+            self.remove_error = None
+
+    provider = Provider()
+
+    async def _provision(cls, store):
+        if provider.create_error is not None:
+            raise provider.create_error
+        locator = {
+            "volume_id": f"vol_{len(provider.created) + 1}",
+            "volume_name": cls.provider_name(store.id),
+        }
+        provider.created.append({"memory_store_id": store.id, **locator})
+        provider.files.setdefault(store.id, {})
+        return locator
+
+    async def _destroy(cls, store):
+        if provider.destroy_error is not None:
+            raise provider.destroy_error
+        provider.destroyed.append(
+            {
+                "memory_store_id": store.id,
+                "volume_locator": dict(store.volume_locator or {}),
+            }
+        )
+        provider.files.pop(store.id, None)
+
+    async def _write_file(cls, store, path, content):
+        if provider.write_error is not None:
+            raise provider.write_error
+        provider.files.setdefault(store.id, {})[path] = content
+
+    async def _remove_file(cls, store, path):
+        if provider.remove_error is not None:
+            raise provider.remove_error
+        provider.files.setdefault(store.id, {}).pop(path, None)
+
+    monkeypatch.setattr(Volume, "provision", classmethod(_provision))
+    monkeypatch.setattr(Volume, "destroy", classmethod(_destroy))
+    monkeypatch.setattr(Volume, "write_file", classmethod(_write_file))
+    monkeypatch.setattr(Volume, "remove_file", classmethod(_remove_file))
+    return provider

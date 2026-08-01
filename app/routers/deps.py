@@ -1,6 +1,7 @@
 """Shared FastAPI dependencies for the router layer."""
 
 import asyncio
+import hashlib
 from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, Header, HTTPException, status
@@ -30,6 +31,21 @@ async def get_organization_id(
     lookup goes here and no router has to change.
     """
     return x_organization_id
+
+
+async def get_api_key_id(
+    x_api_key: Annotated[str | None, Header()] = None,
+) -> str | None:
+    """A non-secret attribution handle until API-key rows own the real id.
+
+    The public secret is never stored in Memory Version history. Once request
+    authentication resolves a persisted key, this dependency can return that
+    row id without changing any Memory route or service signature.
+    """
+    if not x_api_key:
+        return None
+    digest = hashlib.sha256(x_api_key.encode()).hexdigest()[:32]
+    return f"apikey_{digest}"
 
 
 async def verify_task_caller(
@@ -76,4 +92,5 @@ async def verify_task_caller(
 
 Db = Annotated[AsyncSession, Depends(get_db)]
 OrganizationId = Annotated[str, Depends(get_organization_id)]
+ApiKeyId = Annotated[str | None, Depends(get_api_key_id)]
 TaskCaller = Depends(verify_task_caller)
