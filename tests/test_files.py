@@ -331,9 +331,12 @@ def live_uploader(monkeypatch):
 
     from app.utils.sandbox import Sandbox
 
-    state = SimpleNamespace(calls=[], error=None)
+    state = SimpleNamespace(calls=[], prepared=0, error=None)
 
     class LiveSandbox:
+        async def prepare_directories(self):
+            state.prepared += 1
+
         async def upload_file(self, db, path, file_id):
             state.calls.append((path, file_id))
             if state.error is not None:
@@ -377,6 +380,7 @@ async def test_a_durable_file_can_be_added_to_an_existing_session(
     body = response.json()
     assert body["file_id"] == file_id
     assert body["mount_path"] == f"{UPLOADS_DIR}/sales.csv"
+    assert live_uploader.prepared == 1
     assert live_uploader.calls == [(f"{UPLOADS_DIR}/sales.csv", file_id)]
     session = (await client.get(f"/v1/sessions/{session_id}", headers=headers)).json()
     assert len(session["resources"]) == 1
@@ -414,6 +418,7 @@ async def test_retrying_the_same_live_upload_is_idempotent(
 
     assert first.status_code == second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
+    assert live_uploader.prepared == 1
     assert len(live_uploader.calls) == 1
     rows = await sessions_q.list_session_files(db, session_id=session_id)
     assert [(row.file_id, row.path) for row in rows] == [(file_id, "sales.csv")]

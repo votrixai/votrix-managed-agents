@@ -446,7 +446,7 @@ class Sandbox:
         a base image ever puts a real directory at an alias path; silently
         merging two layouts would make resource isolation ambiguous.
         """
-        await self.run(
+        result = await self.run(
             f"mkdir -p {shlex.quote(SKILLS_DIR)} {shlex.quote(UPLOADS_DIR)} "
             f"{shlex.quote(OUTPUTS_DIR)} "
             f"&& chmod 755 {shlex.quote(SKILLS_DIR)} {shlex.quote(UPLOADS_DIR)} "
@@ -458,6 +458,15 @@ class Sandbox:
             f"&& ln -sfnT {shlex.quote(OUTPUTS_DIR)} {shlex.quote(COMPAT_OUTPUTS_DIR)}",
             user="root",
         )
+        exit_code = getattr(result, "exit_code", 0)
+        if exit_code != 0:
+            # E2B returns ordinary command failures instead of raising.  A
+            # half-created layout is unusable because prompts and shared
+            # skills address the compatibility paths directly.
+            raise RuntimeError(
+                "The sandbox compatibility layout could not be prepared "
+                f"(exit code {exit_code})"
+            )
 
     # ---- files ------------------------------------------------------------
     # Bytes move between the container and the bucket directly, in both

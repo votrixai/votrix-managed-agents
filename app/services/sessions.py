@@ -868,6 +868,11 @@ async def attach_live_file(
         session.organization_id,
     )
     try:
+        # Existing sandboxes may predate the shared CMA/VMA path contract.
+        # Re-applying the idempotent layout both backfills those aliases and
+        # fails the attachment instead of committing bytes the agent cannot
+        # reach through /mnt/session/uploads.
+        await container.prepare_directories()
         await container.upload_file(db, f"{UPLOADS_DIR}/{relative}", file.id)
     except Exception as exc:
         # ``attach_file`` was intentionally flushed first so its unique path
