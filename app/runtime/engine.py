@@ -63,6 +63,7 @@ async def execute_agent(
     sandbox: Sandbox,
     emit: Emit,
     attached_files: list[str] | None = None,
+    attached_memory_stores: list[dict[str, Any]] | None = None,
 ) -> None:
     """Run one turn to completion, or to the next point it needs the user.
 
@@ -133,7 +134,11 @@ async def execute_agent(
             graph = create_deep_agent(
                 model=_build_chat_model(version.model or {}),
                 tools=tools,
-                system_prompt=_system_prompt(version.system, attached_files or []),
+                system_prompt=_system_prompt(
+                    version.system,
+                    attached_files or [],
+                    attached_memory_stores or [],
+                ),
                 backend=sandbox.to_deep_agent_backend,
                 skills=skill_sources,
                 # Whether a call stops for a human is decided by tool name, and
@@ -441,7 +446,11 @@ async def _checkpoint_saver(session_id: str) -> AsyncIterator[Any]:
         yield _instrument_saver(saver, session_id)
 
 
-def _system_prompt(configured: str | None, attached_files: list[str]) -> str | None:
+def _system_prompt(
+    configured: str | None,
+    attached_files: list[str],
+    attached_memory_stores: list[dict[str, Any]] | None = None,
+) -> str | None:
     """Add the bit about the workspace that only we know.
 
     The agent is told where its inputs are and where to put its results,
@@ -470,6 +479,29 @@ def _system_prompt(configured: str | None, attached_files: list[str]) -> str | N
         )
     else:
         lines.append(f"- `{UPLOADS_DIR}` — empty; the user attached no files.")
+
+    if attached_memory_stores:
+        lines.extend(
+            [
+                "",
+                "## Memory Stores",
+                "",
+                "These directories persist across Sessions. Only writes below an exact "
+                "mount path update that Memory Store.",
+            ]
+        )
+        for store in attached_memory_stores:
+            lines.extend(
+                [
+                    "",
+                    f"- **{store['name']}**",
+                    f"  - Path: `{store['mount_path']}`",
+                    f"  - Access: `{store['access']}`",
+                    f"  - Description: {store.get('description') or '(none)'}",
+                ]
+            )
+            if store.get("instructions"):
+                lines.append(f"  - Instructions: {store['instructions']}")
 
     workspace = "\n".join(lines)
     return f"{configured}\n\n{workspace}" if configured else workspace

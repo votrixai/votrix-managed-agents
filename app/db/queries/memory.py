@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import MemoryStore
+from app.db.models import MemoryStore, SessionMemoryStore
 from app.db.models.memory import (
     VOLUME_DELETED,
     VOLUME_PROVIDERS,
@@ -74,6 +74,7 @@ async def list_memory_stores(
     organization_id: str,
     include_archived: bool = False,
     include_deleted: bool = False,
+    provisioning_status: str | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
     before_id: str | None = None,
     after_id: str | None = None,
@@ -83,6 +84,8 @@ async def list_memory_stores(
         stmt = stmt.where(MemoryStore.archived_at.is_(None))
     if not include_deleted:
         stmt = stmt.where(MemoryStore.deleted_at.is_(None))
+    if provisioning_status is not None:
+        stmt = stmt.where(MemoryStore.provisioning_status == provisioning_status)
     return await fetch_page(
         db,
         stmt,
@@ -159,3 +162,23 @@ async def mark_memory_store_deleted(db: AsyncSession, store: MemoryStore) -> Non
     store.deleted_at = datetime.now(timezone.utc)
     store.lock_version += 1
     await db.flush()
+
+
+async def count_memory_store_attachments(
+    db: AsyncSession,
+    *,
+    memory_store_id: str,
+) -> int:
+    """How many Sessions have ever mounted this Store.
+
+    A provider Volume can outlive Sessions, but destroying one while a paused
+    Sandbox still has it mounted is unsafe. Like attached Files, used Stores
+    are archived rather than deleted until Sandbox retention has a separate,
+    explicit teardown contract.
+    """
+    result = await db.execute(
+        select(func.count())
+        .select_from(SessionMemoryStore)
+        .where(SessionMemoryStore.memory_store_id == memory_store_id)
+    )
+    return int(result.scalar_one())

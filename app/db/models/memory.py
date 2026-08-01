@@ -5,7 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, Index, Integer, JSON, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base, TimestampMixin
@@ -26,6 +36,10 @@ VOLUME_PROVISIONING_STATES = (
     VOLUME_DELETING,
     VOLUME_DELETED,
 )
+
+MEMORY_ACCESS_READ_WRITE = "read_write"
+MEMORY_ACCESS_READ_ONLY = "read_only"
+MEMORY_ACCESS_MODES = (MEMORY_ACCESS_READ_WRITE, MEMORY_ACCESS_READ_ONLY)
 
 
 class MemoryStore(TimestampMixin, Base):
@@ -86,3 +100,50 @@ class MemoryStore(TimestampMixin, Base):
 
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SessionMemoryStore(TimestampMixin, Base):
+    """A Memory Store mounted when one Session's Sandbox was created.
+
+    The human-facing fields and path are snapshots. Renaming a Memory Store
+    changes the mount slug for future Sessions but cannot move a directory in
+    a Sandbox that already exists.
+    """
+
+    __tablename__ = "session_memory_stores"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "memory_store_id",
+            name="uq_session_memory_stores_store",
+        ),
+        UniqueConstraint(
+            "session_id",
+            "mount_path",
+            name="uq_session_memory_stores_mount_path",
+        ),
+        CheckConstraint(
+            "access IN ('read_write', 'read_only')",
+            name="ck_session_memory_stores_access",
+        ),
+        Index("ix_session_memory_stores_store", "memory_store_id", "session_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    memory_store_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_stores.id"),
+        nullable=False,
+    )
+    access: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=MEMORY_ACCESS_READ_WRITE
+    )
+    instructions: Mapped[str | None] = mapped_column(Text)
+    mount_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")

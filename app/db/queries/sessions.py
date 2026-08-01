@@ -7,7 +7,14 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
-from app.db.models import Session, SessionEvent, SessionFile, SessionSandbox
+from app.db.models import (
+    MemoryStore,
+    Session,
+    SessionEvent,
+    SessionFile,
+    SessionMemoryStore,
+    SessionSandbox,
+)
 from app.db.models.sessions import IDLE, RUNNING, SANDBOX_PROVISIONING
 from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
 from app.utils.id_generator import new_id
@@ -436,4 +443,44 @@ async def list_session_files(
 ) -> list[SessionFile]:
     stmt = select(SessionFile).where(SessionFile.session_id == session_id)
     result = await db.execute(stmt.order_by(SessionFile.path))
+    return list(result.scalars().all())
+
+
+# --- Memory Stores mounted into a Session -----------------------------------
+
+
+async def attach_memory_store(
+    db: AsyncSession,
+    session: Session,
+    store: MemoryStore,
+    *,
+    access: str,
+    instructions: str | None,
+    mount_path: str,
+) -> SessionMemoryStore:
+    attached = SessionMemoryStore(
+        id=new_id("sesrsc"),
+        organization_id=session.organization_id,
+        session_id=session.id,
+        memory_store_id=store.id,
+        access=access,
+        instructions=instructions,
+        mount_path=mount_path,
+        name=store.name,
+        description=store.description,
+    )
+    db.add(attached)
+    await db.flush()
+    return attached
+
+
+async def list_session_memory_stores(
+    db: AsyncSession,
+    *,
+    session_id: str,
+) -> list[SessionMemoryStore]:
+    stmt = select(SessionMemoryStore).where(
+        SessionMemoryStore.session_id == session_id
+    )
+    result = await db.execute(stmt.order_by(SessionMemoryStore.mount_path))
     return list(result.scalars().all())

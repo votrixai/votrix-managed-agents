@@ -45,6 +45,7 @@ from app.db.queries import sessions as sessions_q
 from app.db.queries import skills as skills_q
 from app.utils import storage
 from app.utils.timing import timed
+from app.utils.volume import SandboxVolumeMount
 
 # The base image, and the two facts that come with it: where work happens and
 # which unprivileged user the agent runs as. Swapping the image means revisiting
@@ -264,10 +265,13 @@ class Sandbox:
         image: Image,
         skill_ids: list[str],
         files: list[tuple[str, str]],
+        memory_mounts: list[SandboxVolumeMount] | None = None,
     ) -> Sandbox:
         """Start the container a session will live in, and fill it.
 
         `files` is `(file_id, path)` pairs, each path relative to `uploads/`.
+        Memory Stores are different: E2B mounts their provider Volumes while
+        creating the container, before anything inside it can run.
         Whatever the environment declared is already in the image, so nothing
         is installed here — which is what keeps this to about a second.
 
@@ -280,6 +284,11 @@ class Sandbox:
             template=image.image_id,
             timeout=get_settings().sandbox_timeout_seconds,
             api_key=get_settings().e2b_api_key,
+            volume_mounts={
+                mount.mount_path: mount.volume_name
+                for mount in (memory_mounts or [])
+            }
+            or None,
             # An idle container pauses instead of dying, keeping its filesystem
             # and nothing else. Commands run one at a time here, so there is no
             # process worth the price of a memory snapshot. Waking it is

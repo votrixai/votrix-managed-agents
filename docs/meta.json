@@ -5,6 +5,7 @@
     "---Current rewrite---",
     "rewrite-status",
     "votrix-core-architecture",
+    "memory-volumes",
     "agent-versioning",
     "session-events",
     "streaming",

@@ -5,6 +5,13 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.models.errors import (
+    Conflict,
+    MemoryStoreUnavailable,
+    NotFound,
+    SandboxUnavailable,
+    SessionBusy,
+)
 from app.routers import (
     accounts,
     agents,
@@ -13,10 +20,10 @@ from app.routers import (
     health,
     internal_work,
     llm,
+    memory,
     sessions,
     skills,
 )
-from app.models.errors import Conflict, NotFound, SandboxUnavailable, SessionBusy
 
 ROUTERS = (
     health.router,
@@ -26,6 +33,7 @@ ROUTERS = (
     environments.router,
     files.router,
     skills.router,
+    memory.router,
     llm.router,
     internal_work.router,
 )
@@ -70,4 +78,15 @@ def _install_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=503,
             content={"error": {"type": "sandbox_unavailable", "message": str(exc)}},
+        )
+
+    @app.exception_handler(MemoryStoreUnavailable)
+    async def _memory_store_unavailable(
+        request: Request, exc: MemoryStoreUnavailable
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {"type": "memory_store_unavailable", "message": str(exc)}
+            },
         )

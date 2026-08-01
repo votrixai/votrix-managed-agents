@@ -43,3 +43,7 @@ class SessionCancelled(ServiceError):
 
 class SandboxUnavailable(ServiceError):
     """The session's sandbox is gone. The session cannot continue."""
+
+
+class MemoryStoreUnavailable(ServiceError):
+    """The provider could not create, mount, or destroy a Memory Store Volume."""

@@ -34,23 +34,32 @@ from app.db.models import (
     SessionEvent,
     SessionSandbox,
 )
+from app.db.models.memory import MEMORY_ACCESS_READ_WRITE
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as environments_q
 from app.db.queries import sessions as sessions_q
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.models import events as event_types
-from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
-from app.services import environments as environments_service
-from app.services import files as files_service
 from app.models.errors import (
     Conflict,
+    MemoryStoreUnavailable,
     NotFound,
     SandboxUnavailable,
     SessionBusy,
     SessionCancelled,
 )
+from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
+from app.services import environments as environments_service
+from app.services import files as files_service
+from app.services import memory as memory_service
 from app.utils.sandbox import OUTPUTS_DIR, Image, Sandbox
 from app.utils.timing import timed
+from app.utils.volume import (
+    InvalidVolumeBinding,
+    SandboxVolumeMount,
+    Volume,
+    memory_mount_path,
+)
 
 # A turn may hold the session this long before we call it hung.
 TURN_TIMEOUT_SECONDS = 600
@@ -70,6 +79,7 @@ FILE_URL_TTL_SECONDS = 300
 
 # The same ceiling CMA puts on an agent.
 MAX_SKILLS_PER_AGENT = 20
+MAX_MEMORY_STORES_PER_SESSION = 8
 
 # How often a stream looks for new events. A turn produces something every few
 # seconds at best, so this is well inside "live" for a reader, and the query it
@@ -191,6 +201,16 @@ async def list_sessions(
         before_id=before_id,
         after_id=after_id,
     )
+
+
+async def list_session_files(db: AsyncSession, *, session_id: str):
+    """The File resources snapshotted onto one Session."""
+    return await sessions_q.list_session_files(db, session_id=session_id)
+
+
+async def list_session_memory_stores(db: AsyncSession, *, session_id: str):
+    """The Memory Store resources snapshotted onto one Session."""
+    return await sessions_q.list_session_memory_stores(db, session_id=session_id)
 
 
 async def update_session(
@@ -491,6 +511,18 @@ async def process_session(
         row.path
         for row in await sessions_q.list_session_files(db, session_id=session_id)
     ]
+    attached_memory_stores = [
+        {
+            "name": row.name,
+            "description": row.description,
+            "instructions": row.instructions,
+            "access": row.access,
+            "mount_path": row.mount_path,
+        }
+        for row in await sessions_q.list_session_memory_stores(
+            db, session_id=session_id
+        )
+    ]
 
     container = Sandbox.from_id(
         sandbox.external_sandbox_id,
@@ -516,6 +548,7 @@ async def process_session(
                     events=events,
                     sandbox=container,
                     attached_files=attached,
+                    attached_memory_stores=attached_memory_stores,
                     emit=_emitter(db, session, generation),
                 ),
                 timeout=TURN_TIMEOUT_SECONDS,
@@ -666,12 +699,29 @@ async def provision_sandbox(
     image = Image.from_environment(environment)
     if image is None:
         raise SandboxUnavailable(f"Environment {environment.id} has no image to start from")
+    declared = resources or []
+    for resource in declared:
+        if resource.get("type") not in (None, "file", "memory_store"):
+            raise Conflict(f"Unsupported resource type {resource.get('type')!r}")
+
+    files = await _attach_files(
+        db,
+        session,
+        [resource for resource in declared if resource.get("type") in (None, "file")],
+    )
+    memory_mounts = await _attach_memory_stores(
+        db,
+        session,
+        [resource for resource in declared if resource.get("type") == "memory_store"],
+    )
+
     return await Sandbox.provision(
         db,
         session,
         image=image,
         skill_ids=_skill_ids(version),
-        files=await _attach_files(db, session, resources or []),
+        files=files,
+        memory_mounts=memory_mounts,
     )
 
 
@@ -782,13 +832,6 @@ async def _attach_files(
     attached: list[tuple[str, str]] = []
     seen: set[str] = set()
     for resource in resources:
-        # `mcp_server` and `github_repository` exist in the wider contract and
-        # we support neither, so anything that is not a file is refused rather
-        # than dropped — a silently ignored resource is a session that starts
-        # without what it was promised.
-        if resource.get("type") not in (None, "file"):
-            raise Conflict(f"Unsupported resource type {resource.get('type')!r}")
-
         file = await files_service.get_file(
             db,
             file_id=str(resource.get("file_id") or ""),
@@ -802,6 +845,63 @@ async def _attach_files(
         await sessions_q.attach_file(db, session, file_id=file.id, path=path)
         attached.append((file.id, path))
     return attached
+
+
+async def _attach_memory_stores(
+    db: AsyncSession,
+    session: Session,
+    resources: list[dict[str, Any]],
+) -> list[SandboxVolumeMount]:
+    """Resolve persistent Stores into native E2B mounts before provisioning."""
+    if len(resources) > MAX_MEMORY_STORES_PER_SESSION:
+        raise Conflict(
+            f"A Session may attach at most {MAX_MEMORY_STORES_PER_SESSION} Memory Stores"
+        )
+
+    mounts: list[SandboxVolumeMount] = []
+    seen_stores: set[str] = set()
+    seen_paths: set[str] = set()
+    for resource in resources:
+        memory_store_id = str(resource.get("memory_store_id") or "")
+        if memory_store_id in seen_stores:
+            raise Conflict(f"Memory Store {memory_store_id} was attached more than once")
+        seen_stores.add(memory_store_id)
+
+        access = str(resource.get("access") or MEMORY_ACCESS_READ_WRITE)
+        if access != MEMORY_ACCESS_READ_WRITE:
+            # E2B 2.31.0 has no read-only Volume mount option. Rejecting this is
+            # the security boundary: filtering write_file/edit_file alone
+            # would still let the execute tool write through the same mount.
+            raise Conflict("read_only Memory Store mounts are not supported by E2B")
+
+        store = await memory_service.require_attachable(
+            db,
+            memory_store_id=memory_store_id,
+            organization_id=session.organization_id,
+        )
+        mount_path = memory_mount_path(store.name, store.id)
+        if mount_path in seen_paths:
+            raise Conflict(
+                f"Two Memory Stores resolve to the same mount path {mount_path!r}"
+            )
+        seen_paths.add(mount_path)
+
+        instructions = resource.get("instructions")
+        attached = await sessions_q.attach_memory_store(
+            db,
+            session,
+            store,
+            access=access,
+            instructions=str(instructions) if instructions is not None else None,
+            mount_path=mount_path,
+        )
+        try:
+            mounts.append(Volume.mount(store, attached.mount_path))
+        except InvalidVolumeBinding as exc:
+            raise MemoryStoreUnavailable(
+                f"Memory Store {store.id} has no mountable provider Volume"
+            ) from exc
+    return mounts
 
 
 def _mount_path(requested: str | None, *, fallback: str) -> str:
