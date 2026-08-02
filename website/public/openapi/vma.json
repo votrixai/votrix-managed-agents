@@ -165,13 +165,13 @@
         "description": "Archive Organization within the Organization selected by the `x-organization-id` header."
       }
     },
-    "/v1/organizations/{organization_id}/owners": {
+    "/v1/organizations/{organization_id}/members": {
       "get": {
         "tags": [
           "organizations"
         ],
-        "summary": "List Owners",
-        "operationId": "list_owners_v1_organizations__organization_id__owners_get",
+        "summary": "List Members",
+        "operationId": "list_members_v1_organizations__organization_id__members_get",
         "parameters": [
           {
             "name": "organization_id",
@@ -203,14 +203,14 @@
             }
           }
         },
-        "description": "List Owners within the Organization selected by the `x-organization-id` header."
+        "description": "List Members within the Organization selected by the `x-organization-id` header."
       },
       "post": {
         "tags": [
           "organizations"
         ],
-        "summary": "Add Owner",
-        "operationId": "add_owner_v1_organizations__organization_id__owners_post",
+        "summary": "Add Member",
+        "operationId": "add_member_v1_organizations__organization_id__members_post",
         "parameters": [
           {
             "name": "organization_id",
@@ -242,16 +242,16 @@
             }
           }
         },
-        "description": "Add Owner within the Organization selected by the `x-organization-id` header."
+        "description": "Add Member within the Organization selected by the `x-organization-id` header."
       }
     },
-    "/v1/organizations/{organization_id}/owners/{user_id}": {
+    "/v1/organizations/{organization_id}/members/{user_id}": {
       "delete": {
         "tags": [
           "organizations"
         ],
-        "summary": "Remove Owner",
-        "operationId": "remove_owner_v1_organizations__organization_id__owners__user_id__delete",
+        "summary": "Remove Member",
+        "operationId": "remove_member_v1_organizations__organization_id__members__user_id__delete",
         "parameters": [
           {
             "name": "organization_id",
@@ -292,7 +292,7 @@
             }
           }
         },
-        "description": "Remove Owner within the Organization selected by the `x-organization-id` header."
+        "description": "Remove Member within the Organization selected by the `x-organization-id` header."
       }
     },
     "/v1/agents": {
@@ -7989,7 +7989,7 @@
   "tags": [
     {
       "name": "organizations",
-      "description": "Organization records and owner membership placeholders.",
+      "description": "Organization records and role-based membership placeholders.",
       "x-displayName": "Organizations"
     },
     {

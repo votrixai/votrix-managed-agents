@@ -218,7 +218,8 @@ migration built from Git history. The active lineage owns:
 | Table | Purpose |
 | --- | --- |
 | `organizations` | Organization identity data |
-| `organization_owners` | Owner records; API handlers are not implemented yet |
+| `organization_members` | User membership and `owner`, `admin`, or `member` role; API handlers are not implemented yet |
+| `vma_api_keys` | Organization VMA credentials stored as hashes; request authentication is not wired yet |
 | `agents` | Stable Agent handle and active version pointer |
 | `agent_versions` | Immutable Agent configuration snapshots |
 | `environments` | E2B image recipe and build state |

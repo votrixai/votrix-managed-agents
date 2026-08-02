@@ -35,16 +35,19 @@ def include_name(name, type_, parent_names) -> bool:
 def run_migrations_offline() -> None:
     settings = get_settings()
     url = settings.database_url
+    schema = settings.database_schema or None
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_name=include_name,
-        version_table_schema=settings.database_schema or None,
+        version_table_schema=schema,
     )
 
     with context.begin_transaction():
+        if schema:
+            context.execute(f'SET search_path TO "{schema}"')
         context.run_migrations()
 
 

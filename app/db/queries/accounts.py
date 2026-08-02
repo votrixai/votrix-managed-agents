@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Organization, OrganizationOwner
+from app.db.models import (
+    MEMBER_ROLE_MEMBER,
+    MEMBER_ROLES,
+    Organization,
+    OrganizationMember,
+)
 from app.utils.id_generator import new_id
 
 
@@ -50,48 +55,77 @@ async def archive_organization(db: AsyncSession, organization: Organization) -> 
     await db.flush()
 
 
-async def add_owner(
+def normalize_member_role(role: str) -> str:
+    normalized = str(role).strip().lower()
+    if normalized not in MEMBER_ROLES:
+        expected = ", ".join(sorted(MEMBER_ROLES))
+        raise ValueError(f"role must be one of: {expected}")
+    return normalized
+
+
+async def add_member(
     db: AsyncSession,
     *,
     organization_id: str,
     user_id: str,
     email: str | None = None,
-) -> OrganizationOwner:
-    owner = OrganizationOwner(
-        id=new_id("owner"),
+    role: str = MEMBER_ROLE_MEMBER,
+) -> OrganizationMember:
+    member = OrganizationMember(
+        id=new_id("member"),
         organization_id=organization_id,
         user_id=user_id,
         email=email,
+        role=normalize_member_role(role),
     )
-    db.add(owner)
+    db.add(member)
     await db.flush()
-    return owner
+    return member
 
 
-async def get_owner(
+async def get_member(
     db: AsyncSession,
     *,
     organization_id: str,
     user_id: str,
-) -> OrganizationOwner | None:
+) -> OrganizationMember | None:
     result = await db.execute(
-        select(OrganizationOwner).where(
-            OrganizationOwner.organization_id == organization_id,
-            OrganizationOwner.user_id == user_id,
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id,
         )
     )
     return result.scalar_one_or_none()
 
 
-async def list_owners(db: AsyncSession, *, organization_id: str) -> list[OrganizationOwner]:
+async def list_members(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    role: str | None = None,
+) -> list[OrganizationMember]:
+    stmt = select(OrganizationMember).where(
+        OrganizationMember.organization_id == organization_id
+    )
+    if role is not None:
+        stmt = stmt.where(OrganizationMember.role == normalize_member_role(role))
     result = await db.execute(
-        select(OrganizationOwner)
-        .where(OrganizationOwner.organization_id == organization_id)
-        .order_by(OrganizationOwner.created_at)
+        stmt.order_by(OrganizationMember.created_at, OrganizationMember.id)
     )
     return list(result.scalars().all())
 
 
-async def delete_owner(db: AsyncSession, owner: OrganizationOwner) -> None:
-    await db.delete(owner)
+async def update_member_role(
+    db: AsyncSession,
+    member: OrganizationMember,
+    *,
+    role: str,
+) -> OrganizationMember:
+    member.role = normalize_member_role(role)
+    await db.flush()
+    return member
+
+
+async def delete_member(db: AsyncSession, member: OrganizationMember) -> None:
+    await db.delete(member)
     await db.flush()

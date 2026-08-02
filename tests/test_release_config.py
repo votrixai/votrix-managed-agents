@@ -103,6 +103,27 @@ def test_migration_job_initializes_langgraph_checkpoints():
     assert "python -m app.runtime.checkpoint_setup" in script
 
 
+def test_operator_bootstrap_targets_the_deployed_database_schema():
+    script = (ROOT / "scripts/gcloud/6-bootstrap-operator.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'DEFAULT_DATABASE_SCHEMA="vma_rewrite_staging"' in script
+    assert 'DEFAULT_DATABASE_SCHEMA="vma_rewrite_production"' in script
+    assert "DATABASE_SCHEMA=${VMA_BOOTSTRAP_DATABASE_SCHEMA:-$DEFAULT_DATABASE_SCHEMA}" in script
+    assert "export DATABASE_SCHEMA" in script
+
+
+def test_operator_bootstrap_pipelines_fail_closed_and_use_enabled_version():
+    script = (ROOT / "scripts/gcloud/6-bootstrap-operator.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert script.startswith("#!/usr/bin/env bash\n")
+    assert "set -euo pipefail" in script
+    assert 'gcloud secrets versions access "$ENABLED_VERSION"' in script
+
+
 def test_database_schema_rejects_sql_identifiers_that_need_quoting():
     with pytest.raises(ValidationError, match="valid PostgreSQL identifier"):
         Settings(_env_file=None, database_schema="rewrite;drop schema public")

@@ -199,7 +199,7 @@ so it does not provide that same protection.
 
 The rewrite owns these relational tables:
 
-- `organizations` and `organization_owners`
+- `organizations`, `organization_members`, and `vma_api_keys`
 - `agents` and `agent_versions`
 - `environments`
 - `sessions`, `session_events`, `session_files`, and `session_sandboxes`

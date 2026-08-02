@@ -25,15 +25,17 @@ class OrganizationResponse(ApiModel):
     archived_at: datetime | None = None
 
 
-class OwnerAddRequest(ApiModel):
+class MemberAddRequest(ApiModel):
     user_id: str = Field(min_length=1, max_length=64)
     email: str | None = Field(default=None, max_length=255)
+    role: Literal["owner", "admin", "member"] = "member"
 
 
-class OwnerResponse(ApiModel):
+class MemberResponse(ApiModel):
     id: str
-    type: Literal["organization_owner"] = "organization_owner"
+    type: Literal["organization_member"] = "organization_member"
     organization_id: str
     user_id: str
     email: str | None = None
+    role: Literal["owner", "admin", "member"]
     created_at: datetime

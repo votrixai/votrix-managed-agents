@@ -1,4 +1,11 @@
-from app.db.models.accounts import Organization, OrganizationOwner
+from app.db.models.accounts import (
+    MEMBER_ROLE_ADMIN,
+    MEMBER_ROLE_MEMBER,
+    MEMBER_ROLE_OWNER,
+    MEMBER_ROLES,
+    Organization,
+    OrganizationMember,
+)
 from app.db.models.agents import Agent, AgentVersion
 from app.db.models.base import Base, TimestampMixin
 from app.db.models.files import File
@@ -34,6 +41,7 @@ from app.db.models.sessions import (
     SessionSandbox,
 )
 from app.db.models.skills import Skill
+from app.db.models.vma_api_keys import VMA_API_SCOPE, VmaApiKey
 
 __all__ = [
     "Agent",
@@ -51,8 +59,12 @@ __all__ = [
     "MEMORY_VERSION_DELETED",
     "MEMORY_VERSION_MODIFIED",
     "MEMORY_VERSION_OPERATIONS",
+    "MEMBER_ROLE_ADMIN",
+    "MEMBER_ROLE_MEMBER",
+    "MEMBER_ROLE_OWNER",
+    "MEMBER_ROLES",
     "Organization",
-    "OrganizationOwner",
+    "OrganizationMember",
     "SANDBOX_STATES",
     "SESSION_STATUSES",
     "Session",
@@ -71,4 +83,6 @@ __all__ = [
     "VOLUME_PROVISIONING",
     "VOLUME_PROVISIONING_STATES",
     "VOLUME_READY",
+    "VMA_API_SCOPE",
+    "VmaApiKey",
 ]

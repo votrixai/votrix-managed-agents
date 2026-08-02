@@ -32,9 +32,10 @@ The active service implements:
 - CMA-compatible Memories and immutable Memory Versions;
 - E2B Volume-backed, creation-time Memory Store mounts.
 
-Organization and model-catalog routes remain placeholders. Vaults,
-deployments, webhooks, quotas, audit/usage ledgers, and production API-key
-management are not implemented.
+Organization, membership, and model-catalog routes remain placeholders. The
+database owns VMA API-key lifecycle records, but request authentication and
+API-key management routes are not wired yet. Vaults, deployments, webhooks,
+quotas, and audit/usage ledgers are not implemented.
 
 ## Memory runtime
 

@@ -24,7 +24,7 @@ HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "tra
 TAG_DESCRIPTIONS = {
     "organizations": (
         "Organizations",
-        "Organization records and owner membership placeholders.",
+        "Organization records and role-based membership placeholders.",
     ),
     "agents": ("Agents", "Agent definitions and immutable Agent versions."),
     "environments": (
