@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import io
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from e2b import CommandExitException
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
@@ -251,7 +253,7 @@ async def test_the_sandbox_fetches_a_skill_with_a_url_not_the_bytes(db, org, cli
 
     async def _run(self, command, **kwargs):
         commands.append(command)
-        return None
+        return SimpleNamespace(exit_code=0, stdout="skills_installed=1 retries=0")
 
     async def _presigned(key, *, expires_in=300):
         return f"https://r2.example/{key}?expires={expires_in}"
@@ -261,11 +263,14 @@ async def test_the_sandbox_fetches_a_skill_with_a_url_not_the_bytes(db, org, cli
 
     await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(db, [skill_id])
 
-    curl = next(c for c in commands if "curl" in c)
-    assert "https://r2.example/organizations/" in curl
-    assert f"expires={get_settings().transfer_url_ttl_seconds}" in curl
-    # Unpacked beside the others, which is the layout DeepAgents scans.
-    assert f"-d {sandbox_utils.SKILLS_DIR}" in next(c for c in commands if "unzip" in c)
+    assert len(commands) == 1, "one Skill set must use one E2B command"
+    installer = commands[0]
+    assert "https://r2.example/organizations/" in installer
+    assert f"expires={get_settings().transfer_url_ttl_seconds}" in installer
+    assert "download_one" in installer
+    assert "wait_batch" in installer
+    assert f"skills_dir={sandbox_utils.SKILLS_DIR}" in installer
+    assert 'mv "$expanded" "$skills_dir"' in installer
 
 
 async def test_a_reference_to_a_missing_skill_fails_loudly(db, org, monkeypatch):
@@ -279,6 +284,62 @@ async def test_a_reference_to_a_missing_skill_fails_loudly(db, org, monkeypatch)
 
     with pytest.raises(ValueError):
         await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(db, ["skill_gone"])
+
+
+async def test_a_failed_installer_command_fails_the_session_create_path(
+    db, org, client, headers, monkeypatch
+):
+    """E2B raises on a nonzero shell exit; provider details stay internal."""
+    from app.utils.sandbox import Sandbox
+
+    skill_id = (await upload(client, headers)).json()["id"]
+
+    async def _run(self, command, **kwargs):
+        raise CommandExitException(
+            stderr="download failed: secret=must-not-enter-errors",
+            stdout="",
+            exit_code=31,
+            error=None,
+        )
+
+    async def _presigned(key, *, expires_in=300):
+        return "https://r2.example/object?secret=must-not-enter-errors"
+
+    monkeypatch.setattr(Sandbox, "run", _run)
+    monkeypatch.setattr("app.utils.storage.presigned_download_url", _presigned)
+
+    with pytest.raises(RuntimeError, match="complete Skill set") as raised:
+        await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(db, [skill_id])
+
+    assert "secret" not in str(raised.value)
+
+
+async def test_duplicate_skill_references_download_only_once(
+    db, org, client, headers, monkeypatch
+):
+    from app.utils.sandbox import Sandbox
+
+    skill_id = (await upload(client, headers)).json()["id"]
+    signed: list[str] = []
+    commands: list[str] = []
+
+    async def _presigned(key, *, expires_in=300):
+        signed.append(key)
+        return "https://r2.example/object"
+
+    async def _run(self, command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=0)
+
+    monkeypatch.setattr(Sandbox, "run", _run)
+    monkeypatch.setattr("app.utils.storage.presigned_download_url", _presigned)
+
+    await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(
+        db, [skill_id, skill_id]
+    )
+
+    assert len(signed) == 1
+    assert commands[0].count("download_one 0 ") == 1
 
 
 @pytest.mark.parametrize(

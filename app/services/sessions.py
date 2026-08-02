@@ -83,6 +83,13 @@ FILE_URL_TTL_SECONDS = 300
 MAX_SKILLS_PER_AGENT = 20
 MAX_MEMORY_STORES_PER_SESSION = 8
 
+# A Cloud Run instance accepts many cheap API requests at once, but a cold
+# Session fans out into an E2B container plus up to ten simultaneous object
+# downloads.  Bound only that expensive path; reads, streams and warm turns do
+# not pass through this semaphore.
+MAX_CONCURRENT_SESSION_PROVISIONS = 4
+_session_provision_slots = asyncio.Semaphore(MAX_CONCURRENT_SESSION_PROVISIONS)
+
 # How often a stream looks for new events. A turn produces something every few
 # seconds at best, so this is well inside "live" for a reader, and the query it
 # runs is an indexed range scan that almost always comes back empty.
@@ -129,6 +136,36 @@ async def create_session(
     chance: a session keeps one sandbox for its whole life, so there is nowhere
     to put a file handed over later.
     """
+    async with timed(
+        "session_provision_slot_wait",
+        organization_id=organization_id,
+        max_concurrent=MAX_CONCURRENT_SESSION_PROVISIONS,
+    ):
+        await _session_provision_slots.acquire()
+    try:
+        return await _create_session(
+            db,
+            organization_id=organization_id,
+            agent_id=agent_id,
+            environment_id=environment_id,
+            agent_version=agent_version,
+            title=title,
+            resources=resources,
+        )
+    finally:
+        _session_provision_slots.release()
+
+
+async def _create_session(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    agent_id: str,
+    environment_id: str,
+    agent_version: int | None = None,
+    title: str | None = None,
+    resources: list[dict[str, Any]] | None = None,
+) -> Session:
     agent = await _require_agent(db, agent_id=agent_id, organization_id=organization_id)
     version_number = agent_version if agent_version is not None else agent.active_version
     version = await agents_q.get_agent_version(

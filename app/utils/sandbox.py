@@ -14,13 +14,16 @@ that paused while the model was thinking heals itself instead of failing.
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
+import re
 import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Any
 
+import structlog
 from deepagents.backends.protocol import (
     EditResult,
     ExecuteResponse,
@@ -31,13 +34,13 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
-from e2b import AsyncSandbox, AsyncTemplate
+from e2b import AsyncSandbox, AsyncTemplate, CommandExitException
 from httpcore import LocalProtocolError
 from langchain_e2b import AsyncE2BSandbox
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import Environment, File, Session
+from app.db.models import Environment, File, Session, Skill
 from app.db.models.environments import BUILDING, FAILED, READY
 from app.db.queries import environments as environments_q
 from app.db.queries import files as files_q
@@ -79,6 +82,20 @@ COMPAT_OUTPUTS_DIR = "/mnt/session/outputs"
 # toolchain it brings in.
 PACKAGE_MANAGERS = ("apt", "cargo", "gem", "go", "npm", "pip")
 
+# Skill bytes travel straight from object storage to the sandbox.  Parallelism
+# therefore belongs inside one sandbox command, not in concurrent calls through
+# one mutable E2B client.  Agent versions currently allow at most twenty Skills,
+# so ten means one wave for Website Builder and at most two for any Agent.
+SKILL_DOWNLOAD_CONCURRENCY = 10
+SKILL_DOWNLOAD_ATTEMPTS = 3
+SKILL_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 5
+SKILL_DOWNLOAD_TIMEOUT_SECONDS = 30
+FAILED_SANDBOX_CLEANUP_TIMEOUT_SECONDS = 10
+
+_SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+logger = structlog.get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class BuildStatus:
@@ -93,6 +110,195 @@ class OutputFile:
     path: str  # relative to OUTPUTS_DIR
     size_bytes: int
     sha256: str
+
+
+def _skill_install_command(
+    skills: list[tuple[Skill, str]],
+    *,
+    skills_dir: str = SKILLS_DIR,
+    workdir: str = WORKDIR,
+) -> str:
+    """Build one fail-closed command for a whole Skill set.
+
+    The command is intentionally a single E2B RPC.  Its bounded batches perform
+    independent object downloads, while extraction remains serial and lands in
+    a private staging tree.  No signed URL is printed on any failure path.
+    """
+    jobs: list[str] = []
+    extracts: list[str] = []
+    for index, (skill, url) in enumerate(skills):
+        args = " ".join(
+            shlex.quote(str(value))
+            for value in (
+                index,
+                skill.name,
+                skill.size_bytes,
+                skill.sha256 or "",
+                url,
+            )
+        )
+        jobs.append(
+            f"download_one {args} &\n"
+            "pids+=(\"$!\")\n"
+            f"if (( ${{#pids[@]}} == {SKILL_DOWNLOAD_CONCURRENCY} )); then\n"
+            "  if ! wait_batch \"${pids[@]}\"; then download_failed=1; fi\n"
+            "  pids=()\n"
+            "fi"
+        )
+        extracts.append(
+            "if ! extract_one "
+            f"{shlex.quote(str(index))} {shlex.quote(skill.name)}; then exit 33; fi"
+        )
+
+    return f"""set -euo pipefail
+skills_dir={shlex.quote(skills_dir)}
+work="$(mktemp -d {shlex.quote(f'{workdir}/.skills-install.XXXXXX')})"
+archives="$work/archives"
+expanded="$work/expanded"
+mkdir -p "$archives" "$expanded" "$work/headers" "$work/retries"
+trap 'rm -rf "$work"' EXIT
+
+download_one() {{
+  local index="$1" name="$2" expected_size="$3" expected_sha="$4" url="$5"
+  local archive part
+  archive="$archives/$index.zip"
+  part="$archive.part"
+  local headers="$work/headers/$index" attempt=1 status=0 http_code=000
+  local actual_size actual_sha retry_after delay
+
+  while (( attempt <= {SKILL_DOWNLOAD_ATTEMPTS} )); do
+    rm -f "$part" "$headers"
+    if http_code="$(curl --silent --show-error --location \
+      --connect-timeout {SKILL_DOWNLOAD_CONNECT_TIMEOUT_SECONDS} \
+      --max-time {SKILL_DOWNLOAD_TIMEOUT_SECONDS} \
+      --output "$part" --dump-header "$headers" \
+      --write-out '%{{http_code}}' "$url" 2>/dev/null)"; then
+      status=0
+    else
+      status=$?
+    fi
+    http_code="${{http_code:-000}}"
+
+    if (( status == 0 )) && [[ "$http_code" == 2* ]]; then
+      actual_size="$(wc -c < "$part" | tr -d '[:space:]')"
+      if (( expected_size > 0 )) && [[ "$actual_size" != "$expected_size" ]]; then
+        status=90
+      elif [[ -n "$expected_sha" ]]; then
+        if ! actual_sha="$(sha256sum "$part" | awk '{{print $1}}')"; then
+          echo "Skill $name could not be checksummed" >&2
+          return 1
+        fi
+        if [[ "$actual_sha" != "$expected_sha" ]]; then
+          status=91
+        fi
+      fi
+      if (( status == 0 )); then
+        if ! mv "$part" "$archive"; then
+          echo "Skill $name archive could not be staged" >&2
+          return 1
+        fi
+        return 0
+      fi
+    elif (( status == 0 )); then
+      case "$http_code" in
+        408|425|429|5??) status=92 ;;
+        *)
+          echo "Skill $name download failed permanently (HTTP $http_code)" >&2
+          return 1
+          ;;
+      esac
+    fi
+
+    if (( attempt == {SKILL_DOWNLOAD_ATTEMPTS} )); then
+      echo "Skill $name download failed after $attempt attempts (HTTP $http_code, code $status)" >&2
+      return 1
+    fi
+
+    touch "$work/retries/$index.$attempt"
+    retry_after="$(awk 'BEGIN {{IGNORECASE=1}} /^Retry-After:/ {{gsub("\\r", "", $2); value=$2}} END {{print value}}' "$headers" 2>/dev/null || true)"
+    if [[ "$retry_after" =~ ^[0-9]+$ ]]; then
+      if (( retry_after > 10 )); then delay=10; else delay="$retry_after"; fi
+    else
+      delay="$attempt.$((RANDOM % 1000))"
+    fi
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+  return 1
+}}
+
+wait_batch() {{
+  local failed=0 pid
+  for pid in "$@"; do
+    if ! wait "$pid"; then failed=1; fi
+  done
+  return "$failed"
+}}
+
+extract_one() {{
+  local index="$1" name="$2" archive="$archives/$1.zip"
+  if ! unzip -tq "$archive" >/dev/null 2>&1; then
+    echo "Skill $name archive is invalid" >&2
+    return 1
+  fi
+  if ! unzip -oq "$archive" -d "$expanded"; then
+    echo "Skill $name could not be extracted" >&2
+    return 1
+  fi
+  if [[ ! -f "$expanded/$name/SKILL.md" ]]; then
+    echo "Skill $name has no matching SKILL.md" >&2
+    return 1
+  fi
+  chmod -R a+rX "$expanded/$name"
+}}
+
+pids=()
+download_failed=0
+{chr(10).join(jobs)}
+if (( ${{#pids[@]}} > 0 )); then
+  if ! wait_batch "${{pids[@]}}"; then download_failed=1; fi
+fi
+if (( download_failed != 0 )); then exit 31; fi
+
+{chr(10).join(extracts)}
+
+# prepare_directories created this path and nothing can use the Session until
+# provisioning returns.  Replacing that empty directory from the same parent
+# publishes the complete set together; any earlier failure only removes work.
+if ! rmdir "$skills_dir" || ! mv "$expanded" "$skills_dir"; then
+  echo "The complete Skill set could not be published" >&2
+  exit 32
+fi
+retry_count="$(find "$work/retries" -type f | wc -l | tr -d '[:space:]')"
+echo "skills_installed={len(skills)} retries=$retry_count"
+"""
+
+
+async def _resolve_skills(
+    db: AsyncSession,
+    *,
+    skill_ids: list[str],
+    organization_id: str,
+) -> list[Skill]:
+    requested_ids = list(dict.fromkeys(skill_ids))
+    skills = await skills_q.get_skills_by_ids(
+        db,
+        skill_ids=requested_ids,
+        organization_id=organization_id,
+    )
+    found = {skill.id for skill in skills}
+    missing = [skill_id for skill_id in requested_ids if skill_id not in found]
+    if missing:
+        raise ValueError(f"Skill {missing[0]} does not exist")
+
+    names: set[str] = set()
+    for skill in skills:
+        if _SKILL_NAME_PATTERN.fullmatch(skill.name) is None or len(skill.name) > 64:
+            raise ValueError(f"Skill {skill.id} has an invalid name")
+        if skill.name in names:
+            raise ValueError(f"More than one Skill is named {skill.name}")
+        names.add(skill.name)
+    return skills
 
 
 class Image:
@@ -289,6 +495,15 @@ class Sandbox:
         it. Nothing ever creates a second one: if the container is gone by the
         time a turn runs, the session is finished, not repaired.
         """
+        skills = (
+            await _resolve_skills(
+                db,
+                skill_ids=skill_ids,
+                organization_id=session.organization_id,
+            )
+            if skill_ids
+            else []
+        )
         native = await AsyncSandbox.create(
             template=image.image_id,
             timeout=get_settings().sandbox_timeout_seconds,
@@ -305,25 +520,45 @@ class Sandbox:
             lifecycle={"on_timeout": {"action": "pause", "keep_memory": False}},
         )
         sandbox = cls(native.sandbox_id, session.id, session.organization_id, native=native)
-        await sandbox.prepare_directories()
-        if skill_ids:
-            await sandbox.install_skills(db, skill_ids)
-        for file_id, path in files:
-            await sandbox.upload_file(db, f"{UPLOADS_DIR}/{path}", file_id)
+        try:
+            await sandbox.prepare_directories()
+            if skills:
+                await sandbox._install_skills(skills)
+            for file_id, path in files:
+                await sandbox.upload_file(db, f"{UPLOADS_DIR}/{path}", file_id)
 
-        row = await sessions_q.create_sandbox(
-            db,
-            session,
-            provider="e2b",
-            external_sandbox_id=native.sandbox_id,
-            # Recorded for the janitor, not consulted before a turn: this is
-            # when E2B would pause an idle container, which is not when the
-            # container dies.
-            expires_at=datetime.now(timezone.utc)
-            + timedelta(seconds=get_settings().sandbox_timeout_seconds),
-        )
-        await sessions_q.update_sandbox_state(db, row, state="running")
-        return sandbox
+            row = await sessions_q.create_sandbox(
+                db,
+                session,
+                provider="e2b",
+                external_sandbox_id=native.sandbox_id,
+                # Recorded for the janitor, not consulted before a turn: this is
+                # when E2B would pause an idle container, which is not when the
+                # container dies.
+                expires_at=datetime.now(timezone.utc)
+                + timedelta(seconds=get_settings().sandbox_timeout_seconds),
+            )
+            await sessions_q.update_sandbox_state(db, row, state="running")
+            return sandbox
+        except BaseException as primary:
+            # Until create_sandbox() commits, the janitor has no row from which
+            # it could discover this external container.  A provisioning
+            # failure therefore has to destroy the native sandbox here.  The
+            # cleanup is bounded and can never hide the error the caller needs.
+            try:
+                await asyncio.wait_for(
+                    native.kill(),
+                    timeout=FAILED_SANDBOX_CLEANUP_TIMEOUT_SECONDS,
+                )
+            except BaseException as cleanup_error:
+                logger.warning(
+                    "failed_sandbox_cleanup",
+                    session_id=session.id,
+                    sandbox_id=native.sandbox_id,
+                    primary_error=type(primary).__name__,
+                    cleanup_error=type(cleanup_error).__name__,
+                )
+            raise
 
     @classmethod
     def from_id(cls, sandbox_id: str, session_id: str, organization_id: str) -> Sandbox:
@@ -685,38 +920,62 @@ class Sandbox:
     # ---- skills -----------------------------------------------------------
 
     async def install_skills(self, db: AsyncSession, skill_ids: list[str]) -> None:
-        """Unpack each skill under `skills/`.
+        """Fetch a complete Skill set concurrently and publish it together.
 
         Every stored package already carries its own `<name>/` directory, so
-        this unzips into the root and lets each land beside the others — the
-        layout DeepAgents scans, `<source>/<name>/SKILL.md`. Names are checked
-        against the Agent Skills rules at upload, so one cannot contain a path
-        separator by the time it gets here.
+        serial extraction into one staging root gives DeepAgents the layout it
+        scans, `<source>/<name>/SKILL.md`. Downloads run in bounded batches
+        inside one E2B command: concurrent `self.run()` calls would race
+        on this Sandbox's shared connection and would keep all of the command
+        round trips this change is meant to remove.
         """
-        for skill_id in skill_ids:
-            skill = await skills_q.get_skill(
-                db, skill_id=skill_id, organization_id=self._organization_id
-            )
-            if skill is None:
-                raise ValueError(f"Skill {skill_id} does not exist")
+        skills = await _resolve_skills(
+            db,
+            skill_ids=skill_ids,
+            organization_id=self._organization_id,
+        )
+        await self._install_skills(skills)
 
+    async def _install_skills(self, skills: list[Skill]) -> None:
+        signed: list[tuple[Skill, str]] = []
+        for skill in skills:
             url = await storage.presigned_download_url(
-                skill.storage_key, expires_in=get_settings().transfer_url_ttl_seconds
+                skill.storage_key,
+                expires_in=get_settings().transfer_url_ttl_seconds,
             )
-            archive = f"/tmp/{skill.name}.zip"
-            await self.run(
-                f"curl -fsSL -o {shlex.quote(archive)} {shlex.quote(url)}",
-                user="root",
+            signed.append((skill, url))
+
+        async with timed(
+            "skills_installed",
+            session_id=self._session_id,
+            skill_count=len(skills),
+            download_concurrency=min(SKILL_DOWNLOAD_CONCURRENCY, len(skills)),
+        ) as span:
+            try:
+                result = await self.run(_skill_install_command(signed), user="root")
+            except CommandExitException as exc:
+                span["exit_code"] = exc.exit_code
+                # The SDK exception includes command stderr. Keep provider
+                # details (and any future curl formatting) out of the API.
+                raise RuntimeError(
+                    "The sandbox could not install its complete Skill set "
+                    f"(exit code {exc.exit_code})"
+                ) from None
+            exit_code = getattr(result, "exit_code", None)
+            span["exit_code"] = exit_code
+            summary = re.search(
+                r"\bskills_installed=(\d+) retries=(\d+)\b",
+                getattr(result, "stdout", ""),
             )
-            # unzip runs as root, and archives written by Python's zipfile carry
-            # no Unix mode, so they land as 600 root:root. Without the chmod the
-            # guest user the agent runs as could not read a single file.
-            await self.run(
-                f"unzip -oq {shlex.quote(archive)} -d {shlex.quote(SKILLS_DIR)} "
-                f"&& chmod -R a+rX {shlex.quote(SKILLS_DIR)}/{shlex.quote(skill.name)} "
-                f"&& rm -f {shlex.quote(archive)}",
-                user="root",
-            )
+            if summary is not None:
+                span["download_retries"] = int(summary.group(2))
+            if exit_code != 0:
+                # E2B returns ordinary command failures instead of raising.
+                # Never commit a Session whose sandbox only has some Skills.
+                raise RuntimeError(
+                    "The sandbox could not install its complete Skill set "
+                    f"(exit code {exit_code})"
+                )
 
 
 def _install(builder: Any, manager: str, entries: list[str]) -> Any:
