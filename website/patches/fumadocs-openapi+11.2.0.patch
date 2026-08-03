@@ -10,3 +10,49 @@ index ee51580..007a6c0 100644
  			const cloned = structuredClone(values);
  			for (const item of inputs) {
  				if (!item.mapOutput) continue;
+diff --git a/node_modules/fumadocs-openapi/dist/playground/fetcher.js b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
+index ac8f847..6d40d64 100644
+--- a/node_modules/fumadocs-openapi/dist/playground/fetcher.js
++++ b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
+@@ -46,10 +46,39 @@ function createBrowserFetcher(adapters, { proxyUrl, proxyForwardCookie = true, r
+ 				headers: res.headers,
+ 				body: await res.arrayBuffer()
+ 			};
+-		}).catch((e) => {
++		}).catch(async (e) => {
++			const name = e instanceof Error ? e.name : "Error";
++			const detail = e instanceof Error ? e.message : e.toString();
++			if (name === "TimeoutError") return {
++				type: "client_error",
++				message: `Timed out after ${requestTimeout}s waiting for ${requestUrl.origin}.`
++			};
++			if (name === "AbortError") return {
++				type: "client_error",
++				message: `Request to ${requestUrl.origin} was aborted before a response arrived.`
++			};
++			if (name === "TypeError" && requestUrl.origin !== window.location.origin) {
++				let answered = false;
++				try {
++					await fetch(requestUrl, {
++						method: "GET",
++						mode: "no-cors",
++						cache: "no-cache"
++					});
++					answered = true;
++				} catch {}
++				if (answered) return {
++					type: "client_error",
++					message: `CORS: ${requestUrl.origin} answered, but did not allow this page. Its response carried no Access-Control-Allow-Origin for ${window.location.origin}, so the browser withheld it. The API has to list this origin as an allowed one.`
++				};
++				return {
++					type: "client_error",
++					message: `Network: ${requestUrl.origin} could not be reached at all — DNS, TLS, a refused connection, or a browser extension blocking the request. Underlying error: [${name}] ${detail}`
++				};
++			}
+ 			return {
+ 				type: "client_error",
+-				message: `Client side error: ${e instanceof Error ? `[${e.name}] ${e.message}` : e.toString()}`
++				message: `Client side error: [${name}] ${detail}`
+ 			};
+ 		});
+ 	} };
