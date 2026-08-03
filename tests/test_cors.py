@@ -81,6 +81,26 @@ async def test_an_unlisted_origin_gets_no_grant(configured, http):
     assert "access-control-allow-origin" not in actual.headers
 
 
+async def test_a_cache_busting_caller_is_preflightable(configured, http):
+    """`fetch(url, {cache: "no-cache"})` makes the browser attach these itself.
+
+    They are not CORS-safelisted, so their presence preflights even a plain
+    GET. Rejecting them fails every endpoint at once for a header the caller
+    never wrote — which is exactly how this was found.
+    """
+    response = await http.options(
+        "/v1/models",
+        headers={
+            "Origin": ALLOWED,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "cache-control,pragma",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == ALLOWED
+
+
 async def test_every_documented_write_method_is_preflightable(configured, http):
     for method in ("POST", "PATCH", "DELETE"):
         response = await _preflight(http, ALLOWED, method=method)

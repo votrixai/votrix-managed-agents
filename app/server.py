@@ -63,6 +63,14 @@ CORS_REQUEST_HEADERS = (
     "x-organization-id",
     "idempotency-key",
     "last-event-id",
+    # Not optional, and not safelisted. A caller that asks fetch() for
+    # `cache: "no-cache"` — which any request explorer does, to stop the
+    # browser answering from its own cache — makes the browser attach these
+    # two. That alone promotes even a plain GET to a preflighted request, and
+    # a preflight naming a header this list omits is rejected outright. The
+    # result is every endpoint failing at once, for a header nobody wrote.
+    "cache-control",
+    "pragma",
 )
 # Correlation ids are attached by the edge router. Listing them here is what
 # lets page JavaScript read the id it needs to quote in a support request.
