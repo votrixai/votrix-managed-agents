@@ -90,7 +90,7 @@ spec:
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER
               value: "user"
-            - name: VMA_E2B_TIMEOUT_SECONDS
+            - name: SANDBOX_TIMEOUT_SECONDS
               value: "900"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
