@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+from app.config import get_settings
 
 from app.models.errors import (
     Conflict,
@@ -46,8 +49,47 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Votrix Managed Agents", version="0.1.0")
     for router in ROUTERS:
         app.include_router(router)
+    _install_cors(app)
     _install_error_handlers(app)
     return app
+
+
+# The request headers a browser must be allowed to send. `x-api-key` and
+# `x-organization-id` are what make a request a VMA request at all, and a
+# preflight that omits them fails every call the documentation explorer makes.
+CORS_REQUEST_HEADERS = (
+    "content-type",
+    "x-api-key",
+    "x-organization-id",
+    "idempotency-key",
+    "last-event-id",
+)
+# Correlation ids are attached by the edge router. Listing them here is what
+# lets page JavaScript read the id it needs to quote in a support request.
+CORS_EXPOSED_HEADERS = ("request-id", "x-request-id")
+CORS_PREFLIGHT_MAX_AGE_SECONDS = 600
+
+
+def _install_cors(app: FastAPI) -> None:
+    """Allow the configured browser origins, and no others.
+
+    Credentials stay off: VMA authenticates with the `x-api-key` header rather
+    than cookies, so no response ever needs to be readable by a page that did
+    not already hold the key. Keeping it off also removes the wildcard-origin
+    footgun, since the browser refuses `*` alongside credentials.
+    """
+    origins = get_settings().cors_origins
+    if not origins:
+        return
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(origins),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=list(CORS_REQUEST_HEADERS),
+        expose_headers=list(CORS_EXPOSED_HEADERS),
+        max_age=CORS_PREFLIGHT_MAX_AGE_SECONDS,
+    )
 
 
 def _install_error_handlers(app: FastAPI) -> None:

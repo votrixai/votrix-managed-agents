@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     vma_public_build_id: str = "dev"
     vma_git_commit_sha: str = ""
 
+    # Comma-separated browser origins allowed to call the API from a page.
+    #
+    # This is not an authorization boundary. CORS only governs what a browser
+    # will let one site's JavaScript read from another; every request still has
+    # to present a VMA API key, and a server-side caller is unaffected by this
+    # list entirely. Empty means no browser origin is allowed, which is the
+    # right default for an API whose credential belongs on a server.
+    vma_cors_origins: str = ""
+
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
     database_schema: str = ""
     # LangGraph uses a dedicated, session-affine psycopg connection outside
@@ -107,6 +116,16 @@ class Settings(BaseSettings):
     tasks_queue: str = ""
     tasks_service_account: str = ""
     worker_url: str = ""
+
+    @property
+    def cors_origins(self) -> tuple[str, ...]:
+        """The configured origins, in order, without blanks or duplicates."""
+        seen: dict[str, None] = {}
+        for origin in self.vma_cors_origins.split(","):
+            trimmed = origin.strip()
+            if trimmed:
+                seen.setdefault(trimmed, None)
+        return tuple(seen)
 
     @model_validator(mode="after")
     def _cloud_dispatch_is_fully_configured(self) -> "Settings":

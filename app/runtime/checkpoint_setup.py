@@ -12,10 +12,7 @@ async def setup_checkpoint_database() -> None:
     """Run LangGraph's idempotent checkpoint migrations before serving turns."""
 
     settings = get_settings()
-    url = (
-        settings.vma_checkpoint_database_url.strip()
-        or str(settings.database_url)
-    )
+    url = settings.vma_checkpoint_database_url.strip() or str(settings.database_url)
     if not url.startswith(("postgres://", "postgresql://", "postgresql+")):
         return
 
