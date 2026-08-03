@@ -31,6 +31,7 @@ from app.runtime.tools import (
     custom_tool,
     read_image_tool,
     resolve_tool_interrupts,
+    web_fetch_tool,
     web_search_tool,
 )
 from app.utils.sandbox import OUTPUTS_DIR, SKILLS_DIR, UPLOADS_DIR, WORKDIR, Sandbox
@@ -95,17 +96,9 @@ async def execute_agent(
     # only if the agent's own model has eyes.
     tools.append(read_image_tool(sandbox))
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
-        # `web_fetch` is deliberately not installed. Its body raises
-        # `NotImplementedError`, and LangGraph's default tool-error handler
-        # re-raises anything that is not a bad-arguments error — so the
-        # exception leaves the tools node, leaves the stream, and ends the turn
-        # with a `session.error`. A live test confirmed the model does reach
-        # for it when a prompt mentions fetching a URL.
-        #
-        # A tool the model can see is a tool the model will call. Until there
-        # is an implementation, not offering it is the only way it cannot be
-        # the thing that kills a turn.
         tools.append(web_search_tool())
+        tools.append(web_fetch_tool(sandbox))
+        
     for spec in declared:
         if isinstance(spec, dict) and spec.get("type") == "custom":
             name = str(spec["name"])

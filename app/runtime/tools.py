@@ -8,15 +8,17 @@ must stop and ask the user before running.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 
 from app.config import get_settings
-from app.utils.sandbox import WORKDIR
+from app.utils.sandbox import WEB_CACHE_DIR, WORKDIR
 
 if TYPE_CHECKING:
     from app.utils.sandbox import Sandbox
@@ -71,6 +73,9 @@ READ_IMAGE_INSTRUCTION = (
     "not settle the question, say so plainly rather than guessing."
 )
 
+FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v2"
+WEB_SEARCH_MAX_RESULTS = 10
+WEB_FETCH_INLINE_MAX_CHARS = 8000
 
 def resolve_tool_interrupts(tools: list[dict[str, Any]]) -> dict[str, Any]:
     """Which of DeepAgents' always-on native tools need a decision first.
@@ -207,37 +212,99 @@ def read_image_tool(sandbox: Sandbox) -> StructuredTool:
     )
 
 
-def web_fetch_tool() -> StructuredTool:
-    """Built, but not installed — see the comment in `engine.py`.
-
-    The name stays in `TOOLSET_TOOL_NAMES` because the toolset really does
-    contain it, and this builder stays because implementing it should be a
-    matter of filling in the body and putting one line back. What it must not
-    be is handed to a model: a tool that raises ends the turn.
-    """
-
-    async def web_fetch(url: str) -> str:
-        """Fetch a public HTTP(S) URL and return its text content."""
-        raise NotImplementedError("web_fetch is not implemented yet")
-
-    return StructuredTool.from_function(
-        coroutine=web_fetch,
-        name="web_fetch",
-        description=web_fetch.__doc__ or "Fetch a URL.",
-    )
-
-
 def web_search_tool() -> StructuredTool:
-    async def web_search(query: str, max_results: int = 5) -> str:
-        """Search the web and return the top results."""
-        raise NotImplementedError("web_search is not implemented yet")
+    async def web_search(query: str) -> str:
+        """Search the web and return the top results as title, URL, and snippet."""
+        settings = get_settings()
+        if not settings.firecrawl_api_key:
+            return "web_search is unavailable: no Firecrawl API key is configured on this server."
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{FIRECRAWL_API_BASE}/search",
+                    headers={"Authorization": f"Bearer {settings.firecrawl_api_key}"},
+                    json={"query": query, "limit": WEB_SEARCH_MAX_RESULTS},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            return f"web_search failed: Firecrawl returned {exc.response.status_code} for {query!r}."
+        except httpx.HTTPError as exc:
+            return f"web_search failed: {type(exc).__name__}: {exc}"
+
+        results = (payload.get("data") or {}).get("web") or []
+        if not results:
+            return f"web_search found no results for {query!r}."
+
+        lines = [f"Top {len(results)} results for {query!r}:", ""]
+        for i, item in enumerate(results, start=1):
+            title = item.get("title") or "(untitled)"
+            url = item.get("url") or ""
+            description = item.get("description") or ""
+            lines.append(f"{i}. {title}\n   {url}\n   {description}")
+        return "\n".join(lines)
 
     return StructuredTool.from_function(
         coroutine=web_search,
         name="web_search",
-        description=web_search.__doc__ or "Search the web.",
+        description=(
+            f"Search the web and get back the top {WEB_SEARCH_MAX_RESULTS} results, each "
+            "with a title, URL, and short description. Use web_fetch on a URL from these "
+            "results to read the full page."
+        ),
     )
 
+
+def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
+    async def web_fetch(url: str) -> str:
+        """Fetch a public HTTP(S) URL and return its content as clean markdown."""
+        settings = get_settings()
+        if not settings.firecrawl_api_key:
+            return "web_fetch is unavailable: no Firecrawl API key is configured on this server."
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{FIRECRAWL_API_BASE}/scrape",
+                    headers={"Authorization": f"Bearer {settings.firecrawl_api_key}"},
+                    json={"url": url, "formats": ["markdown"]},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            return f"web_fetch failed: Firecrawl returned {exc.response.status_code} for {url!r}."
+        except httpx.HTTPError as exc:
+            return f"web_fetch failed: {type(exc).__name__}: {exc}"
+
+        data = payload.get("data") or {}
+        markdown = data.get("markdown") or ""
+        if not markdown:
+            return f"web_fetch got no readable content from {url!r}."
+
+        if len(markdown) <= WEB_FETCH_INLINE_MAX_CHARS:
+            return markdown
+
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+        cache_path = f"{WEB_CACHE_DIR}/{digest}.md"
+        await sandbox.write_bytes(cache_path, markdown.encode("utf-8"))
+        summary = markdown[:WEB_FETCH_INLINE_MAX_CHARS]
+        return (
+            f"{url} is {len(markdown)} characters, too long to return directly. "
+            f"The full page was saved to `{cache_path}` — use read_file to read more of it "
+            f"if this summary is not enough.\n\n---\n\n{summary}"
+        )
+
+    return StructuredTool.from_function(
+        coroutine=web_fetch,
+        name="web_fetch",
+        description=(
+            "Fetch a public HTTP(S) URL and get back its content as clean markdown. "
+            f"Pages up to {WEB_FETCH_INLINE_MAX_CHARS} characters come back directly; "
+            "longer pages are saved to a file in the sandbox and a summary plus that "
+            "file's path come back instead — use read_file on that path for the rest."
+        ),
+    )
 
 def _policy(config: dict[str, Any], default: str) -> str:
     policy = config.get("permission_policy")

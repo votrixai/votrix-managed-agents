@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     deepseek_api_key: str = ""
     openai_api_key: str = ""
+    firecrawl_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""
