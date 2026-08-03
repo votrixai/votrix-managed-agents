@@ -11,10 +11,10 @@ index ee51580..007a6c0 100644
  			for (const item of inputs) {
  				if (!item.mapOutput) continue;
 diff --git a/node_modules/fumadocs-openapi/dist/playground/fetcher.js b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
-index ac8f847..6d40d64 100644
+index ac8f847..cd8f15f 100644
 --- a/node_modules/fumadocs-openapi/dist/playground/fetcher.js
 +++ b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
-@@ -46,10 +46,39 @@ function createBrowserFetcher(adapters, { proxyUrl, proxyForwardCookie = true, r
+@@ -46,10 +46,42 @@ function createBrowserFetcher(adapters, { proxyUrl, proxyForwardCookie = true, r
  				headers: res.headers,
  				body: await res.arrayBuffer()
  			};
@@ -40,10 +40,13 @@ index ac8f847..6d40d64 100644
 +					});
 +					answered = true;
 +				} catch {}
-+				if (answered) return {
-+					type: "client_error",
-+					message: `CORS: ${requestUrl.origin} answered, but did not allow this page. Its response carried no Access-Control-Allow-Origin for ${window.location.origin}, so the browser withheld it. The API has to list this origin as an allowed one.`
-+				};
++				if (answered) {
++					const sent = [...headers.keys()];
++					return {
++						type: "client_error",
++						message: `CORS: ${requestUrl.origin} answered, but the browser withheld the response from ${window.location.origin}. Either it sent no Access-Control-Allow-Origin for this origin, or its preflight refused the method (${data.method.toUpperCase()})${sent.length ? ` or one of the headers (${sent.join(", ")})` : ""}. The browser hides which, so check the OPTIONS request in the network panel.`
++					};
++				}
 +				return {
 +					type: "client_error",
 +					message: `Network: ${requestUrl.origin} could not be reached at all — DNS, TLS, a refused connection, or a browser extension blocking the request. Underlying error: [${name}] ${detail}`
