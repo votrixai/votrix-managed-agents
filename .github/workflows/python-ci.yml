@@ -112,6 +112,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Point the staging explorer at the staging API
+        # The committed schema names the production origin, because that is
+        # the base URL the published reference documents. A request explorer
+        # served from the staging site must not send live calls to production,
+        # so the staging build rewrites the origin before the pages render.
+        if: github.ref == 'refs/heads/staging'
+        env:
+          STAGING_API_ORIGIN: https://staging-api.vma.votrixai.com
+          PRODUCTION_API_ORIGIN: https://api.vma.votrixai.com
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const path = "public/openapi/vma.json";
+            const production = process.env.PRODUCTION_API_ORIGIN;
+            const staging = process.env.STAGING_API_ORIGIN;
+            const source = readFileSync(path, "utf8");
+            const rewritten = source.replaceAll(production, staging);
+            if (rewritten === source) {
+              throw new Error(`no ${production} occurrence to rewrite`);
+            }
+            const schema = JSON.parse(rewritten);
+            if (schema.servers?.[0]?.url !== staging) {
+              throw new Error("server origin was not rewritten");
+            }
+            writeFileSync(path, rewritten);
+            console.log(`explorer origin -> ${schema.servers[0].url}`);
+          '
+
       - name: Build static documentation
         run: npm run build
 
