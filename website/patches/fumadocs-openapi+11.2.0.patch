@@ -11,10 +11,10 @@ index ee51580..007a6c0 100644
  			for (const item of inputs) {
  				if (!item.mapOutput) continue;
 diff --git a/node_modules/fumadocs-openapi/dist/playground/fetcher.js b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
-index ac8f847..cd8f15f 100644
+index ac8f847..0c13936 100644
 --- a/node_modules/fumadocs-openapi/dist/playground/fetcher.js
 +++ b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
-@@ -46,10 +46,42 @@ function createBrowserFetcher(adapters, { proxyUrl, proxyForwardCookie = true, r
+@@ -46,10 +46,54 @@ function createBrowserFetcher(adapters, { proxyUrl, proxyForwardCookie = true, r
  				headers: res.headers,
  				body: await res.arrayBuffer()
  			};
@@ -31,20 +31,32 @@ index ac8f847..cd8f15f 100644
 +				message: `Request to ${requestUrl.origin} was aborted before a response arrived.`
 +			};
 +			if (name === "TypeError" && requestUrl.origin !== window.location.origin) {
-+				let answered = false;
-+				try {
-+					await fetch(requestUrl, {
-+						method: "GET",
-+						mode: "no-cors",
-+						cache: "no-cache"
-+					});
-+					answered = true;
-+				} catch {}
++				// The browser refuses to say why it blocked this. Two probes
++				// reconstruct the answer anyway. The first asks whether the
++				// server responded at all. The second is a bare GET, which
++				// carries no header or method that could preflight, so it
++				// succeeds exactly when this origin is on the server's list.
++				const probe = async (init) => {
++					try {
++						await fetch(requestUrl, { cache: "no-store", ...init });
++						return true;
++					} catch {
++						return false;
++					}
++				};
++				const answered = await probe({ method: "GET", mode: "no-cors" });
 +				if (answered) {
-+					const sent = [...headers.keys()];
++					const originAllowed = await probe({ method: "GET", mode: "cors" });
++					if (originAllowed) {
++						const sent = [...headers.keys()];
++						return {
++							type: "client_error",
++							message: `Preflight rejected: ${requestUrl.origin} does allow ${window.location.origin} — a plain GET to this URL succeeds — so what it refused is this request's method (${data.method.toUpperCase()})${sent.length ? ` or one of its headers (${sent.join(", ")})` : ""}. Note the browser adds Cache-Control and Pragma of its own accord, so the server must allow those too. The OPTIONS request in the network panel carries the server's verdict.`
++						};
++					}
 +					return {
 +						type: "client_error",
-+						message: `CORS: ${requestUrl.origin} answered, but the browser withheld the response from ${window.location.origin}. Either it sent no Access-Control-Allow-Origin for this origin, or its preflight refused the method (${data.method.toUpperCase()})${sent.length ? ` or one of the headers (${sent.join(", ")})` : ""}. The browser hides which, so check the OPTIONS request in the network panel.`
++						message: `Origin refused: ${requestUrl.origin} answered but sent no Access-Control-Allow-Origin for ${window.location.origin}, so the browser withheld the response. The API has to list this origin as an allowed one.`
 +					};
 +				}
 +				return {
