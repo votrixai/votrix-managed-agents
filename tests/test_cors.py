@@ -81,24 +81,43 @@ async def test_an_unlisted_origin_gets_no_grant(configured, http):
     assert "access-control-allow-origin" not in actual.headers
 
 
-async def test_a_cache_busting_caller_is_preflightable(configured, http):
-    """`fetch(url, {cache: "no-cache"})` makes the browser attach these itself.
+@pytest.mark.parametrize(
+    "requested",
+    [
+        # What the browser attaches by itself for `fetch(…, {cache: "no-cache"})`.
+        "cache-control,pragma",
+        # What the API contract needs.
+        "x-api-key,x-organization-id",
+        "idempotency-key",
+        # Anything else a trusted origin decides to send.
+        "authorization",
+        "x-some-header-nobody-has-thought-of-yet",
+    ],
+)
+async def test_an_allowed_origin_may_send_any_request_header(
+    configured,
+    http,
+    requested,
+):
+    """A preflight naming one unlisted header takes down every endpoint.
 
-    They are not CORS-safelisted, so their presence preflights even a plain
-    GET. Rejecting them fails every endpoint at once for a header the caller
-    never wrote — which is exactly how this was found.
+    The headers are not all the caller's choice — `cache: "no-cache"` makes
+    the browser add two on its own — so enumerating them cannot be kept
+    correct. The boundary that matters is the origin list, which stays exact.
     """
     response = await http.options(
         "/v1/models",
         headers={
             "Origin": ALLOWED,
             "Access-Control-Request-Method": "GET",
-            "Access-Control-Request-Headers": "cache-control,pragma",
+            "Access-Control-Request-Headers": requested,
         },
     )
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == ALLOWED
+    granted = response.headers["access-control-allow-headers"].lower()
+    assert all(name in granted for name in requested.split(","))
 
 
 async def test_every_documented_write_method_is_preflightable(configured, http):

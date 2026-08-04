@@ -54,24 +54,19 @@ def create_app() -> FastAPI:
     return app
 
 
-# The request headers a browser must be allowed to send. `x-api-key` and
-# `x-organization-id` are what make a request a VMA request at all, and a
-# preflight that omits them fails every call the documentation explorer makes.
-CORS_REQUEST_HEADERS = (
-    "content-type",
-    "x-api-key",
-    "x-organization-id",
-    "idempotency-key",
-    "last-event-id",
-    # Not optional, and not safelisted. A caller that asks fetch() for
-    # `cache: "no-cache"` — which any request explorer does, to stop the
-    # browser answering from its own cache — makes the browser attach these
-    # two. That alone promotes even a plain GET to a preflighted request, and
-    # a preflight naming a header this list omits is rejected outright. The
-    # result is every endpoint failing at once, for a header nobody wrote.
-    "cache-control",
-    "pragma",
-)
+# Any request header, from an origin already on the list above.
+#
+# Enumerating them was a losing game. A preflight naming one header this list
+# omits is rejected outright, taking every endpoint down at once — and the
+# browser attaches headers the caller never wrote: `fetch(url, {cache:
+# "no-cache"})` alone adds `Cache-Control` and `Pragma`, neither of them
+# CORS-safelisted. Each name added here only revealed the next one.
+#
+# This is not a loosened boundary. The origin list is unchanged and still
+# explicit, credentials are still off, and every request still has to present
+# a VMA API key. What a trusted origin puts in its own request headers was
+# never the thing CORS was protecting.
+CORS_REQUEST_HEADERS = ("*",)
 # Correlation ids are attached by the edge router. Listing them here is what
 # lets page JavaScript read the id it needs to quote in a support request.
 CORS_EXPOSED_HEADERS = ("request-id", "x-request-id")
