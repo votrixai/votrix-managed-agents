@@ -81,7 +81,7 @@ spec:
             - name: VMA_ORGANIZATION_STORAGE_BYTES
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
-              value: "https://staging.vma.votrixai.com,https://staging-vma.votrixai.com,https://staging-docs.vma.votrixai.com"
+              value: "https://staging-vma.votrixai.com,https://staging-docs.vma.votrixai.com"
             - name: VMA_SANDBOX_PROVIDER
               value: "e2b"
             - name: VMA_E2B_TEMPLATE
