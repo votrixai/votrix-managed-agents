@@ -50,6 +50,17 @@ class SessionCreateRequest(ApiModel):
     agent_id: str
     environment_id: str
     agent_version: int | None = None
+    model: str | dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional model for this Session, pinned for its lifetime. When "
+            "omitted or null the pinned Agent version's own model applies, "
+            "resolved at run time — so a Session that expresses no preference "
+            "keeps following the Agent instead of freezing a copy of it. A bare "
+            "string is shorthand for `{\"id\": ...}`, as on an Agent."
+        ),
+        examples=["claude-opus-5"],
+    )
     title: str | None = Field(default=None, max_length=255)
     # Attached once, when the container is built. A session cannot be given
     # more later — the sandbox is created with the session and never rebuilt.
@@ -91,6 +102,13 @@ class SessionResponse(ApiModel):
     agent_id: str
     agent_version: int
     environment_id: str
+    model: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The model pinned to this Session, or null when it follows the "
+            "Agent version's."
+        ),
+    )
     title: str | None = None
     status: str
     stop_reason: dict[str, Any] | None = None

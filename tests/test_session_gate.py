@@ -345,3 +345,76 @@ def test_cloud_dispatch_will_not_start_half_configured(monkeypatch):
     assert "TASKS_QUEUE" in str(caught.value)
 
     clear_settings_cache()
+
+
+# --- which model actually runs -----------------------------------------------
+#
+# Lives here rather than in its own file because the engine has no test module
+# of its own, and this is a fact about one session's lifetime: what it was
+# opened with is what it keeps running on.
+
+
+@pytest.mark.parametrize(
+    ("session_model", "expected"),
+    [
+        ({"id": "claude-opus-5"}, {"id": "claude-opus-5"}),
+        (None, {"id": "agent-default"}),
+    ],
+    ids=["the session's own model wins", "no preference follows the agent"],
+)
+async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
+    """Resolved per turn, not copied onto the session when it was created.
+
+    A session that named no model keeps following its agent, so editing the
+    agent still reaches it — which is the whole reason the column is nullable
+    instead of holding a snapshot.
+    """
+    from types import SimpleNamespace
+
+    from app.runtime import engine
+
+    built: list[dict] = []
+
+    class _Checkpoint:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class _Graph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(next=(), values={"messages": []}, interrupts=())
+
+        async def astream(self, *_args, **_kwargs):
+            if False:
+                yield {}
+
+    def _capture(spec, *_args, **_kwargs):
+        built.append(spec)
+        return object()
+
+    monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
+    monkeypatch.setattr(engine, "_build_chat_model", _capture)
+    monkeypatch.setattr(engine, "read_image_tool", lambda *_a, **_kw: object())
+    monkeypatch.setattr(engine, "create_deep_agent", lambda **_kw: _Graph())
+
+    async def _emit(_event, _payload):
+        return None
+
+    await engine.execute_agent(
+        session=SimpleNamespace(id="sess_model_resolution", model=session_model),
+        version=SimpleNamespace(
+            agent_id="agent_model_resolution",
+            version=1,
+            tools=[{"type": engine.AGENT_TOOLSET}],
+            skills=[],
+            model={"id": "agent-default"},
+            system=None,
+        ),
+        events=[MESSAGE],
+        sandbox=SimpleNamespace(to_deep_agent_backend=object()),
+        emit=_emit,
+    )
+
+    assert built == [expected]

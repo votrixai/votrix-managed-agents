@@ -50,6 +50,7 @@ from app.models.errors import (
     SessionCancelled,
 )
 from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
+from app.services import agents as agents_service
 from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
@@ -124,6 +125,7 @@ async def create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    model: str | dict[str, Any] | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
 ) -> Session:
@@ -131,6 +133,9 @@ async def create_session(
 
     The agent version is pinned now and never moves, so editing the agent
     later cannot change what a conversation already in flight is running.
+
+    A ``model`` is pinned on the same terms. Left out, the session stores none
+    and the pinned agent version's model applies at run time.
 
     Attached files go in while the container is being built. That is the only
     chance: a session keeps one sandbox for its whole life, so there is nowhere
@@ -149,6 +154,7 @@ async def create_session(
             agent_id=agent_id,
             environment_id=environment_id,
             agent_version=agent_version,
+            model=model,
             title=title,
             resources=resources,
         )
@@ -163,6 +169,7 @@ async def _create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    model: str | dict[str, Any] | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
 ) -> Session:
@@ -194,6 +201,9 @@ async def _create_session(
         agent_id=agent_id,
         agent_version=version_number,
         environment_id=environment_id,
+        # Normalised on the way in, never on the way out, so every reader of the
+        # column — runtime, API response, a future query — sees one shape.
+        model=agents_service.normalize_model(model) if model is not None else None,
         title=title,
     )
     # Resolved before the container exists, so a missing or half-uploaded file

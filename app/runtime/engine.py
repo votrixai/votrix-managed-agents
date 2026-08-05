@@ -136,7 +136,12 @@ async def execute_agent(
             "graph_built", session_id=session.id, tools=len(tools), skills=bool(skill_sources)
         ):
             graph = create_deep_agent(
-                model=_build_chat_model(version.model or {}),
+                # The session's own model wins when it named one; otherwise the
+                # agent version's applies. Resolved here on every turn rather
+                # than copied onto the session at creation, so a session that
+                # expressed no preference keeps following the agent instead of
+                # a frozen snapshot of it.
+                model=_build_chat_model(session.model or version.model or {}),
                 tools=tools,
                 system_prompt=_system_prompt(
                     version.system,

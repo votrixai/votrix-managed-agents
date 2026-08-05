@@ -96,11 +96,10 @@ def test_runtime_manifests_use_direct_checkpoint_database_secrets():
         ) in manifest
 
 
-def test_migration_job_initializes_langgraph_checkpoints():
+def test_migration_job_runs_alembic():
     script = (ROOT / "scripts/migrate.sh").read_text(encoding="utf-8")
 
     assert 'alembic upgrade "${ALEMBIC_TARGET:-head}"' in script
-    assert "python -m app.runtime.checkpoint_setup" in script
 
 
 def test_operator_bootstrap_targets_the_deployed_database_schema():

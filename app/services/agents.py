@@ -37,7 +37,7 @@ async def create_agent(
         db,
         organization_id=organization_id,
         name=name,
-        model=_model(model),
+        model=normalize_model(model),
         system=system,
         description=description,
         tools=tools,
@@ -159,7 +159,7 @@ async def update_agent(
         )
 
     if "model" in changes:
-        changes["model"] = _model(changes["model"])
+        changes["model"] = normalize_model(changes["model"])
     if "metadata" in changes:
         changes["metadata_"] = changes.pop("metadata")
 
@@ -184,6 +184,11 @@ async def archive_agent(
     return agent, version
 
 
-def _model(value: str | dict[str, Any]) -> dict[str, Any]:
-    """`"claude-opus-5"` and `{"id": "claude-opus-5"}` mean the same thing."""
+def normalize_model(value: str | dict[str, Any]) -> dict[str, Any]:
+    """`"claude-opus-5"` and `{"id": "claude-opus-5"}` mean the same thing.
+
+    Shared with Sessions, which accept a model on the same terms — one spelling
+    of the shorthand, so the two never drift into disagreeing about what a bare
+    string means.
+    """
     return {"id": value} if isinstance(value, str) else value

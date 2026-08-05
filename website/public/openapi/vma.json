@@ -7173,6 +7173,24 @@
               }
             ]
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional model for this Session, pinned for its lifetime. When omitted or null the pinned Agent version's own model applies, resolved at run time — so a Session that expresses no preference keeps following the Agent instead of freezing a copy of it. A bare string is shorthand for `{\"id\": ...}`, as on an Agent.",
+            "examples": [
+              "claude-opus-5"
+            ]
+          },
           "title": {
             "anyOf": [
               {
@@ -7354,6 +7372,18 @@
           },
           "environment_id": {
             "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model pinned to this Session, or null when it follows the Agent version's."
           },
           "title": {
             "anyOf": [
