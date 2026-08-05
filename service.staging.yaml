@@ -109,16 +109,11 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url-staging
-            - name: ANTHROPIC_API_KEY
+            - name: OPENROUTER_API_KEY
               valueFrom:
                 secretKeyRef:
                   key: latest
-                  name: anthropic-api-key-staging
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: gemini-api-key-staging
+                  name: vma-openrouter-api-key-staging
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

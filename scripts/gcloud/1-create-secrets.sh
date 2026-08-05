@@ -111,8 +111,7 @@ S3_ENDPOINT_URL|vma-s3-endpoint-url
 S3_ACCESS_KEY_ID|vma-s3-access-key-id
 S3_SECRET_ACCESS_KEY|vma-s3-secret-access-key
 S3_BUCKET_NAME|vma-s3-bucket-name
-ANTHROPIC_API_KEY|anthropic-api-key
-GEMINI_API_KEY|gemini-api-key
+OPENROUTER_API_KEY|vma-openrouter-api-key
 SECRETS
 
 echo "Done. Only the allowlisted VMA secrets were imported."
