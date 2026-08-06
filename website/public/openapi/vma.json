@@ -295,6 +295,389 @@
         "description": "Remove Member within the Organization selected by the `x-organization-id` header."
       }
     },
+    "/v1/accounts": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Create Account",
+        "description": "Create an Account with its own provider credential.\n\nSpend on this Account is measured and capped separately from every other\none, because a separate credential is what the provider enforces the\nboundary with: a request either carries this Account's key or it does not.\n\nThe credential is minted during this call, so the Account comes back\n`active` and ready to be spent through.",
+        "operationId": "create_account_v1_accounts_post",
+        "parameters": [
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
+            "example": "org_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "List Accounts",
+        "description": "List this Organization's Accounts, oldest first.",
+        "operationId": "list_accounts_v1_accounts_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            },
+            "description": "Maximum number of records returned in this page.",
+            "example": 20
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Return records before this resource identifier."
+          },
+          {
+            "name": "after_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Return records after this resource identifier."
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
+            "example": "org_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_AccountResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account_id}": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Retrieve Account",
+        "operationId": "retrieve_account_v1_accounts__account_id__get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
+            "example": "org_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Retrieve Account within the Organization selected by the `x-organization-id` header."
+      }
+    },
+    "/v1/accounts/{account_id}/suspend": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Suspend Account",
+        "description": "Stop this Account spending, without giving up what it spent.\n\nThe credential is disabled at the provider, not removed, so the Account\nkeeps its id, its limit, and everything recorded against it — and `resume`\nturns the same credential back on.\n\nSessions already running on this Account fail their next model call. That\nis the point: a suspension that let existing work finish would not be one.",
+        "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
+            "example": "org_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account_id}/resume": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Resume Account",
+        "description": "Let a suspended Account spend again, on the credential it already had.",
+        "operationId": "resume_account_v1_accounts__account_id__resume_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
+            "example": "org_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "post": {
         "tags": [
@@ -4398,6 +4781,99 @@
   },
   "components": {
     "schemas": {
+      "AccountCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "What this Account is called in listings and provider exports."
+          },
+          "limit_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hard spending cap in USD, enforced by the provider rather than by us — it holds even when our own metering does not. Omit to leave the Account uncapped."
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Repeat this on a retry to get back the Account the first attempt made, instead of a second one billing the same thing."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AccountCreateRequest"
+      },
+      "AccountResponse": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "account",
+            "default": "account"
+          },
+          "organization_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "active",
+              "suspended"
+            ]
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "limit_usd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "name",
+          "status",
+          "is_default"
+        ],
+        "title": "AccountResponse"
+      },
       "AgentCreateRequest": {
         "properties": {
           "name": {
@@ -5460,6 +5936,46 @@
         "type": "object",
         "title": "Interrupted",
         "description": "The user stopped the turn.\n\nCarries nothing: the client knows what it sent, and a list here beside\n`requires_action`'s — meaning something else entirely — is a mistake\nwaiting to be made."
+      },
+      "ListResponse_AccountResponse_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AccountResponse"
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListResponse[AccountResponse]"
       },
       "ListResponse_AgentResponse_": {
         "properties": {
@@ -7526,6 +8042,11 @@
       "name": "skills",
       "description": "Reusable Skill archives available to Agents.",
       "x-displayName": "Skills"
+    },
+    {
+      "name": "accounts",
+      "description": "accounts API operations.",
+      "x-displayName": "accounts"
     }
   ]
 }
