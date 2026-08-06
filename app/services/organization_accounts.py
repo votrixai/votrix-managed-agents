@@ -31,7 +31,12 @@ from app.integrations.openrouter_management import (
     OpenRouterKeyAdmin,
     OpenRouterManagementClient,
 )
-from app.models.errors import Conflict, InvalidRequest, NotFound
+from app.models.errors import (
+    AccountUnavailable,
+    Conflict,
+    InvalidRequest,
+    NotFound,
+)
 from app.security.secret_cipher import SecretCipher
 
 DEFAULT_ACCOUNT_NAME = "Default"
@@ -203,6 +208,47 @@ async def ensure_default_account(
     return await _provision_credential(db, account=default, keys=provider)
 
 
+async def resolve_spendable_key(
+    db: AsyncSession, *, organization_id: str, account_id: str
+) -> str:
+    """The plaintext key this Account spends through, if it still may.
+
+    The only place a stored credential is decrypted, and the only place that
+    decides whether it is allowed to be. A suspended Account's key is already
+    disabled at the provider, so a call made anyway comes back as a bare 401
+    that names no reason — refusing here is what turns that into an answer
+    somebody can act on.
+
+    `provisioning` is refused for a different reason: there is nothing to
+    decrypt, because the Account never finished being created.
+    """
+    account = await get_account(
+        db, organization_id=organization_id, account_id=account_id
+    )
+    if account.status == ACCOUNT_SUSPENDED:
+        raise AccountUnavailable(
+            f"Account {account_id} is suspended and cannot be spent through; "
+            "resume it first"
+        )
+    if account.status != ACCOUNT_ACTIVE or account.credential is None:
+        raise AccountUnavailable(
+            f"Account {account_id} has no usable credential; it was never "
+            "finished being provisioned"
+        )
+    if account.credential.status != CREDENTIAL_ACTIVE:
+        # The pair disagreeing means something moved one without the other.
+        # Spending on it would be spending on a credential nothing believes is
+        # live, so this stops rather than picking a side.
+        raise AccountUnavailable(
+            f"Account {account_id} and its credential disagree about being active"
+        )
+    return _cipher().decrypt(
+        account.credential.encrypted_key,
+        organization_id=organization_id,
+        key_hash=account.credential.key_hash,
+    )
+
+
 async def get_account(
     db: AsyncSession, *, organization_id: str, account_id: str
 ) -> OrganizationAccount:
@@ -352,6 +398,7 @@ __all__ = [
     "get_account",
     "key_name",
     "list_accounts",
+    "resolve_spendable_key",
     "resume_account",
     "suspend_account",
 ]
