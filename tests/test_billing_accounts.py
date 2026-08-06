@@ -21,7 +21,12 @@ from app.integrations.openrouter_management import (
     CreatedOpenRouterKey,
     OpenRouterKeyMetadata,
 )
-from app.models.errors import Conflict, InvalidRequest, NotFound
+from app.models.errors import (
+    AccountUnavailable,
+    Conflict,
+    InvalidRequest,
+    NotFound,
+)
 from app.services import accounts as org_service
 from app.services import organization_accounts as service
 
@@ -474,3 +479,74 @@ async def test_ensure_refuses_when_a_key_by_that_name_is_already_out_there(db, o
         await service.ensure_default_account(db, organization_id=org, keys=keys)
 
     assert len(keys.created) == 1
+
+
+async def test_a_suspended_account_refuses_to_hand_over_its_key(db, org):
+    """The provider would answer a bare 401 that names no reason.
+
+    Refusing here is what turns that into something a caller can act on.
+    """
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Research", keys=keys
+    )
+    await service.suspend_account(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    with pytest.raises(AccountUnavailable) as raised:
+        await service.resolve_spendable_key(
+            db, organization_id=org, account_id=account.id
+        )
+
+    assert "suspended" in str(raised.value)
+
+
+async def test_an_active_account_hands_over_the_key_it_was_given(db, org):
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Research", keys=keys
+    )
+
+    resolved = await service.resolve_spendable_key(
+        db, organization_id=org, account_id=account.id
+    )
+
+    assert resolved == "sk-or-v1-1"
+
+
+async def test_resuming_makes_the_key_available_again(db, org):
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Research", keys=keys
+    )
+    await service.suspend_account(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+    await service.resume_account(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    assert (
+        await service.resolve_spendable_key(
+            db, organization_id=org, account_id=account.id
+        )
+        == "sk-or-v1-1"
+    )
+
+
+async def test_an_unprovisioned_account_has_no_key_to_hand_over(db, org):
+    """Refused for a different reason: there is nothing to decrypt."""
+    stranded_id = (
+        await accounts_q.create_account(
+            db, organization_id=org, name="Half made", is_default=False
+        )
+    ).id
+    await db.commit()
+
+    with pytest.raises(AccountUnavailable) as raised:
+        await service.resolve_spendable_key(
+            db, organization_id=org, account_id=stranded_id
+        )
+
+    assert "provisioned" in str(raised.value)
