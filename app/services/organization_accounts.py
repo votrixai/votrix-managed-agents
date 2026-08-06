@@ -193,6 +193,13 @@ async def suspend_account(
     account = await get_account(
         db, organization_id=organization_id, account_id=account_id
     )
+    if account.is_default:
+        # A request naming no Account resolves here, so suspending it stops the
+        # whole Organization while reading as one Account's business. Stopping
+        # an Organization is a decision that should have to say so.
+        raise Conflict(
+            f"Account {account_id} is this Organization's default and cannot be suspended"
+        )
     if account.status == ACCOUNT_SUSPENDED:
         return account
     if account.status != ACCOUNT_ACTIVE or account.credential is None:

@@ -544,7 +544,7 @@
           "accounts"
         ],
         "summary": "Suspend Account",
-        "description": "Stop this Account spending, without giving up what it spent.\n\nThe credential is disabled at the provider, not removed, so the Account\nkeeps its id, its limit, and everything recorded against it — and `resume`\nturns the same credential back on.\n\nSessions already running on this Account fail their next model call. That\nis the point: a suspension that let existing work finish would not be one.",
+        "description": "Stop this Account spending, without giving up what it spent.\n\nThe credential is disabled at the provider, not removed, so the Account\nkeeps its id, its limit, and everything recorded against it — and `resume`\nturns the same credential back on.\n\nSessions already running on this Account fail their next model call. That\nis the point: a suspension that let existing work finish would not be one.\n\nThe Organization's default Account is refused. A request naming no Account\nresolves to it, so suspending it stops the whole Organization while reading\nas one Account's business.",
         "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
         "parameters": [
           {

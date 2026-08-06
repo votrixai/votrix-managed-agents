@@ -323,3 +323,46 @@ def test_the_key_name_carries_every_part_of_the_identity():
         )
         == "vma:staging:org:org_1:acct:acct_2:key:3"
     )
+
+
+async def test_the_default_account_cannot_be_suspended(db):
+    """Suspending it would stop the whole Organization, quietly.
+
+    A request naming no Account resolves to the default, so this reads as one
+    Account's business while being every request's. Stopping an Organization is
+    a decision that should have to say so.
+    """
+    keys = FakeKeys()
+    organization = await org_service.create_organization(
+        db, slug="guarded", name="Guarded", keys=keys
+    )
+    await db.commit()
+    default = await accounts_q.get_default_account(
+        db, organization_id=organization.id
+    )
+
+    with pytest.raises(Conflict):
+        await service.suspend_account(
+            db, organization_id=organization.id, account_id=default.id, keys=keys
+        )
+
+    # Nothing was disabled at the provider on the way to being refused.
+    assert keys.updates == []
+    refreshed = await service.get_account(
+        db, organization_id=organization.id, account_id=default.id
+    )
+    assert refreshed.status == ACCOUNT_ACTIVE
+
+
+async def test_a_non_default_account_is_still_suspendable(db, org):
+    """The guard is about the fallback, not about suspension."""
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Side project", keys=keys
+    )
+
+    suspended = await service.suspend_account(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    assert suspended.status == ACCOUNT_SUSPENDED

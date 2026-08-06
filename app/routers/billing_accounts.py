@@ -87,6 +87,10 @@ async def suspend_account(
 
     Sessions already running on this Account fail their next model call. That
     is the point: a suspension that let existing work finish would not be one.
+
+    The Organization's default Account is refused. A request naming no Account
+    resolves to it, so suspending it stops the whole Organization while reading
+    as one Account's business.
     """
     account = await service.suspend_account(
         db, organization_id=organization_id, account_id=account_id
