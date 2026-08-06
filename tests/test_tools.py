@@ -117,7 +117,7 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
 
     monkeypatch.setattr(tools_module, "describe_image", _describe)
     monkeypatch.setattr(
-        tools_module, "get_settings", lambda: type("S", (), {"gemini_api_key": "key"})()
+        tools_module, "get_settings", lambda: type("S", (), {"openrouter_api_key": "key"})()
     )
     return calls
 
@@ -186,7 +186,7 @@ async def test_a_vision_failure_comes_back_as_text(monkeypatch):
 
     monkeypatch.setattr(tools_module, "describe_image", _explode)
     monkeypatch.setattr(
-        tools_module, "get_settings", lambda: type("S", (), {"gemini_api_key": "key"})()
+        tools_module, "get_settings", lambda: type("S", (), {"openrouter_api_key": "key"})()
     )
     tool = read_image_tool(FakeSandbox({"/home/user/a.png": PNG}))
 
@@ -197,7 +197,7 @@ async def test_a_vision_failure_comes_back_as_text(monkeypatch):
 
 async def test_no_vision_key_is_reported_rather_than_guessed_at(monkeypatch):
     monkeypatch.setattr(
-        tools_module, "get_settings", lambda: type("S", (), {"gemini_api_key": ""})()
+        tools_module, "get_settings", lambda: type("S", (), {"openrouter_api_key": ""})()
     )
     sandbox = FakeSandbox({"/home/user/a.png": PNG})
 

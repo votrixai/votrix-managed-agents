@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 
 from app.config import get_settings
+from app.models.llm import OPENROUTER_SLUGS
 from app.utils.sandbox import WORKDIR
 
 if TYPE_CHECKING:
@@ -126,10 +127,11 @@ async def describe_image(data: bytes, mime_type: str, query: str) -> str:
     Separate from the tool so a test can replace the network call and still
     exercise everything around it.
     """
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openrouter import ChatOpenRouter
 
-    vision = ChatGoogleGenerativeAI(
-        model=READ_IMAGE_MODEL, google_api_key=get_settings().gemini_api_key
+    vision = ChatOpenRouter(
+        model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
+        api_key=get_settings().openrouter_api_key,
     )
     encoded = base64.b64encode(data).decode("ascii")
     answer = await vision.ainvoke(
@@ -137,7 +139,12 @@ async def describe_image(data: bytes, mime_type: str, query: str) -> str:
             HumanMessage(
                 content=[
                     {"type": "text", "text": f"{READ_IMAGE_INSTRUCTION}\n\nQuestion: {query}"},
-                    {"type": "image_url", "image_url": f"data:{mime_type};base64,{encoded}"},
+                    # Nested rather than a bare string: the gateway speaks the
+                    # OpenAI shape, where `image_url` is an object.
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+                    },
                 ]
             )
         ]
@@ -174,7 +181,7 @@ def read_image_tool(sandbox: Sandbox) -> StructuredTool:
                 f"read_image cannot open {target}: it reads "
                 f"{', '.join(sorted(READ_IMAGE_TYPES))} and this is {suffix or 'extensionless'}."
             )
-        if not get_settings().gemini_api_key:
+        if not get_settings().openrouter_api_key:
             return "read_image is unavailable: no vision model is configured on this server."
 
         try:

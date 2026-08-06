@@ -39,12 +39,9 @@ class Settings(BaseSettings):
     # `options=-csearch_path=...` parameter.
     vma_checkpoint_database_url: str = ""
 
-    # Platform keys, one per provider. Callers name a model; they never supply
-    # credentials, and no key is shared between providers.
-    anthropic_api_key: str = ""
-    gemini_api_key: str = ""
-    deepseek_api_key: str = ""
-    openai_api_key: str = ""
+    # The gateway key. Every model is reached through it, so a model this
+    # deployment cannot pay for fails the same way whoever built it.
+    openrouter_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""
