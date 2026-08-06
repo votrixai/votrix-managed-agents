@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import ANTHROPIC, MODEL_CATALOG, OPENROUTER_SLUGS
 from app.runtime.engine import UnknownModelError, _build_chat_model
 
 
@@ -60,3 +60,34 @@ def test_every_catalog_model_builds_one_gateway_client(monkeypatch):
     assert [client.model for client in built] == [
         OPENROUTER_SLUGS[m.id] for m in MODEL_CATALOG
     ]
+
+
+def test_anthropic_models_ask_for_prompt_caching(monkeypatch):
+    """Anthropic bills a cached prefix only when the request asks.
+
+    A turn resends the whole conversation, so without this the bytes the vendor
+    already read are charged at full price on every tool call.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    for entry in MODEL_CATALOG:
+        if entry.provider != ANTHROPIC:
+            continue
+        client = _build_chat_model(entry.id)
+        assert client.model_kwargs == {"cache_control": {"type": "ephemeral"}}, entry.id
+
+
+def test_self_caching_vendors_are_sent_no_breakpoint(monkeypatch):
+    """They cache on their own, so the field would be one they have to ignore."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    for entry in MODEL_CATALOG:
+        if entry.provider == ANTHROPIC:
+            continue
+        assert _build_chat_model(entry.id).model_kwargs == {}, entry.id

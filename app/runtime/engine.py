@@ -24,7 +24,7 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import ANTHROPIC, MODEL_CATALOG, OPENROUTER_SLUGS
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
 from app.runtime.tools import (
     AGENT_TOOLSET,
@@ -583,7 +583,39 @@ def _build_chat_model(spec: dict[str, Any] | str) -> Any:
 
     from langchain_openrouter import ChatOpenRouter
 
-    return ChatOpenRouter(model=slug, api_key=_require_key(get_settings().openrouter_api_key))
+    return ChatOpenRouter(
+        model=slug,
+        api_key=_require_key(get_settings().openrouter_api_key),
+        model_kwargs=_cache_params(entry.provider),
+    )
+
+
+# Vendors that cache only when asked. Everyone else caches on their own, and a
+# breakpoint they never asked for is a field they have to ignore.
+_EXPLICIT_CACHE_VENDORS = frozenset({ANTHROPIC})
+
+
+def _cache_params(provider: str) -> dict[str, Any]:
+    """Ask for prompt caching where it does not happen by itself.
+
+    A turn resends the whole conversation, so by the tenth tool call most of
+    the prompt is bytes the vendor has already read. Caching is what stops that
+    being charged at full price every time, and Anthropic bills it only when
+    the request asks.
+
+    Sent at the top level rather than as per-block breakpoints: the gateway
+    then places them itself. The blocks here are assembled by DeepAgents, so
+    marking them would mean reaching into messages this code does not build —
+    and there are only four breakpoints to spend.
+
+    No TTL, which leaves the vendor's five minutes. An hour holds a cache
+    across a user's coffee break but costs more to write, and whether that
+    trades well depends on how long sessions actually idle. That is a
+    measurement, not a guess.
+    """
+    if provider not in _EXPLICIT_CACHE_VENDORS:
+        return {}
+    return {"cache_control": {"type": "ephemeral"}}
 
 
 def _require_key(key: str) -> str:
