@@ -268,7 +268,7 @@ def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
                 response = await client.post(
                     f"{FIRECRAWL_API_BASE}/scrape",
                     headers={"Authorization": f"Bearer {settings.firecrawl_api_key}"},
-                    json={"url": url, "formats": ["markdown"]},
+                    json={"url": url, "formats": ["markdown","summary"]},
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -288,7 +288,7 @@ def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
         cache_path = f"{WEB_CACHE_DIR}/{digest}.md"
         await sandbox.write_bytes(cache_path, markdown.encode("utf-8"))
-        summary = markdown[:WEB_FETCH_INLINE_MAX_CHARS]
+        summary = data.get("summary") or markdown[:WEB_FETCH_INLINE_MAX_CHARS]
         return (
             f"{url} is {len(markdown)} characters, too long to return directly. "
             f"The full page was saved to `{cache_path}` — use read_file to read more of it "

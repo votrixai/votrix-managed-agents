@@ -798,6 +798,7 @@ __all__ = [
     "OUTPUTS_DIR",
     "SKILLS_DIR",
     "UPLOADS_DIR",
+    "WEB_CACHE_DIR",
     "WORKDIR",
     "BuildStatus",
     "Image",

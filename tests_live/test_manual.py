@@ -68,7 +68,7 @@ BACKEND = Path(
         "VOTRIX_BACKEND_DIR", Path(__file__).resolve().parents[2] / "votrix-backend"
     )
 )
-AGENT_DIR = BACKEND / "agents" / "social-media-specialist"
+AGENT_DIR = BACKEND / "agents" / "social-media-specialist" / "vma"
 
 # The three the run is about. `planner` decides what to post, `content-creation`
 # produces one item of it, `generate-video` is the one that reaches for the tools.
