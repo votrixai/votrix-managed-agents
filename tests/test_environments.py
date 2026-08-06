@@ -7,6 +7,9 @@ asked about, and what a session is allowed to do while it is still going.
 from __future__ import annotations
 
 import pytest
+
+from app.services import accounts as accounts_service
+from tests.conftest import FakeKeys
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -189,7 +192,7 @@ async def test_two_organizations_may_use_the_same_name(client, headers, db):
     from app.db.queries import accounts
 
     await create(client, headers, name="shared")
-    other = await accounts.create_organization(db, slug="other", name="Other")
+    other = await accounts_service.create_organization(db, keys=FakeKeys(), slug="other", name="Other")
     await db.commit()
 
     response = await create(

@@ -16,6 +16,9 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
+
+from app.services import accounts as accounts_service
+from tests.conftest import FakeKeys
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -163,7 +166,7 @@ async def test_another_tenant_cannot_see_the_file(client, headers, bucket, db):
     from app.db.queries import accounts
 
     file_id = await upload(client, headers, bucket)
-    other = await accounts.create_organization(db, slug="other", name="Other")
+    other = await accounts_service.create_organization(db, keys=FakeKeys(), slug="other", name="Other")
     await db.commit()
 
     response = await client.get(

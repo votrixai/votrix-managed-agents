@@ -65,6 +65,7 @@ async def execute_agent(
     events: list[dict[str, Any]],
     sandbox: Sandbox,
     emit: Emit,
+    inference_key: str,
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
     tool_completed: ToolCompleted | None = None,
@@ -98,7 +99,7 @@ async def execute_agent(
     # the same container `read_file` reads from, and it is here because
     # `read_file` hands an image back as a content block — which is an answer
     # only if the agent's own model has eyes.
-    tools.append(read_image_tool(sandbox))
+    tools.append(read_image_tool(sandbox, api_key=inference_key))
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         # `web_fetch` is deliberately not installed. Its body raises
         # `NotImplementedError`, and LangGraph's default tool-error handler
@@ -136,7 +137,7 @@ async def execute_agent(
             "graph_built", session_id=session.id, tools=len(tools), skills=bool(skill_sources)
         ):
             graph = create_deep_agent(
-                model=_build_chat_model(version.model or {}),
+                model=_build_chat_model(version.model or {}, api_key=inference_key),
                 tools=tools,
                 system_prompt=_system_prompt(
                     version.system,
@@ -561,13 +562,16 @@ def _system_prompt(
     return f"{configured}\n\n{workspace}" if configured else workspace
 
 
-def _build_chat_model(spec: dict[str, Any] | str) -> Any:
-    """Keys come from configuration — a caller names a model, never a credential.
+def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
+    """A caller names a model; the credential is handed in, never looked up.
 
-    Every model is reached through one gateway on one key. The catalog's
-    `provider` survives only as a label for a picker: it no longer selects a
-    client or a credential, so adding a model is a catalog entry and its slug,
-    never a new dependency.
+    Every model is reached through one gateway. The catalog's `provider`
+    survives only as a label for a picker: it no longer selects a client, so
+    adding a model is a catalog entry and its slug, never a new dependency.
+
+    The key belongs to the Account paying for this turn, so it arrives as an
+    argument. Reading it from configuration here would mean this function
+    decides who pays, which is a question about the Session it cannot see.
     """
     model_id = spec if isinstance(spec, str) else str(spec.get("id") or "")
     entry = next((m for m in MODEL_CATALOG if m.id == model_id), None)
@@ -583,13 +587,13 @@ def _build_chat_model(spec: dict[str, Any] | str) -> Any:
 
     from langchain_openrouter import ChatOpenRouter
 
-    return ChatOpenRouter(model=slug, api_key=_require_key(get_settings().openrouter_api_key))
+    return ChatOpenRouter(model=slug, api_key=_require_key(api_key))
 
 
 def _require_key(key: str) -> str:
     if not key:
         raise MissingProviderKeyError(
-            "OPENROUTER_API_KEY is not configured, so no model can be reached"
+            "no gateway credential was resolved for this turn, so no model can be reached"
         )
     return key
 

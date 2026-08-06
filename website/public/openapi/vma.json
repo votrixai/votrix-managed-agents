@@ -7689,6 +7689,17 @@
               }
             ]
           },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which Account pays for this Session. Omit to use the Organization's default. Pinned when the Session opens, so its spend stays on one Account for the whole conversation."
+          },
           "title": {
             "anyOf": [
               {
@@ -7870,6 +7881,16 @@
           },
           "environment_id": {
             "type": "string"
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "title": {
             "anyOf": [
