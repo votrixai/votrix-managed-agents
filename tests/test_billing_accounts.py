@@ -392,3 +392,85 @@ async def test_a_non_default_account_is_still_suspendable(db, org):
     )
 
     assert suspended.status == ACCOUNT_SUSPENDED
+
+
+async def test_ensure_creates_the_default_an_organization_never_got(db, org):
+    """Organizations made before Accounts existed have none."""
+    keys = FakeKeys()
+    assert await accounts_q.get_default_account(db, organization_id=org) is None
+
+    default = await service.ensure_default_account(
+        db, organization_id=org, keys=keys
+    )
+
+    assert default.is_default is True
+    assert default.status == ACCOUNT_ACTIVE
+    assert default.name == service.DEFAULT_ACCOUNT_NAME
+
+
+async def test_ensure_is_safe_to_call_again(db, org):
+    keys = FakeKeys()
+    first = await service.ensure_default_account(db, organization_id=org, keys=keys)
+
+    second = await service.ensure_default_account(db, organization_id=org, keys=keys)
+
+    assert first.id == second.id
+    assert len(keys.created) == 1
+
+
+async def test_ensure_finishes_an_account_left_without_a_credential(db, org):
+    """Creation is two steps and can stop between them.
+
+    What is left is an Organization owning an Account it cannot spend through,
+    and no way to make a second default. This is the way out.
+    """
+    keys = FakeKeys()
+    stranded_id = (
+        await accounts_q.create_account(
+            db, organization_id=org, name=service.DEFAULT_ACCOUNT_NAME, is_default=True
+        )
+    ).id
+    await db.commit()
+    # Re-read rather than holding the row: a freshly added instance has no
+    # loaded relationship, and touching one is lazy IO in the wrong place.
+    stranded = await accounts_q.get_default_account(db, organization_id=org)
+    assert stranded.credential is None
+
+    repaired = await service.ensure_default_account(
+        db, organization_id=org, keys=keys
+    )
+
+    assert repaired.id == stranded_id
+    assert repaired.status == ACCOUNT_ACTIVE
+    assert repaired.credential is not None
+    assert keys.created[0][0].endswith(f":acct:{stranded_id}:key:1")
+
+
+async def test_ensure_refuses_when_a_key_by_that_name_is_already_out_there(db, org):
+    """A mint that succeeded and then failed to record leaves one behind.
+
+    Its secret cannot be read back, so it can be neither adopted nor replaced
+    from here. Minting again would leave a live credential nothing accounts
+    for, which is worse than stopping.
+    """
+    keys = FakeKeys()
+    stranded_id = (
+        await accounts_q.create_account(
+            db, organization_id=org, name=service.DEFAULT_ACCOUNT_NAME, is_default=True
+        )
+    ).id
+    await db.commit()
+    # Exactly what the interrupted attempt would have left at the provider.
+    await keys.create_key(
+        name=service.key_name(
+            environment="test",
+            organization_id=org,
+            account_id=stranded_id,
+            generation=1,
+        )
+    )
+
+    with pytest.raises(Conflict):
+        await service.ensure_default_account(db, organization_id=org, keys=keys)
+
+    assert len(keys.created) == 1
