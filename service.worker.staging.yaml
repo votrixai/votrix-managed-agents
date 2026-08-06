@@ -79,7 +79,7 @@ spec:
             - name: VMA_ORGANIZATION_STORAGE_BYTES
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
-              value: "https://staging.vma.votrixai.com,https://docs.vma.votrixai.com"
+              value: "https://staging-vma.votrixai.com,https://staging-docs.vma.votrixai.com"
             - name: VMA_SANDBOX_PROVIDER
               value: "e2b"
             - name: VMA_E2B_TEMPLATE
@@ -88,8 +88,8 @@ spec:
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER
               value: "user"
-            - name: VMA_E2B_TIMEOUT_SECONDS
-              value: "900"
+            - name: SANDBOX_TIMEOUT_SECONDS
+              value: "300"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
             - name: VMA_E2B_KEEP_MEMORY
@@ -107,16 +107,11 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url-staging
-            - name: ANTHROPIC_API_KEY
+            - name: OPENROUTER_API_KEY
               valueFrom:
                 secretKeyRef:
                   key: latest
-                  name: anthropic-api-key-staging
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: gemini-api-key-staging
+                  name: vma-openrouter-api-key-staging
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

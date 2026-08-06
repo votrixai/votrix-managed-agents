@@ -90,7 +90,7 @@ spec:
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER
               value: "user"
-            - name: VMA_E2B_TIMEOUT_SECONDS
+            - name: SANDBOX_TIMEOUT_SECONDS
               value: "900"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
@@ -109,16 +109,11 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url
-            - name: ANTHROPIC_API_KEY
+            - name: OPENROUTER_API_KEY
               valueFrom:
                 secretKeyRef:
                   key: latest
-                  name: anthropic-api-key
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: gemini-api-key
+                  name: vma-openrouter-api-key
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

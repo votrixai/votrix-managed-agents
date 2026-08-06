@@ -24,7 +24,7 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import ANTHROPIC, DEEPSEEK, GOOGLE, MODEL_CATALOG, OPENAI
+from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
 from app.runtime.tools import (
     AGENT_TOOLSET,
@@ -569,9 +569,10 @@ def _system_prompt(
 def _build_chat_model(spec: dict[str, Any] | str) -> Any:
     """Keys come from configuration — a caller names a model, never a credential.
 
-    One key per provider, and nothing falls back to another: a request for a
-    model whose key is missing fails here rather than quietly running on
-    something the caller did not ask for.
+    Every model is reached through one gateway on one key. The catalog's
+    `provider` survives only as a label for a picker: it no longer selects a
+    client or a credential, so adding a model is a catalog entry and its slug,
+    never a new dependency.
     """
     model_id = spec if isinstance(spec, str) else str(spec.get("id") or "")
     entry = next((m for m in MODEL_CATALOG if m.id == model_id), None)
@@ -579,33 +580,21 @@ def _build_chat_model(spec: dict[str, Any] | str) -> Any:
         known = ", ".join(m.id for m in MODEL_CATALOG)
         raise UnknownModelError(f"Unknown model {model_id!r}. Known models: {known}")
 
-    settings = get_settings()
-    if entry.provider == ANTHROPIC:
-        from langchain_anthropic import ChatAnthropic
+    slug = OPENROUTER_SLUGS.get(entry.id)
+    if slug is None:
+        # A catalog entry with no slug is a packaging mistake, not a bad
+        # request: the caller named a model this build claims to serve.
+        raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
 
-        return ChatAnthropic(model=model_id, api_key=_require_key(settings.anthropic_api_key, entry))
-    if entry.provider == GOOGLE:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openrouter import ChatOpenRouter
 
-        return ChatGoogleGenerativeAI(
-            model=model_id,
-            google_api_key=_require_key(settings.gemini_api_key, entry),
-        )
-    if entry.provider == DEEPSEEK:
-        from langchain_deepseek import ChatDeepSeek
-
-        return ChatDeepSeek(model=model_id, api_key=_require_key(settings.deepseek_api_key, entry))
-    if entry.provider == OPENAI:
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(model=model_id, api_key=_require_key(settings.openai_api_key, entry))
-    raise UnknownModelError(f"No client wired up for provider {entry.provider!r}")
+    return ChatOpenRouter(model=slug, api_key=_require_key(get_settings().openrouter_api_key))
 
 
-def _require_key(key: str, entry: Any) -> str:
+def _require_key(key: str) -> str:
     if not key:
         raise MissingProviderKeyError(
-            f"{entry.id} needs a {entry.provider} API key, which is not configured"
+            "OPENROUTER_API_KEY is not configured, so no model can be reached"
         )
     return key
 

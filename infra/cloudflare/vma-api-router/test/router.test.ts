@@ -283,3 +283,23 @@ describe("fail-closed behavior", () => {
     expect(await readErrorCode(response)).toBe("upstream_unavailable");
   });
 });
+
+describe("upstream that has not been told it is behind TLS", () => {
+  it("still rewrites a Location that names the origin over plain http", async () => {
+    const response = await routeRequest(
+      new Request(`${STAGING_BASE_URL}/v1/models/`),
+      stagingEnv(),
+      async () =>
+        new Response(null, {
+          status: 307,
+          headers: {
+            location: `${STAGING_ORIGIN.replace("https://", "http://")}/v1/models`,
+          },
+        }),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      `${STAGING_BASE_URL}/v1/models`,
+    );
+  });
+});

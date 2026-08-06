@@ -359,8 +359,7 @@ check_environment_secrets() {
   do
     check_secret "vma-${base}${SECRET_SUFFIX}"
   done
-  check_secret "anthropic-api-key${SECRET_SUFFIX}"
-  check_secret "gemini-api-key${SECRET_SUFFIX}"
+  check_secret "vma-openrouter-api-key${SECRET_SUFFIX}"
 }
 
 case "$TARGET" in

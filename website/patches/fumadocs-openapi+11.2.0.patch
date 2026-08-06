@@ -10,3 +10,102 @@ index ee51580..007a6c0 100644
  			const cloned = structuredClone(values);
  			for (const item of inputs) {
  				if (!item.mapOutput) continue;
+diff --git a/node_modules/fumadocs-openapi/dist/playground/components/result-display.js b/node_modules/fumadocs-openapi/dist/playground/components/result-display.js
+index 18f268a..e54efc5 100644
+--- a/node_modules/fumadocs-openapi/dist/playground/components/result-display.js
++++ b/node_modules/fumadocs-openapi/dist/playground/components/result-display.js
+@@ -113,14 +113,28 @@ function ResponseResult({ data, reset, ...rest }) {
+ }
+ function TextResult({ lang, charset, data }) {
+ 	const code = useMemo(() => {
++		let text;
+ 		if (charset) try {
+-			return new TextDecoder(charset).decode(data.body);
++			text = new TextDecoder(charset).decode(data.body);
+ 		} catch {}
+-		return new TextDecoder("utf-8").decode(data.body);
+-	}, [charset, data.body]);
++		text ??= new TextDecoder("utf-8").decode(data.body);
++		// An API answers with compact JSON, which arrives as a single line
++		// thousands of characters wide — unreadable in a scrolling box. Indent
++		// it, and leave anything that does not parse exactly as it came.
++		if (lang === "json") try {
++			return JSON.stringify(JSON.parse(text), null, 2);
++		} catch {}
++		return text;
++	}, [charset, data.body, lang]);
+ 	return /* @__PURE__ */ jsx(ClientCodeBlock, {
+-		lang: code.length > 5e3 ? "text" : lang,
+-		code
++		// Highlighting is dropped for very long bodies, and indenting pushes
++		// an ordinary response past the old bound. Raised so a normal list
++		// response still comes back highlighted.
++		lang: code.length > 4e4 ? "text" : lang,
++		code,
++		// Taller than the 600px default: a response is the one code block on
++		// the page a reader actually needs to look through.
++		codeblock: { viewportProps: { className: "max-h-[75vh]" } }
+ 	});
+ }
+ function ImageResult({ mime, buffer }) {
+diff --git a/node_modules/fumadocs-openapi/dist/playground/fetcher.js b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
+index ac8f847..0c13936 100644
+--- a/node_modules/fumadocs-openapi/dist/playground/fetcher.js
++++ b/node_modules/fumadocs-openapi/dist/playground/fetcher.js
+@@ -46,10 +46,54 @@ function createBrowserFetcher(adapters, { proxyUrl, proxyForwardCookie = true, r
+ 				headers: res.headers,
+ 				body: await res.arrayBuffer()
+ 			};
+-		}).catch((e) => {
++		}).catch(async (e) => {
++			const name = e instanceof Error ? e.name : "Error";
++			const detail = e instanceof Error ? e.message : e.toString();
++			if (name === "TimeoutError") return {
++				type: "client_error",
++				message: `Timed out after ${requestTimeout}s waiting for ${requestUrl.origin}.`
++			};
++			if (name === "AbortError") return {
++				type: "client_error",
++				message: `Request to ${requestUrl.origin} was aborted before a response arrived.`
++			};
++			if (name === "TypeError" && requestUrl.origin !== window.location.origin) {
++				// The browser refuses to say why it blocked this. Two probes
++				// reconstruct the answer anyway. The first asks whether the
++				// server responded at all. The second is a bare GET, which
++				// carries no header or method that could preflight, so it
++				// succeeds exactly when this origin is on the server's list.
++				const probe = async (init) => {
++					try {
++						await fetch(requestUrl, { cache: "no-store", ...init });
++						return true;
++					} catch {
++						return false;
++					}
++				};
++				const answered = await probe({ method: "GET", mode: "no-cors" });
++				if (answered) {
++					const originAllowed = await probe({ method: "GET", mode: "cors" });
++					if (originAllowed) {
++						const sent = [...headers.keys()];
++						return {
++							type: "client_error",
++							message: `Preflight rejected: ${requestUrl.origin} does allow ${window.location.origin} — a plain GET to this URL succeeds — so what it refused is this request's method (${data.method.toUpperCase()})${sent.length ? ` or one of its headers (${sent.join(", ")})` : ""}. Note the browser adds Cache-Control and Pragma of its own accord, so the server must allow those too. The OPTIONS request in the network panel carries the server's verdict.`
++						};
++					}
++					return {
++						type: "client_error",
++						message: `Origin refused: ${requestUrl.origin} answered but sent no Access-Control-Allow-Origin for ${window.location.origin}, so the browser withheld the response. The API has to list this origin as an allowed one.`
++					};
++				}
++				return {
++					type: "client_error",
++					message: `Network: ${requestUrl.origin} could not be reached at all — DNS, TLS, a refused connection, or a browser extension blocking the request. Underlying error: [${name}] ${detail}`
++				};
++			}
+ 			return {
+ 				type: "client_error",
+-				message: `Client side error: ${e instanceof Error ? `[${e.name}] ${e.message}` : e.toString()}`
++				message: `Client side error: [${name}] ${detail}`
+ 			};
+ 		});
+ 	} };

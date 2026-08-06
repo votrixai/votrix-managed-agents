@@ -50,13 +50,18 @@ Supported package managers are apt, Cargo, RubyGems, Go, npm, and pip.
 | One turn | 600 seconds |
 | Session lease | 120 seconds |
 | Lease heartbeat | every 45 seconds |
-| Sandbox idle timeout | 900 seconds by default |
+| Sandbox auto-pause timeout | 900 seconds by default; 300 in staging |
 | One sandbox command | 300 seconds by default |
 | Cloud Tasks dispatch deadline | 720 seconds |
 
-The sandbox idle and command timeouts are configurable through
+The sandbox auto-pause and command timeouts are configurable through
 `SANDBOX_TIMEOUT_SECONDS` and `SANDBOX_COMMAND_TIMEOUT_SECONDS`. The turn,
 lease, heartbeat, and dispatch deadline are code constants.
+
+The E2B timeout resets whenever VMA reconnects or renews the Sandbox. Staging
+intentionally exercises a five-minute timeout before production adopts it.
+Production retains nine hundred seconds while that canary verifies long
+commands, model-think pauses, filesystem output, and Memory Store mounts.
 
 The active runtime does not enforce the previously documented 250 graph-step
 limit.

@@ -96,6 +96,23 @@ def test_runtime_manifests_use_direct_checkpoint_database_secrets():
         ) in manifest
 
 
+def test_runtime_manifests_use_the_actual_sandbox_timeout_setting():
+    expected = {
+        "service.staging.yaml": "300",
+        "service.worker.staging.yaml": "300",
+        "service.production.yaml": "900",
+        "service.worker.production.yaml": "900",
+    }
+
+    for name, timeout in expected.items():
+        manifest = (ROOT / name).read_text(encoding="utf-8")
+        assert (
+            "- name: SANDBOX_TIMEOUT_SECONDS\n"
+            f'              value: "{timeout}"'
+        ) in manifest
+        assert "VMA_E2B_TIMEOUT_SECONDS" not in manifest
+
+
 def test_migration_job_runs_alembic():
     script = (ROOT / "scripts/migrate.sh").read_text(encoding="utf-8")
 
