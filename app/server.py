@@ -21,6 +21,7 @@ from app.models.errors import (
 from app.routers import (
     accounts,
     agents,
+    billing_accounts,
     environments,
     files,
     health,
@@ -34,6 +35,7 @@ from app.routers import (
 ROUTERS = (
     health.router,
     accounts.router,
+    billing_accounts.router,
     agents.router,
     sessions.router,
     environments.router,
