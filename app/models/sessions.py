@@ -50,6 +50,14 @@ class SessionCreateRequest(ApiModel):
     agent_id: str
     environment_id: str
     agent_version: int | None = None
+    account_id: str | None = Field(
+        default=None,
+        description=(
+            "Which Account pays for this Session. Omit to use the "
+            "Organization's default. Pinned when the Session opens, so its "
+            "spend stays on one Account for the whole conversation."
+        ),
+    )
     title: str | None = Field(default=None, max_length=255)
     # Attached once, when the container is built. A session cannot be given
     # more later — the sandbox is created with the session and never rebuilt.
@@ -91,6 +99,10 @@ class SessionResponse(ApiModel):
     agent_id: str
     agent_version: int
     environment_id: str
+    # Which Account this Session is billed to. Read back rather than assumed:
+    # omitting it on create resolves the Organization's default, and this says
+    # which one that turned out to be.
+    account_id: str | None = None
     title: str | None = None
     status: str
     stop_reason: dict[str, Any] | None = None

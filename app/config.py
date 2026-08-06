@@ -39,16 +39,11 @@ class Settings(BaseSettings):
     # `options=-csearch_path=...` parameter.
     vma_checkpoint_database_url: str = ""
 
-    # The gateway key. Every model is reached through it, so a model this
-    # deployment cannot pay for fails the same way whoever built it.
-    #
-    # Transitional: once a Session spends through its Account's own credential,
-    # this is the key nothing reaches for any more.
-    openrouter_api_key: str = ""
-
-    # Mints the per-Account keys. Deliberately a different credential from the
-    # one above — the provider refuses inference on a provisioning key, so a
-    # leak of this one cannot be spent, only used to enumerate and revoke.
+    # Mints the per-Account keys, and the only provider credential this
+    # deployment holds — every key that can actually be spent belongs to an
+    # Account and is stored encrypted. The provider refuses inference on a
+    # provisioning key, so a leak of this one cannot be spent, only used to
+    # enumerate and revoke.
     openrouter_management_key: str = ""
     # Which provider workspace new keys are created in. Empty means the
     # management key's own default.

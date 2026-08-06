@@ -54,6 +54,7 @@ from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
 from app.services import memory_records
+from app.services import organization_accounts as billing_accounts
 from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
 from app.utils.volume import (
@@ -124,6 +125,7 @@ async def create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
 ) -> Session:
@@ -148,6 +150,7 @@ async def create_session(
             organization_id=organization_id,
             agent_id=agent_id,
             environment_id=environment_id,
+            account_id=account_id,
             agent_version=agent_version,
             title=title,
             resources=resources,
@@ -163,6 +166,7 @@ async def _create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
 ) -> Session:
@@ -188,12 +192,21 @@ async def _create_session(
     # would have nothing to run in.
     environment = await environments_service.require_usable(db, environment)
 
+    # Resolved and checked before the sandbox is built, so an Account that
+    # cannot pay stops the Session here rather than after minutes of
+    # provisioning. Pinned, so this conversation's spend stays on one Account
+    # even if the Organization's default moves later.
+    account = await billing_accounts.require_spendable_account(
+        db, organization_id=organization_id, account_id=account_id
+    )
+
     session = await sessions_q.create_session(
         db,
         organization_id=organization_id,
         agent_id=agent_id,
         agent_version=version_number,
         environment_id=environment_id,
+        account_id=account.id,
         title=title,
     )
     # Resolved before the container exists, so a missing or half-uploaded file
@@ -581,6 +594,19 @@ async def process_session(
             report_failure=False,
         )
 
+    # Fetched per turn rather than held on the Session, because suspending an
+    # Account is meant to bite on the next call — not on the next Session. A
+    # Session pinned to an Account that has since been stopped fails here, with
+    # a reason, instead of as a bare 401 from the provider.
+    #
+    # `account_id` is None on Sessions opened before Accounts existed; those
+    # fall back to the Organization's default.
+    inference_key = await billing_accounts.resolve_spendable_key(
+        db,
+        organization_id=session.organization_id,
+        account_id=session.account_id,
+    )
+
     heartbeat = asyncio.create_task(_hold_lease(session_id))
     try:
         from app.runtime.engine import execute_agent
@@ -598,6 +624,7 @@ async def process_session(
                     version=version,
                     events=events,
                     sandbox=container,
+                    inference_key=inference_key,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
                     tool_completed=(

@@ -29,62 +29,18 @@ from app.models.errors import (
 )
 from app.services import accounts as org_service
 from app.services import organization_accounts as service
-
-TEST_ENCRYPTION_KEY = base64.urlsafe_b64encode(b"0" * 32).decode().rstrip("=")
-
-
-class FakeKeys:
-    """Stands in for the provider's key management API.
-
-    Records what was asked for, because the name and the limit are the two
-    things this service is responsible for getting right at the provider.
-    """
-
-    def __init__(self) -> None:
-        self.created: list[tuple[str, Decimal | None]] = []
-        self.updates: list[tuple[str, bool | None]] = []
-        self.deleted: list[str] = []
-
-    async def create_key(self, *, name, limit_usd=None, limit_reset="monthly"):
-        self.created.append((name, limit_usd))
-        return CreatedOpenRouterKey(
-            key_hash=f"hash-{len(self.created)}",
-            key_name=name,
-            secret=SecretStr(f"sk-or-v1-{len(self.created)}"),
-            limit_usd=limit_usd,
-            limit_reset=limit_reset if limit_usd is not None else None,
-        )
-
-    async def list_keys(self, *, include_disabled: bool = True):
-        return [
-            OpenRouterKeyMetadata(
-                key_hash=f"hash-{index}", key_name=name, disabled=False
-            )
-            for index, (name, _) in enumerate(self.created, start=1)
-        ]
-
-    async def disable_key(self, key_hash: str) -> None:
-        self.updates.append((key_hash, True))
-
-    async def update_key(
-        self, key_hash, *, disabled=None, limit_usd=None, limit_reset=None, name=None
-    ) -> None:
-        self.updates.append((key_hash, disabled))
-
-    async def delete_key(self, key_hash: str) -> None:  # pragma: no cover
-        self.deleted.append(key_hash)
+from tests.conftest import FakeKeys
 
 
 @pytest.fixture(autouse=True)
-def encryption_key(monkeypatch):
-    """A cipher key, because a credential is never stored in the clear."""
-    monkeypatch.setenv("VMA_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
+def key_name_environment(monkeypatch):
+    """Names carry the environment, so these tests fix which one."""
     monkeypatch.setenv("APP_ENV", "test")
     get_settings.cache_clear()
-    service._cipher.cache_clear()
     yield
     get_settings.cache_clear()
-    service._cipher.cache_clear()
+
+TEST_ENCRYPTION_KEY = base64.urlsafe_b64encode(b"0" * 32).decode().rstrip("=")
 
 
 async def test_creating_an_account_mints_a_key_named_after_it(db, org):
@@ -111,16 +67,18 @@ async def test_the_stored_credential_is_never_the_plaintext_key(db, org):
         db, organization_id=org, name="Research", keys=keys
     )
 
+    minted = keys.secrets[0]
     stored = account.credential.encrypted_key
-    assert stored != "sk-or-v1-1"
+    assert minted not in stored
     assert "sk-or-v1" not in stored
-    # Round-trips under the same Organization and key, and not under another:
-    # the pair is bound into the ciphertext rather than trusted alongside it.
+    # Round-trips under the Organization and key it was sealed with. Those are
+    # bound into the ciphertext rather than trusted alongside it, so a token
+    # lifted into another row does not open.
     assert (
         service._cipher().decrypt(
             stored, organization_id=org, key_hash=account.credential.key_hash
         )
-        == "sk-or-v1-1"
+        == minted
     )
 
 
@@ -287,7 +245,7 @@ async def test_a_new_organization_comes_with_a_default_account(db):
     assert default.status == ACCOUNT_ACTIVE
 
 
-async def test_an_organization_cannot_hold_two_defaults(db, org):
+async def test_an_organization_cannot_hold_two_defaults(db, bare_org):
     """A request naming no Account resolves to the default, so two is a toss-up.
 
     The API cannot ask for this — `is_default` is not a field on the create
@@ -297,12 +255,12 @@ async def test_an_organization_cannot_hold_two_defaults(db, org):
     """
     keys = FakeKeys()
     await service.create_account(
-        db, organization_id=org, name="First", is_default=True, keys=keys
+        db, organization_id=bare_org, name="First", is_default=True, keys=keys
     )
 
     with pytest.raises(IntegrityError):
         await service.create_account(
-            db, organization_id=org, name="Second", is_default=True, keys=keys
+            db, organization_id=bare_org, name="Second", is_default=True, keys=keys
         )
     await db.rollback()
 
@@ -399,13 +357,13 @@ async def test_a_non_default_account_is_still_suspendable(db, org):
     assert suspended.status == ACCOUNT_SUSPENDED
 
 
-async def test_ensure_creates_the_default_an_organization_never_got(db, org):
+async def test_ensure_creates_the_default_an_organization_never_got(db, bare_org):
     """Organizations made before Accounts existed have none."""
     keys = FakeKeys()
-    assert await accounts_q.get_default_account(db, organization_id=org) is None
+    assert await accounts_q.get_default_account(db, organization_id=bare_org) is None
 
     default = await service.ensure_default_account(
-        db, organization_id=org, keys=keys
+        db, organization_id=bare_org, keys=keys
     )
 
     assert default.is_default is True
@@ -413,17 +371,17 @@ async def test_ensure_creates_the_default_an_organization_never_got(db, org):
     assert default.name == service.DEFAULT_ACCOUNT_NAME
 
 
-async def test_ensure_is_safe_to_call_again(db, org):
+async def test_ensure_is_safe_to_call_again(db, bare_org):
     keys = FakeKeys()
-    first = await service.ensure_default_account(db, organization_id=org, keys=keys)
+    first = await service.ensure_default_account(db, organization_id=bare_org, keys=keys)
 
-    second = await service.ensure_default_account(db, organization_id=org, keys=keys)
+    second = await service.ensure_default_account(db, organization_id=bare_org, keys=keys)
 
     assert first.id == second.id
     assert len(keys.created) == 1
 
 
-async def test_ensure_finishes_an_account_left_without_a_credential(db, org):
+async def test_ensure_finishes_an_account_left_without_a_credential(db, bare_org):
     """Creation is two steps and can stop between them.
 
     What is left is an Organization owning an Account it cannot spend through,
@@ -432,17 +390,17 @@ async def test_ensure_finishes_an_account_left_without_a_credential(db, org):
     keys = FakeKeys()
     stranded_id = (
         await accounts_q.create_account(
-            db, organization_id=org, name=service.DEFAULT_ACCOUNT_NAME, is_default=True
+            db, organization_id=bare_org, name=service.DEFAULT_ACCOUNT_NAME, is_default=True
         )
     ).id
     await db.commit()
     # Re-read rather than holding the row: a freshly added instance has no
     # loaded relationship, and touching one is lazy IO in the wrong place.
-    stranded = await accounts_q.get_default_account(db, organization_id=org)
+    stranded = await accounts_q.get_default_account(db, organization_id=bare_org)
     assert stranded.credential is None
 
     repaired = await service.ensure_default_account(
-        db, organization_id=org, keys=keys
+        db, organization_id=bare_org, keys=keys
     )
 
     assert repaired.id == stranded_id
@@ -451,7 +409,7 @@ async def test_ensure_finishes_an_account_left_without_a_credential(db, org):
     assert keys.created[0][0].endswith(f":acct:{stranded_id}:key:1")
 
 
-async def test_ensure_refuses_when_a_key_by_that_name_is_already_out_there(db, org):
+async def test_ensure_refuses_when_a_key_by_that_name_is_already_out_there(db, bare_org):
     """A mint that succeeded and then failed to record leaves one behind.
 
     Its secret cannot be read back, so it can be neither adopted nor replaced
@@ -461,7 +419,7 @@ async def test_ensure_refuses_when_a_key_by_that_name_is_already_out_there(db, o
     keys = FakeKeys()
     stranded_id = (
         await accounts_q.create_account(
-            db, organization_id=org, name=service.DEFAULT_ACCOUNT_NAME, is_default=True
+            db, organization_id=bare_org, name=service.DEFAULT_ACCOUNT_NAME, is_default=True
         )
     ).id
     await db.commit()
@@ -469,14 +427,14 @@ async def test_ensure_refuses_when_a_key_by_that_name_is_already_out_there(db, o
     await keys.create_key(
         name=service.key_name(
             environment="test",
-            organization_id=org,
+            organization_id=bare_org,
             account_id=stranded_id,
             generation=1,
         )
     )
 
     with pytest.raises(Conflict):
-        await service.ensure_default_account(db, organization_id=org, keys=keys)
+        await service.ensure_default_account(db, organization_id=bare_org, keys=keys)
 
     assert len(keys.created) == 1
 
@@ -512,7 +470,7 @@ async def test_an_active_account_hands_over_the_key_it_was_given(db, org):
         db, organization_id=org, account_id=account.id
     )
 
-    assert resolved == "sk-or-v1-1"
+    assert resolved == keys.secrets[0]
 
 
 async def test_resuming_makes_the_key_available_again(db, org):
@@ -531,7 +489,7 @@ async def test_resuming_makes_the_key_available_again(db, org):
         await service.resolve_spendable_key(
             db, organization_id=org, account_id=account.id
         )
-        == "sk-or-v1-1"
+        == keys.secrets[0]
     )
 
 

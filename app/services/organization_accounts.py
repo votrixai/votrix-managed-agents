@@ -208,31 +208,39 @@ async def ensure_default_account(
     return await _provision_credential(db, account=default, keys=provider)
 
 
-async def resolve_spendable_key(
-    db: AsyncSession, *, organization_id: str, account_id: str
-) -> str:
-    """The plaintext key this Account spends through, if it still may.
+async def require_spendable_account(
+    db: AsyncSession, *, organization_id: str, account_id: str | None = None
+) -> OrganizationAccount:
+    """The Account a request will be billed to, if it is in a state to be.
 
-    The only place a stored credential is decrypted, and the only place that
-    decides whether it is allowed to be. A suspended Account's key is already
-    disabled at the provider, so a call made anyway comes back as a bare 401
-    that names no reason — refusing here is what turns that into an answer
-    somebody can act on.
+    Without an id this is the Organization's default, which is what a request
+    that names no Account means.
 
-    `provisioning` is refused for a different reason: there is nothing to
-    decrypt, because the Account never finished being created.
+    Checked when a Session opens as well as when its key is fetched: opening
+    one on a suspended Account would create a conversation born unable to run,
+    and the failure would arrive later wearing a different name.
     """
-    account = await get_account(
-        db, organization_id=organization_id, account_id=account_id
-    )
+    if account_id is None:
+        account = await accounts_q.get_default_account(
+            db, organization_id=organization_id
+        )
+        if account is None:
+            raise AccountUnavailable(
+                f"Organization {organization_id} has no default Account"
+            )
+    else:
+        account = await get_account(
+            db, organization_id=organization_id, account_id=account_id
+        )
+
     if account.status == ACCOUNT_SUSPENDED:
         raise AccountUnavailable(
-            f"Account {account_id} is suspended and cannot be spent through; "
+            f"Account {account.id} is suspended and cannot be spent through; "
             "resume it first"
         )
     if account.status != ACCOUNT_ACTIVE or account.credential is None:
         raise AccountUnavailable(
-            f"Account {account_id} has no usable credential; it was never "
+            f"Account {account.id} has no usable credential; it was never "
             "finished being provisioned"
         )
     if account.credential.status != CREDENTIAL_ACTIVE:
@@ -240,8 +248,24 @@ async def resolve_spendable_key(
         # Spending on it would be spending on a credential nothing believes is
         # live, so this stops rather than picking a side.
         raise AccountUnavailable(
-            f"Account {account_id} and its credential disagree about being active"
+            f"Account {account.id} and its credential disagree about being active"
         )
+    return account
+
+
+async def resolve_spendable_key(
+    db: AsyncSession, *, organization_id: str, account_id: str | None = None
+) -> str:
+    """The plaintext key this Account spends through, if it still may.
+
+    The only place a stored credential is decrypted. The check runs again here
+    rather than trusting the one at Session creation, because an Account can be
+    suspended in between — and the whole point of suspending is that it takes
+    effect on the next call, not the next Session.
+    """
+    account = await require_spendable_account(
+        db, organization_id=organization_id, account_id=account_id
+    )
     return _cipher().decrypt(
         account.credential.encrypted_key,
         organization_id=organization_id,
@@ -398,6 +422,7 @@ __all__ = [
     "get_account",
     "key_name",
     "list_accounts",
+    "require_spendable_account",
     "resolve_spendable_key",
     "resume_account",
     "suspend_account",

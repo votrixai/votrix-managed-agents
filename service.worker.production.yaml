@@ -107,11 +107,6 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url
-            - name: OPENROUTER_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: vma-openrouter-api-key
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
