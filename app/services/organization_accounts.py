@@ -120,15 +120,24 @@ async def create_account(
     )
     await db.commit()
 
-    provider = keys or _key_admin()
-    created = await provider.create_key(
+    return await _provision_credential(db, account=account, keys=keys or _key_admin())
+
+
+async def _provision_credential(
+    db: AsyncSession,
+    *,
+    account: OrganizationAccount,
+    keys: OpenRouterKeyAdmin,
+) -> OrganizationAccount:
+    """Mint the Account's key and record it, which is what makes it usable."""
+    created = await keys.create_key(
         name=key_name(
             environment=get_settings().app_env,
-            organization_id=organization_id,
+            organization_id=account.organization_id,
             account_id=account.id,
             generation=1,
         ),
-        limit_usd=limit_usd,
+        limit_usd=account.limit_usd,
     )
 
     await accounts_q.attach_credential(
@@ -138,7 +147,7 @@ async def create_account(
         provider_key_name=created.key_name,
         encrypted_key=_cipher().encrypt(
             created.secret.get_secret_value(),
-            organization_id=organization_id,
+            organization_id=account.organization_id,
             key_hash=created.key_hash,
         ),
     )
@@ -146,6 +155,52 @@ async def create_account(
     await db.commit()
     await db.refresh(account)
     return account
+
+
+async def ensure_default_account(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    keys: OpenRouterKeyAdmin | None = None,
+) -> OrganizationAccount:
+    """Make sure this Organization has a default Account, and return it.
+
+    Creating one is two steps that cannot be one transaction, so it can stop
+    between them and leave an Organization that owns nothing it can spend
+    through. This is what finishes the job — and what gives an Organization
+    made before Accounts existed the one it never got.
+
+    Safe to call repeatedly: an Account already in place is returned untouched.
+    """
+    default = await accounts_q.get_default_account(
+        db, organization_id=organization_id
+    )
+    if default is None:
+        return await create_default_account(
+            db, organization_id=organization_id, keys=keys
+        )
+    if default.credential is not None:
+        # Whatever state it is in, it has something to spend through, and
+        # changing that is a decision this function does not get to make.
+        return default
+
+    provider = keys or _key_admin()
+    expected = key_name(
+        environment=get_settings().app_env,
+        organization_id=organization_id,
+        account_id=default.id,
+        generation=1,
+    )
+    if any(key.key_name == expected for key in await provider.list_keys()):
+        # A key by this name is already out there, from an attempt that minted
+        # one and failed before recording it. Its secret cannot be read back,
+        # so it can neither be adopted nor safely replaced from here — minting
+        # again would leave a live credential nothing accounts for.
+        raise Conflict(
+            f"A provider key named {expected} already exists; "
+            "it has to be revoked before this Account can be provisioned"
+        )
+    return await _provision_credential(db, account=default, keys=provider)
 
 
 async def get_account(
@@ -293,6 +348,7 @@ __all__ = [
     "DEFAULT_ACCOUNT_NAME",
     "create_account",
     "create_default_account",
+    "ensure_default_account",
     "get_account",
     "key_name",
     "list_accounts",
