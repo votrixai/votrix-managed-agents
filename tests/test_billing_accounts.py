@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import base64
-import os
 from decimal import Decimal
 
 import pytest
 from pydantic import SecretStr
+from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.db.models.organization_accounts import (
@@ -283,16 +283,42 @@ async def test_a_new_organization_comes_with_a_default_account(db):
 
 
 async def test_an_organization_cannot_hold_two_defaults(db, org):
-    """A request naming no Account resolves to the default, so two is a toss-up."""
+    """A request naming no Account resolves to the default, so two is a toss-up.
+
+    The API cannot ask for this — `is_default` is not a field on the create
+    request, and the only caller that passes it is Organization creation. The
+    constraint is here against a bug in our own code, so it fails as one:
+    loudly, at the write, before anything is minted.
+    """
     keys = FakeKeys()
     await service.create_account(
         db, organization_id=org, name="First", is_default=True, keys=keys
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         await service.create_account(
             db, organization_id=org, name="Second", is_default=True, keys=keys
         )
+    await db.rollback()
+
+    # Refused before the provider was asked for anything, so no key is left
+    # behind belonging to an Account that does not exist.
+    assert len(keys.created) == 1
+
+
+async def test_many_non_default_accounts_coexist(db, org):
+    """The constraint has to stop a second default without capping the rest."""
+    keys = FakeKeys()
+
+    made = [
+        await service.create_account(
+            db, organization_id=org, name=f"Team {index}", keys=keys
+        )
+        for index in range(3)
+    ]
+
+    assert len({account.id for account in made}) == 3
+    assert all(account.is_default is None for account in made)
 
 
 def test_a_key_name_cannot_hide_a_separator():
