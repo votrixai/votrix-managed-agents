@@ -25,17 +25,23 @@ Project `votrixai-480422`, region `us-central1` (see `scripts/gcloud/config.sh`)
 ## Capacity model
 
 ```
-concurrent turn capacity = worker instances × VMA_WORKER_TURN_LIMIT
+concurrent turn capacity = worker instances × containerConcurrency
 ```
 
-- `VMA_WORKER_TURN_LIMIT` and Cloud Run `containerConcurrency` are both pinned
-  to `5` in the worker manifests.
-- Production starts with 1 warm instance → **5 guaranteed concurrent turns**
-  and may autoscale to 2 instances → **10 concurrent turns**.
-- Staging starts at 5 and may autoscale to 10 concurrent turns.
+Cloud Run's own limit is the only one. An earlier version of this runbook
+described a second, process-wide `VMA_WORKER_TURN_LIMIT` held equal to it —
+that setting exists nowhere in the code, the manifests, or the deploy scripts,
+and never did.
+
+- Worker `containerConcurrency` is `20`, `maxScale` is `4`.
+- Production starts with 1 warm instance → **20 guaranteed concurrent turns**
+  and may autoscale to 4 instances → **80 concurrent turns**. Staging matches.
 - Turns are IO-bound coordinators (model streaming, E2B, Postgres); heavy
-  compute happens inside E2B sandboxes, not on the worker. A 1 vCPU / 4 GiB
-  instance sustains 5 concurrent turns comfortably.
+  compute happens inside E2B sandboxes, not on the worker. What a worker
+  instance holds per turn is the graph's state, one model stream and one
+  sandbox handle, so **memory is the binding constraint, not CPU** — which is
+  why capacity is added in instances rather than by raising concurrency on a
+  1 vCPU / 4 GiB box.
 - Admitted overflow waits in the Postgres queue (`environment_work`, status
   `queued`) until a slot frees. The hosted Organization active-work limit is 20,
   so requests beyond that queued/running cap can be rejected rather than queued.
@@ -48,8 +54,9 @@ so the manifest remains the source of truth. **A manual
 
 Named Cloud Tasks target the private worker URL with an OIDC token. Each task is
 an in-flight HTTP request for the duration of the turn, so Cloud Run observes
-demand and scales worker instances. The process-wide limiter prevents the push
-handler and reconciler together from exceeding five turns per instance.
+demand and scales worker instances. Nothing inside the process limits turns
+beyond that: the push handler and the reconciler share whatever
+`containerConcurrency` allows.
 
 `VMA_WORKER_CONCURRENCY=1` and
 `VMA_WORKER_POLL_INTERVAL_SECONDS=20` intentionally describe only the slow
@@ -61,9 +68,9 @@ never carries correctness.
 
 1. Recalculate E2B concurrency/quota, provider limits, and spend ceiling.
 2. Edit the worker manifest's `maxScale` and, only when guaranteed warm capacity
-   is required, `minScale`. Keep `VMA_WORKER_TURN_LIMIT` equal to
-   `containerConcurrency`.
-3. Update `tests/test_cloud_run_config.py` and this runbook in the same change.
+   is required, `minScale`. Raising `containerConcurrency` instead trades memory
+   headroom for the same capacity — see the capacity model above.
+3. Update this runbook in the same change.
 4. Ship through the normal migration-gated pipeline and rerun the staging load
    scenarios before production promotion.
 
@@ -75,10 +82,10 @@ gcloud run services update votrix-managed-agents-worker \
   --min-instances=2 --max-instances=2
 ```
 
-Takes effect in seconds. **Backfill the manifest + test pins immediately**, or
-the next deploy silently reverts the bounds. Do not raise the per-instance turn
-limit independently of `containerConcurrency`; prefer adding instances because
-that also adds memory headroom and blast-radius isolation.
+Takes effect in seconds. **Backfill the manifest immediately**, or the next
+deploy silently reverts the bounds. Prefer adding instances to raising
+`containerConcurrency`: it adds memory headroom with the capacity, and it keeps
+one instance's death from taking every turn on it.
 
 ## Signals that say "change the bounds"
 

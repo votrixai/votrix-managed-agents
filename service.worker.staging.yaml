@@ -7,11 +7,11 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/minScale: "1"
-        autoscaling.knative.dev/maxScale: "2"
+        autoscaling.knative.dev/maxScale: "4"
         run.googleapis.com/cpu-throttling: "false"
     spec:
       serviceAccountName: vma-runtime@votrixai-480422.iam.gserviceaccount.com
-      containerConcurrency: 5
+      containerConcurrency: 20
       timeoutSeconds: 3600
       containers:
         - image: IMAGE_URL
@@ -59,9 +59,14 @@ spec:
             - name: WORKER_URL
               value: "__VMA_WORKER_URL__"
             - name: VMA_DB_POOL_SIZE
-              value: "4"
+              value: "8"
             - name: VMA_DB_MAX_OVERFLOW
-              value: "1"
+              value: "4"
+            # Checkpoint traffic is pooled separately: a turn borrows a
+            # connection per checkpoint call and gives it straight back,
+            # so this caps concurrent checkpoint statements, not turns.
+            - name: VMA_CHECKPOINT_POOL_MAX_SIZE
+              value: "6"
             - name: VMA_DB_POOL_TIMEOUT_SECONDS
               value: "10"
             - name: VMA_DB_POOL_RECYCLE_SECONDS

@@ -13,7 +13,7 @@ spec:
         run.googleapis.com/cpu-throttling: "false"
     spec:
       serviceAccountName: vma-runtime@votrixai-480422.iam.gserviceaccount.com
-      containerConcurrency: 40
+      containerConcurrency: 80
       timeoutSeconds: 3600
       containers:
         - image: IMAGE_URL
@@ -61,9 +61,9 @@ spec:
             - name: WORKER_URL
               value: "__VMA_WORKER_URL__"
             - name: VMA_DB_POOL_SIZE
-              value: "4"
+              value: "16"
             - name: VMA_DB_MAX_OVERFLOW
-              value: "2"
+              value: "8"
             - name: VMA_DB_POOL_TIMEOUT_SECONDS
               value: "10"
             - name: VMA_DB_POOL_RECYCLE_SECONDS
