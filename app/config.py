@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # explicitly after connecting because Supabase's pooler drops the startup
     # `options=-csearch_path=...` parameter.
     vma_checkpoint_database_url: str = ""
+    # A session-mode DSN (`:5432`) for the `LISTEN` that wakes open streams. A
+    # transaction pooler cannot carry notifications — it connects, and then
+    # silently delivers nothing, which is why the listener self-tests before it
+    # reports itself ready. Empty disables the wake-up entirely and every stream
+    # polls instead, which is what local runs and the worker service both do.
+    vma_listen_database_url: str = ""
 
     # Mints the per-Account keys, and the only provider credential this
     # deployment holds — every key that can actually be spent belongs to an

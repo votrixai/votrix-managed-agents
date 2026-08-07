@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.config import get_settings
 from app.db.models import (
     MemoryStore,
     Session,
@@ -205,7 +206,43 @@ async def append_event(
     )
     db.add(event)
     await db.flush()
+    await _announce(db, session.id)
     return event
+
+
+def event_channel() -> str:
+    """The `NOTIFY` channel streams are woken on.
+
+    One channel for the whole deployment rather than one per session: a listener
+    holds a single shared connection, and issuing `LISTEN`/`UNLISTEN` on it as
+    every stream opens and closes is a race that buys nothing — a process with
+    no reader for a session drops the notification on a dictionary lookup.
+
+    The schema is in the name because staging and production can sit in one
+    Postgres, and notifications are not scoped by `search_path`.
+    """
+    return f"vma_session_events_{get_settings().database_schema or 'public'}"
+
+
+async def _announce(db: AsyncSession, session_id: str) -> None:
+    """Tell any stream watching this session that there is something to read.
+
+    Inside the transaction on purpose. Postgres holds a notification until the
+    transaction commits, so a reader cannot be woken before the row it is being
+    woken for is visible — ordering that would otherwise need arranging comes
+    free from putting the two in the same place.
+
+    Only the session id travels. What the event says is read back from the
+    table, so a notification that is lost, doubled or late costs a reader
+    nothing except the wait it would have had anyway. That is also why this
+    failing is not worth a turn: the reader polls, exactly as it used to.
+    """
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    await db.execute(
+        text("SELECT pg_notify(:channel, :payload)"),
+        {"channel": event_channel(), "payload": session_id},
+    )
 
 
 async def list_events(

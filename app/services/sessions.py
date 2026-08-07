@@ -51,6 +51,7 @@ from app.models.errors import (
 )
 from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
 from app.services import environments as environments_service
+from app.services import event_broker
 from app.services import files as files_service
 from app.services import memory as memory_service
 from app.services import memory_records
@@ -91,9 +92,13 @@ MAX_MEMORY_STORES_PER_SESSION = 8
 MAX_CONCURRENT_SESSION_PROVISIONS = 4
 _session_provision_slots = asyncio.Semaphore(MAX_CONCURRENT_SESSION_PROVISIONS)
 
-# How often a stream looks for new events. A turn produces something every few
-# seconds at best, so this is well inside "live" for a reader, and the query it
-# runs is an indexed range scan that almost always comes back empty.
+# How often a stream looks for new events when nothing is telling it to. A
+# writer normally wakes it through `event_broker` the moment an event commits;
+# this is what that degrades to — with no listener configured, or none working,
+# every stream simply polls the way it always did. The query is an indexed range
+# scan that almost always comes back empty, which is exactly why waiting to be
+# told is worth having: at 0.3s a room full of idle readers runs hundreds of
+# them a second to learn nothing.
 STREAM_POLL_SECONDS = 0.3
 # Proxies and load balancers close connections that go quiet. A turn can think
 # for minutes without emitting, so the stream says something regardless.
@@ -479,7 +484,10 @@ async def stream_events(
             return
         if not events:
             yield None
-            await asyncio.sleep(STREAM_POLL_SECONDS)
+            # Waits to be told, and falls back to the poll interval when there
+            # is nobody to tell it. Either way what happens next is this same
+            # query, so the two are the same code path.
+            await event_broker.wait(session_id, poll_interval=STREAM_POLL_SECONDS)
 
 
 async def _dispatch_turn(
