@@ -145,18 +145,16 @@ async def update_agent(
 
     `changes` holds only the fields the client actually sent, so anything it
     left out keeps the active version's value rather than being blanked.
+
+    The edit lands on whatever is active right now — the caller does not name a
+    version and cannot be out of date, because nothing it sent was read from a
+    version in the first place.
     """
     agent = await get_agent(db, agent_id=agent_id, organization_id=organization_id)
     if agent.archived_at is not None:
         raise Conflict("Archived agents cannot be updated")
 
     active = await get_active_version(db, agent)
-    expected = changes.pop("version")
-    if expected != agent.active_version:
-        raise Conflict(
-            f"Version mismatch: the agent is on version {agent.active_version}, "
-            f"the edit was made against {expected}"
-        )
 
     if "model" in changes:
         changes["model"] = normalize_model(changes["model"])

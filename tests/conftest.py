@@ -89,7 +89,7 @@ def never_dispatch(monkeypatch):
 
     calls = []
 
-    async def _record(db, *, session_id, generation, events):
+    async def _record(*, session_id, generation, events):
         calls.append({"session_id": session_id, "generation": generation, "events": events})
 
     monkeypatch.setattr(service, "_dispatch_turn", _record)
@@ -245,18 +245,6 @@ def volumes(monkeypatch):
         )
         provider.files.pop(store.id, None)
 
-    async def _write_file(cls, store, path, content):
-        if provider.write_error is not None:
-            raise provider.write_error
-        provider.files.setdefault(store.id, {})[path] = content
-
-    async def _remove_file(cls, store, path):
-        if provider.remove_error is not None:
-            raise provider.remove_error
-        provider.files.setdefault(store.id, {}).pop(path, None)
-
     monkeypatch.setattr(Volume, "provision", classmethod(_provision))
     monkeypatch.setattr(Volume, "destroy", classmethod(_destroy))
-    monkeypatch.setattr(Volume, "write_file", classmethod(_write_file))
-    monkeypatch.setattr(Volume, "remove_file", classmethod(_remove_file))
     return provider

@@ -198,6 +198,105 @@ async def test_the_same_name_cannot_be_used_twice(client, headers):
     assert response.status_code == 409
 
 
+# --- replacing what is in a skill --------------------------------------------
+
+
+def read_member(package: bytes, path: str) -> bytes:
+    """One file out of a downloaded package. The zip is deflated, so its
+    contents are not findable in the raw bytes."""
+    with zipfile.ZipFile(io.BytesIO(package)) as archive:
+        return archive.read(path)
+
+
+async def replace(client, headers, skill_id, content=None, **form):
+    return await client.post(
+        f"/v1/skills/{skill_id}",
+        headers=headers,
+        files=(
+            {"file": ("pptx.zip", content, "application/zip")}
+            if content is not None
+            else None
+        ),
+        data=form,
+    )
+
+
+async def test_replacing_the_package_keeps_the_id(client, headers):
+    """The reason this exists. An Agent names a skill by id, so changing what
+    the skill contains must not mean re-pointing every Agent that uses it."""
+
+    skill_id = (await upload(client, headers)).json()["id"]
+    revised = make_zip({"SKILL.md": SKILL_MD, "scripts/run.py": b"print(2)\n"})
+
+    response = await replace(client, headers, skill_id, revised)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == skill_id
+
+    downloaded = await client.get(f"/v1/skills/{skill_id}/content", headers=headers)
+    assert read_member(downloaded.content, "pptx/scripts/run.py") == b"print(2)\n"
+
+
+async def test_a_replacement_restates_the_size_and_digest(client, headers, bucket):
+    skill_id = (await upload(client, headers)).json()["id"]
+    revised = make_zip({"SKILL.md": SKILL_MD, "notes.md": b"much longer content here\n"})
+
+    body = (await replace(client, headers, skill_id, revised)).json()
+
+    stored = bucket[
+        next(k for k in bucket if body["sha256"] == service.sha256(bucket[k]))
+    ]
+    assert body["size_bytes"] == len(stored)
+
+
+async def test_a_replacement_package_renames_the_skill(client, headers):
+    """The package names it on the way in, the same as on create — a name
+    stored beside a package that disagrees would not load in the sandbox."""
+
+    skill_id = (await upload(client, headers)).json()["id"]
+    renamed = make_zip(
+        {"SKILL.md": SKILL_MD.replace(b"name: pptx", b"name: decks")}
+    )
+
+    body = (await replace(client, headers, skill_id, renamed)).json()
+
+    assert body["id"] == skill_id
+    assert body["name"] == "decks"
+
+
+async def test_a_replacement_cannot_take_another_skills_name(client, headers):
+    skill_id = (await upload(client, headers)).json()["id"]
+    other = make_zip({"SKILL.md": SKILL_MD.replace(b"name: pptx", b"name: decks")})
+    await client.post(
+        "/v1/skills",
+        headers=headers,
+        files={"file": ("decks.zip", other, "application/zip")},
+    )
+
+    response = await replace(client, headers, skill_id, other)
+
+    assert response.status_code == 409
+
+
+async def test_a_replacement_that_is_not_a_package_leaves_the_old_one(client, headers):
+    skill_id = (await upload(client, headers)).json()["id"]
+
+    response = await replace(client, headers, skill_id, b"this is not a zip")
+
+    assert response.status_code == 422
+    downloaded = await client.get(f"/v1/skills/{skill_id}/content", headers=headers)
+    assert read_member(downloaded.content, "pptx/scripts/run.py") == b"print(1)\n"
+
+
+async def test_metadata_can_still_be_edited_without_a_package(client, headers):
+    skill_id = (await upload(client, headers)).json()["id"]
+
+    body = (await replace(client, headers, skill_id, description="Decks, faster")).json()
+
+    assert body["description"] == "Decks, faster"
+    assert body["name"] == "pptx"
+
+
 # --- what gets rejected ------------------------------------------------------
 
 

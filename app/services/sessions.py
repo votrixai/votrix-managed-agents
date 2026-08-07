@@ -54,7 +54,6 @@ from app.services import agents as agents_service
 from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
-from app.services import memory_records
 from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
 from app.utils.volume import (
@@ -64,8 +63,11 @@ from app.utils.volume import (
     memory_mount_path,
 )
 
-# A turn may hold the session this long before we call it hung.
-TURN_TIMEOUT_SECONDS = 600
+# A turn may hold the session this long before we call it hung. The queue is
+# given this plus a margin (see _enqueue_task), and Cloud Run's own request
+# timeout is 3600 — both stay above it, so this is the limit that actually
+# fires and the one to move when a turn legitimately needs longer.
+TURN_TIMEOUT_SECONDS = 1200
 
 # Deliberately much shorter than a turn: the lease is not a time budget, it is
 # a liveness signal. A worker that dies is noticed within this window rather
@@ -338,7 +340,6 @@ async def send_events(
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
     await _dispatch_turn(
-        db,
         session_id=session_id,
         generation=session.lock_version,
         events=events,
@@ -479,8 +480,13 @@ async def stream_events(
             await asyncio.sleep(STREAM_POLL_SECONDS)
 
 
+# Inline turns in flight. Held here because asyncio keeps only a weak
+# reference to a running task: without a strong one somewhere, a turn can be
+# collected mid-reply and simply stop.
+_inline_turns: set[asyncio.Task[None]] = set()
+
+
 async def _dispatch_turn(
-    db: AsyncSession,
     *,
     session_id: str,
     generation: int,
@@ -488,9 +494,12 @@ async def _dispatch_turn(
 ) -> None:
     """Get the turn running, by whichever route this deployment uses.
 
-    `inline` runs it here and now, so the request does not come back until the
-    agent is done. Slow, but a fresh checkout can hold a conversation without
-    a queue, a worker process, or any configuration.
+    Neither route waits for it. `cloud` hands the turn to a queue that calls a
+    worker back; `inline` runs it in this process on a task of its own. Either
+    way the request returns as soon as the message is *accepted*, which is what
+    lets the caller open the event stream and watch output appear — a request
+    that only came back when the agent was done would deliver the whole turn at
+    the end, and no amount of streaming further down could undo that.
 
     Failures are swallowed in either mode. The message really was accepted —
     it is committed — and `_fail` records what went wrong as a `session.error`
@@ -501,8 +510,26 @@ async def _dispatch_turn(
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
         return
 
+    task = asyncio.create_task(_run_inline_turn(session_id=session_id, events=events))
+    _inline_turns.add(task)
+    task.add_done_callback(_inline_turns.discard)
+
+
+async def _run_inline_turn(*, session_id: str, events: list[dict[str, Any]]) -> None:
+    """One turn, on a database session of its own.
+
+    The session that accepted the message belongs to the request and is closed
+    when the response is sent — which is now long before the turn ends. Same
+    reason `_hold_lease` opens its own.
+
+    Nothing waits for this task, shutdown included: a process going down drops
+    the turn, and the session's lease lapses so the next message can claim it.
+    That is the trade `inline` exists to make — no queue, no worker, no
+    configuration. `cloud` is where a dropped turn gets retried.
+    """
     try:
-        await process_session(db, session_id=session_id, events=events)
+        async with session_scope() as db:
+            await process_session(db, session_id=session_id, events=events)
     except Exception:
         logger.exception("inline_turn_failed", session_id=session_id)
 
@@ -579,18 +606,6 @@ async def process_session(
         session.organization_id,
     )
 
-    async def _sync_after_filesystem_tool(_tool_name: str) -> None:
-        # The callback runs after the tool result has been emitted, so every
-        # write is complete before its mounted files are hashed. Failures are
-        # retried by the final reconciliation rather than failing the model's
-        # otherwise successful turn.
-        await collect_memories(
-            db,
-            session,
-            container,
-            report_failure=False,
-        )
-
     heartbeat = asyncio.create_task(_hold_lease(session_id))
     try:
         from app.runtime.engine import execute_agent
@@ -610,11 +625,6 @@ async def process_session(
                     sandbox=container,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
-                    tool_completed=(
-                        _sync_after_filesystem_tool
-                        if attached_memory_stores
-                        else None
-                    ),
                     emit=_emitter(db, session, generation),
                 ),
                 timeout=TURN_TIMEOUT_SECONDS,
@@ -623,12 +633,10 @@ async def process_session(
         # cancel_session already released the session and recorded the stop.
         # The agent may still have finished something before it was cut off,
         # and a half-written deliverable is the user's too.
-        await collect_memories(db, session, container)
         await collect_outputs(db, session, container)
         await db.commit()
         return
     except BaseException as exc:
-        await collect_memories(db, session, container)
         await collect_outputs(db, session, container)
         await _fail(db, session, exc)
         raise
@@ -638,7 +646,6 @@ async def process_session(
     # Before the release, never after: the client takes `idle` as the sign that
     # the turn is done, and everything the turn produced has to be fetchable by
     # then. It is also the last moment the container is certainly awake.
-    await collect_memories(db, session, container)
     await collect_outputs(db, session, container)
     await sessions_q.release_session(db, session, status=IDLE)
     await db.commit()
@@ -982,68 +989,6 @@ async def collect_outputs(db: AsyncSession, session: Session, sandbox: Sandbox) 
         return
     if collected:
         logger.info("outputs_collected", session_id=session.id, count=len(collected))
-
-
-async def collect_memories(
-    db: AsyncSession,
-    session: Session,
-    sandbox: Sandbox,
-    *,
-    report_failure: bool = True,
-) -> bool:
-    """Index mounted Volume changes without turning delivery into turn failure."""
-    try:
-        result = await memory_records.reconcile_session_memory_stores(
-            db,
-            session_id=session.id,
-            organization_id=session.organization_id,
-            sandbox=sandbox,
-        )
-    except Exception as exc:
-        await db.rollback()
-        logger.exception("memory_reconciliation_failed", session_id=session.id)
-        if report_failure:
-            await sessions_q.append_event(
-                db,
-                session,
-                type=event_types.SESSION_ERROR,
-                source="system",
-                payload={
-                    "error": {
-                        "type": "memory_reconciliation_failed",
-                        "message": str(exc),
-                    }
-                },
-            )
-        return False
-
-    if result.changed:
-        logger.info(
-            "memories_reconciled",
-            session_id=session.id,
-            changed=result.changed,
-        )
-    if result.issues:
-        logger.warning(
-            "memory_reconciliation_rejected_files",
-            session_id=session.id,
-            count=len(result.issues),
-        )
-        if report_failure:
-            await sessions_q.append_event(
-                db,
-                session,
-                type=event_types.SESSION_ERROR,
-                source="system",
-                payload={
-                    "error": {
-                        "type": "memory_write_rejected",
-                        "message": "Some mounted files could not become CMA Memories",
-                        "issues": list(result.issues[:20]),
-                    }
-                },
-            )
-    return True
 
 
 async def _attach_files(

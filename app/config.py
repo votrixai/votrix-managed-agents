@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # The gateway key. Every model is reached through it, so a model this
     # deployment cannot pay for fails the same way whoever built it.
     openrouter_api_key: str = ""
+    # Local override — see _build_chat_model. Talks to DeepSeek directly so a
+    # machine without a gateway key can still run a turn.
+    deepseek_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""
@@ -85,6 +88,13 @@ class Settings(BaseSettings):
     # measures is pre-ping finding a dead connection and rebuilding it, which
     # is work that has to happen either way.
     vma_db_pool_pre_ping: bool = True
+
+    # LangGraph's checkpoint traffic, pooled the same way and for the same
+    # reasons. Sized small on purpose: a turn borrows a connection per
+    # checkpoint call and gives it straight back, so this caps concurrent
+    # checkpoint statements, not concurrent turns.
+    vma_checkpoint_pool_max_size: int = 3
+    vma_checkpoint_pool_max_lifetime_seconds: float = 300.0
 
     e2b_api_key: str = ""
     # How long a container may sit idle before E2B pauses it. Long enough to

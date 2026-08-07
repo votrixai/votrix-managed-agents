@@ -129,12 +129,58 @@ async def update_skill(
     *,
     skill_id: str,
     organization_id: str,
+    content: bytes | None = None,
     name: str | None = None,
     description: str | None = None,
 ) -> Skill:
+    """Edit a skill, replacing its package when one is supplied.
+
+    The id survives a replacement, which is the whole point: an Agent names a
+    skill by id, so changing what a skill contains must not mean re-pointing
+    every Agent that uses it.
+
+    A new package names the skill, exactly as on create — the Agent Skills spec
+    ties the name to SKILL.md, so a name from the form would contradict the file
+    just stored and the skill would silently fail to load. Renaming this way is
+    allowed; taking a name another skill already holds is not.
+    """
     skill = await get_skill(db, skill_id=skill_id, organization_id=organization_id)
-    await skills_q.update_skill(db, skill, name=name, description=description)
+
+    if content is None:
+        await skills_q.update_skill(db, skill, name=name, description=description)
+        await db.commit()
+        return skill
+
+    manifest = inspect_package(content)
+    resolved_name = manifest.name
+    if resolved_name != skill.name:
+        existing = await skills_q.get_skill_by_name(
+            db, name=resolved_name, organization_id=organization_id
+        )
+        if existing is not None and existing.id != skill.id:
+            raise Conflict(f"A skill named {resolved_name!r} already exists")
+
+    stored = await storage.save_bytes(
+        normalize_package(content, name=resolved_name),
+        organization_id=organization_id,
+        category="skills",
+        filename=f"{resolved_name}.zip",
+        mime_type="application/zip",
+    )
+    await skills_q.update_skill(
+        db,
+        skill,
+        name=resolved_name,
+        description=description or manifest.description,
+        storage_key=stored.key,
+        size_bytes=stored.size_bytes,
+        sha256=stored.sha256,
+    )
     await db.commit()
+    # The object the skill used to point at is left where it is. A key carries
+    # its content's digest, so the new package never lands on top of the old one
+    # and nothing has to be deleted for this to be correct — reclaiming what is
+    # now unreferenced is a sweep, not part of an update.
     return skill
 
 

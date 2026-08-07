@@ -22,15 +22,15 @@ class AgentCreateRequest(ApiModel):
 
 
 class AgentUpdateRequest(ApiModel):
-    """An edit, stated against the version it was made from.
+    """An edit. Send only what changes.
 
-    `version` is required. A client that built its form from version 5 would
-    otherwise write its stale copy of every field it did not touch back over
-    whatever version 6 changed. Sending the wrong one is a 409, not a silent
-    overwrite.
+    There is no `version` to send. Versions are the service's to number: an
+    edit lands on whatever is active when it arrives, and the response says
+    which version it became. A client that had to name a version first would
+    have to read one before every write, to supply a number it has no opinion
+    about.
     """
 
-    version: int
     name: str | None = Field(default=None, min_length=1, max_length=255)
     model: str | dict[str, Any] | None = None
     system: str | None = None

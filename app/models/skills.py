@@ -6,15 +6,10 @@ from pydantic import Field
 from app.models.common import ApiModel
 
 
-# A skill is uploaded as multipart form data, not JSON, so there is no create
-# request model — the zip and the fields arrive together in the same request.
-# Going through the server rather than a presigned URL is deliberate: it is the
-# only way anything can look inside the package before it is stored.
-
-
-class SkillUpdateRequest(ApiModel):
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = None
+# A skill is uploaded as multipart form data, not JSON, so there are no create
+# or update request models — the zip and the fields arrive together in the same
+# request. Going through the server rather than a presigned URL is deliberate:
+# it is the only way anything can look inside the package before it is stored.
 
 
 class SkillResponse(ApiModel):

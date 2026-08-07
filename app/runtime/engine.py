@@ -24,7 +24,7 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import DEEPSEEK, MODEL_CATALOG
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
 from app.runtime.tools import (
     AGENT_TOOLSET,
@@ -404,22 +404,104 @@ async def _setup_once(saver: Any, key: str) -> None:
         _setup_done.add(key)
 
 
-async def _configure_checkpoint_schema(saver: Any, schema: str) -> None:
-    """Set a session-level schema on LangGraph's dedicated connection.
+# One checkpoint pool for the process, keyed by DSN so a changed setting cannot
+# hand back a pool pointing somewhere else. A turn used to open its own
+# connection and close it after — a full TCP, TLS and SCRAM handshake against
+# the hosted pooler, measured at 2–3 seconds, paid before the agent could read
+# a single message back.
+_checkpoint_pools: dict[str, Any] = {}
+_checkpoint_pool_lock = asyncio.Lock()
 
-    Supabase's pooler does not preserve PostgreSQL startup ``options``. The
-    checkpointer uses one session-affine connection for its lifetime, so an
-    explicit session setting is both durable and isolated from SQLAlchemy's
-    transaction-pooled connections.
+
+async def _checkpoint_pool(dsn: str) -> Any:
+    """The pool LangGraph's saver borrows from, opened once per process.
+
+    `prepare_threshold=None` is the load-bearing argument, and the reason this
+    does not use `AsyncPostgresSaver.from_conn_string`: that helper hardcodes
+    `prepare_threshold=0`, meaning "prepare every statement immediately".
+    Server-side prepared statements belong to one backend connection, so an
+    agent that prepares on one and executes on another — which is what a
+    transaction pooler does between transactions — fails with "prepared
+    statement does not exist". Disabling them is what lets checkpoint traffic
+    share Postgres backends instead of pinning one per running turn.
+
+    `autocommit` and `dict_row` match what the helper sets; only the threshold
+    deliberately differs.
     """
 
+    if (pool := _checkpoint_pools.get(dsn)) is not None:
+        return pool
+
+    async with _checkpoint_pool_lock:
+        if (pool := _checkpoint_pools.get(dsn)) is not None:
+            return pool
+
+        from psycopg.rows import dict_row
+        from psycopg_pool import AsyncConnectionPool
+
+        settings = get_settings()
+        pool = AsyncConnectionPool(
+            dsn,
+            min_size=0,
+            max_size=settings.vma_checkpoint_pool_max_size,
+            max_lifetime=settings.vma_checkpoint_pool_max_lifetime_seconds,
+            # Checked on checkout, like the SQLAlchemy engine's pre-ping and for
+            # the reason recorded there: the pooler in front of this database
+            # drops idle connections well inside any recycle window, and age
+            # alone was tried and produced thirty `connection is closed`
+            # failures in one live run. A connection handed out dead is a failed
+            # turn; a connection tested first is a slower one.
+            check=AsyncConnectionPool.check_connection,
+            open=False,
+            configure=_configure_checkpoint_connection,
+            kwargs={
+                "autocommit": True,
+                "prepare_threshold": None,
+                "row_factory": dict_row,
+            },
+        )
+        await pool.open()
+        _checkpoint_pools[dsn] = pool
+        return pool
+
+
+async def aclose_checkpoint_pools() -> None:
+    """Close every checkpoint pool. Called from the application lifespan."""
+
+    async with _checkpoint_pool_lock:
+        pools = list(_checkpoint_pools.values())
+        _checkpoint_pools.clear()
+    for pool in pools:
+        await pool.close()
+
+
+async def _configure_checkpoint_connection(conn: Any) -> None:
+    """Point a freshly-opened checkpoint connection at the configured schema.
+
+    Runs per connection, from the pool's `configure` hook, because Supabase's
+    pooler drops PostgreSQL startup ``options`` — the schema cannot ride in on
+    the DSN.
+
+    **This is durable only on a session-mode DSN.** Through the transaction
+    pooler the setting lands on whichever backend served this statement and is
+    gone by the next one, so a hosted deployment that puts checkpoints on
+    ``:6543`` must set the search path on the role instead:
+
+        ALTER ROLE <db user> SET search_path = <schema>, public;
+
+    A role default is applied by PostgreSQL to every backend at connect time,
+    which is the only place a pooled client cannot lose it.
+    """
+
+    schema = get_settings().database_schema
     if not schema:
         return
-    await saver.conn.execute(
-        "SELECT set_config('search_path', %s, false)",
-        (schema,),
-    )
-    cursor = await saver.conn.execute("SELECT current_schema() AS current_schema")
+    await conn.execute("SELECT set_config('search_path', %s, false)", (schema,))
+    # Verified, and the pool raises out of `configure` if it did not take. The
+    # silent failure is the dangerous one: LangGraph would go on to create and
+    # read its tables in `public`, and a turn would resume from a checkpoint
+    # history that simply is not there.
+    cursor = await conn.execute("SELECT current_schema() AS current_schema")
     row = await cursor.fetchone()
     current_schema = (
         row.get("current_schema")
@@ -479,17 +561,20 @@ async def _checkpoint_saver(session_id: str) -> AsyncIterator[Any]:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
         async with timed("checkpoint_connected", session_id=session_id, backend="postgres"):
-            connection = AsyncPostgresSaver.from_conn_string(
-                _postgres_dsn(url, schema)
-            )
-            saver = await connection.__aenter__()
-        try:
-            await _configure_checkpoint_schema(saver, schema)
-            async with timed("checkpoint_setup", session_id=session_id, backend="postgres"):
-                await _setup_once(saver, f"{url}#{schema}")
-            yield _instrument_saver(saver, session_id)
-        finally:
-            await connection.__aexit__(None, None, None)
+            pool = await _checkpoint_pool(_postgres_dsn(url, schema))
+        saver = AsyncPostgresSaver(conn=pool)
+        # Force the explicit-transaction path. LangGraph batches a checkpoint's
+        # writes into a psycopg pipeline, which is a substitute for a
+        # transaction, not a transaction: through a transaction pooler the
+        # statements in one batch can land on different backends, and a
+        # checkpoint whose blobs were written but whose row was not reads back
+        # as a complete state that is missing half of itself. The library's own
+        # fallback for "no pipeline support" is `conn.transaction()`, which is
+        # exactly what keeps a pooled client on one backend.
+        saver.supports_pipeline = False
+        async with timed("checkpoint_setup", session_id=session_id, backend="postgres"):
+            await _setup_once(saver, f"{url}#{schema}")
+        yield _instrument_saver(saver, session_id)
         return
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -580,21 +665,44 @@ def _build_chat_model(spec: dict[str, Any] | str) -> Any:
         known = ", ".join(m.id for m in MODEL_CATALOG)
         raise UnknownModelError(f"Unknown model {model_id!r}. Known models: {known}")
 
-    slug = OPENROUTER_SLUGS.get(entry.id)
-    if slug is None:
-        # A catalog entry with no slug is a packaging mistake, not a bad
-        # request: the caller named a model this build claims to serve.
-        raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
+    # --- gateway path, temporarily off ------------------------------------
+    # Restore this and drop the block below to go back through OpenRouter.
+    # OPENROUTER_SLUGS has to come back into the imports at the top with it.
+    #
+    # slug = OPENROUTER_SLUGS.get(entry.id)
+    # if slug is None:
+    #     # A catalog entry with no slug is a packaging mistake, not a bad
+    #     # request: the caller named a model this build claims to serve.
+    #     raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
+    #
+    # from langchain_openrouter import ChatOpenRouter
+    #
+    # return ChatOpenRouter(model=slug, api_key=_require_key(get_settings().openrouter_api_key))
+    # ----------------------------------------------------------------------
 
-    from langchain_openrouter import ChatOpenRouter
+    # Direct to DeepSeek while there is no gateway key to develop against.
+    # Only DeepSeek models are reachable this way, and saying so here is the
+    # point: routing another provider's id at this client would send it to
+    # DeepSeek and surface as an unrecognised-model error from them, which
+    # reads like the catalog is wrong rather than the wiring.
+    if entry.provider != DEEPSEEK:
+        raise UnknownModelError(
+            f"Model {entry.id!r} is a {entry.provider} model, and this build reaches "
+            f"DeepSeek directly rather than through a gateway. Name a DeepSeek model, "
+            f"or restore the OpenRouter path in _build_chat_model."
+        )
 
-    return ChatOpenRouter(model=slug, api_key=_require_key(get_settings().openrouter_api_key))
+    from langchain_deepseek import ChatDeepSeek
+
+    # The catalog id is DeepSeek's own id — the V4 ids replaced the retired
+    # deepseek-chat / deepseek-reasoner aliases, so no slug translation.
+    return ChatDeepSeek(model=entry.id, api_key=_require_key(get_settings().deepseek_api_key))
 
 
 def _require_key(key: str) -> str:
     if not key:
         raise MissingProviderKeyError(
-            "OPENROUTER_API_KEY is not configured, so no model can be reached"
+            "DEEPSEEK_API_KEY is not configured, so no model can be reached"
         )
     return key
 

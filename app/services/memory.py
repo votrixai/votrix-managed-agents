@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime
 from typing import Any
 
@@ -17,10 +19,44 @@ from app.db.models.memory import (
 )
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.db.queries import memory as memory_q
-from app.models.errors import Conflict, MemoryStoreUnavailable, NotFound
+from app.models.errors import Conflict, InvalidRequest, MemoryStoreUnavailable, NotFound
 from app.utils.volume import Volume
 
 logger = structlog.get_logger(__name__)
+
+
+def encode_page_cursor(value: str, *, kind: str) -> str:
+    """An opaque cursor. Callers page by handing this back, not by building one.
+
+    ``kind`` is carried inside so a cursor from one collection cannot be
+    replayed against another, where the same id would mean something else.
+    """
+
+    payload = json.dumps(
+        {"kind": kind, "value": value},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return f"page_{encoded}"
+
+
+def decode_page_cursor(token: str, *, kind: str) -> str:
+    if not token.startswith("page_"):
+        raise InvalidRequest("page is not a valid Memory cursor")
+    raw = token.removeprefix("page_")
+    raw += "=" * (-len(raw) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(raw).decode())
+    except Exception as exc:
+        raise InvalidRequest("page is not a valid Memory cursor") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("kind") != kind
+        or not isinstance(payload.get("value"), str)
+    ):
+        raise InvalidRequest("page is not valid for this Memory collection")
+    return payload["value"]
 
 
 async def create_memory_store(
@@ -196,11 +232,8 @@ async def delete_memory_store(
         await db.commit()
         raise MemoryStoreUnavailable("The Memory Store Volume could not be deleted") from exc
 
-    await memory_q.purge_memory_store_contents(
-        db,
-        memory_store_id=store.id,
-        organization_id=store.organization_id,
-    )
+    # Nothing left to purge on this side: the contents are the Volume, and
+    # destroying it above took them with it.
     await memory_q.mark_memory_store_deleted(db, store)
     await db.commit()
     return store
