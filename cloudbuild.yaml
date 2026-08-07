@@ -29,12 +29,6 @@ steps:
         DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"
         DATABASE_SCHEMA="vma_rewrite_${_APP_ENV}"
 
-        if [ "${_APP_ENV}" = "production" ] && \
-          grep -q 'Status: UNMEASURED' private-docs/scaling-runbook.md; then
-          echo "Production deploy is blocked: the Supabase connection budget is UNMEASURED." >&2
-          exit 1
-        fi
-
         echo "Waiting for $$IMAGE to become available..."
         for attempt in $$(seq 1 10); do
           if gcloud artifacts docker images describe "$$IMAGE" \

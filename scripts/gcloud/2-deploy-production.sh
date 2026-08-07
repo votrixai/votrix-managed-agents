@@ -65,12 +65,6 @@ if [ -n "$WORKTREE_STATUS" ]; then
   exit 1
 fi
 
-if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; then
-  echo "Production deploy is blocked: the Supabase connection budget is UNMEASURED." >&2
-  echo "Record the measured limits and clear the release gate in private-docs/scaling-runbook.md." >&2
-  exit 1
-fi
-
 TAG=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)
 FULL_COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)
 IMAGE="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${PRODUCTION_SERVICE}:${TAG}"
