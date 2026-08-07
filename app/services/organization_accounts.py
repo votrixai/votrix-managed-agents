@@ -29,6 +29,7 @@ from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.db.queries import organization_accounts as accounts_q
 from app.integrations.openrouter_management import (
     OpenRouterKeyAdmin,
+    OpenRouterKeyUsage,
     OpenRouterManagementClient,
 )
 from app.models.errors import (
@@ -206,6 +207,42 @@ async def ensure_default_account(
             "it has to be revoked before this Account can be provisioned"
         )
     return await _provision_credential(db, account=default, keys=provider)
+
+
+async def get_account_usage(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    account_id: str,
+    keys: OpenRouterKeyAdmin | None = None,
+) -> OpenRouterKeyUsage:
+    """What this Account has spent, as the provider counts it.
+
+    Read from the credential's own counters rather than accumulated from turns
+    we watched. Anything spent on this Account's key is in the answer — a
+    sub-agent, a retry, a path nobody instrumented — because the figure is
+    measured where the money leaves rather than where we happened to look.
+
+    Available while suspended, which is most of the reason an Account is
+    suspended instead of removed: what it spent has to stay readable.
+
+    The lifetime figure belongs to the credential. Nothing rotates one today,
+    so it is also the Account's lifetime; when something does, the number will
+    start again and the rest of this will need to carry the old one forward.
+    """
+    account = await get_account(
+        db, organization_id=organization_id, account_id=account_id
+    )
+    if account.credential is None:
+        raise AccountUnavailable(
+            f"Account {account_id} has no credential, so it has spent nothing "
+            "and there is nothing to report"
+        )
+    key_hash = account.credential.key_hash
+    # Released before the provider call: this read is not worth holding a
+    # connection across a network round trip.
+    await db.rollback()
+    return await (keys or _key_admin()).get_key_usage(key_hash)
 
 
 async def require_spendable_account(
@@ -420,6 +457,7 @@ __all__ = [
     "create_default_account",
     "ensure_default_account",
     "get_account",
+    "get_account_usage",
     "key_name",
     "list_accounts",
     "require_spendable_account",
