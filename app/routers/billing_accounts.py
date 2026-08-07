@@ -102,10 +102,6 @@ async def retrieve_account_usage(
         usage_daily_usd=usage.usage_daily_usd,
         usage_weekly_usd=usage.usage_weekly_usd,
         usage_monthly_usd=usage.usage_monthly_usd,
-        byok_usage_usd=usage.byok_usage_usd,
-        byok_usage_daily_usd=usage.byok_usage_daily_usd,
-        byok_usage_weekly_usd=usage.byok_usage_weekly_usd,
-        byok_usage_monthly_usd=usage.byok_usage_monthly_usd,
         limit_usd=usage.limit_usd,
         limit_remaining_usd=usage.limit_remaining_usd,
     )
