@@ -69,8 +69,12 @@ class AccountUsageResponse(ApiModel):
     usage_monthly_usd: Decimal
     # Spend on the customer's own provider credentials, which the provider
     # counts apart from the above and excludes from any limit unless asked to
-    # include it. Zero until BYOK exists.
+    # include it. Zero until BYOK exists, in the same four windows so the two
+    # halves of what an Account cost can be lined up against each other.
     byok_usage_usd: Decimal
+    byok_usage_daily_usd: Decimal
+    byok_usage_weekly_usd: Decimal
+    byok_usage_monthly_usd: Decimal
     limit_usd: Decimal | None = None
     limit_remaining_usd: Decimal | None = None
 
