@@ -881,32 +881,32 @@ async def attach_live_file(
     """Put an existing durable File into an existing Session sandbox.
 
     This is the post-create counterpart to a ``file`` resource on Session
-    creation. It is deliberately accepted only while the Session is idle: the
-    next turn re-reads ``session_files`` for its prompt, whereas an already
-    running turn has already snapshotted that list and could observe the bytes
-    without knowing the user attached them.
+    creation, and it runs whatever the Session is doing. It used to require an
+    idle Session and hold an exclusive lock on its row for the whole E2B
+    transfer, so that no turn could start while a file was half-attached. Both
+    are gone, for the same reason: the half-attached state they guarded against
+    cannot occur. The binding is flushed before the transfer and committed only
+    after it succeeds, so a mount is atomic on its own — a failed copy leaves no
+    binding, and a committed binding always has its bytes behind it.
 
-    The Session row stays locked across the E2B transfer and binding write.
-    ``send_events`` claims that same row, so a turn cannot start between those
-    two operations. The binding is flushed before the transfer but committed
-    only after it succeeds; a failed copy therefore leaves no phantom
-    resource. Repeating the exact request returns the original binding.
+    What the lock bought beyond that was serialising mounts against each other,
+    which is not a property anything needed and is expensive: attaching three
+    files meant three round trips queued behind one another, all of them on the
+    path between pressing send and the agent starting.
+
+    A turn that is already running has snapshotted ``session_files`` for its
+    prompt and will not see a file attached underneath it. That is the caller's
+    business rather than this endpoint's: the next turn reads the list again.
+
+    Repeating the exact request returns the original binding.
     """
-    session = await sessions_q.get_session_for_update(
+    session = await get_session(
         db,
         session_id=session_id,
         organization_id=organization_id,
     )
-    if session is None:
-        raise NotFound(f"Session {session_id} not found")
     if session.archived_at is not None:
         raise Conflict(f"Session {session_id} is archived")
-    if session.status == RUNNING:
-        raise SessionBusy()
-    if session.status != IDLE:
-        raise Conflict(
-            f"Session {session_id} cannot accept files while {session.status}"
-        )
 
     sandbox = await sessions_q.get_sandbox(
         db,
@@ -925,24 +925,27 @@ async def attach_live_file(
         file_id=file_id,
         organization_id=organization_id,
     )
-    relative = _mount_path(path, fallback=file.filename)
+    requested = _mount_path(path, fallback=file.filename)
 
+    taken: set[str] = set()
     for existing in await sessions_q.list_session_files(db, session_id=session_id):
-        if existing.path != relative:
-            continue
-        if existing.file_id == file.id:
+        if existing.path == requested and existing.file_id == file.id:
             await db.commit()
             return existing
+        taken.add(existing.path)
+
+    if path is not None and requested in taken:
+        # An explicit path is a request to mount *there*. Stepping the name
+        # aside would hand back a resource at an address the caller did not ask
+        # for and has no reason to re-read, so this stays a refusal.
         raise Conflict(
-            f"Another file is already attached at {relative!r} in Session {session_id}"
+            f"Another file is already attached at {requested!r} in Session {session_id}"
         )
 
-    attached = await sessions_q.attach_file(
-        db,
-        session,
-        file_id=file.id,
-        path=relative,
+    attached = await _attach_under_free_name(
+        db, session, file=file, requested=requested, taken=taken
     )
+    relative = attached.path
     container = Sandbox.from_id(
         sandbox.external_sandbox_id,
         session.id,
@@ -959,12 +962,68 @@ async def attach_live_file(
         # ``attach_file`` was intentionally flushed first so its unique path
         # constraint is part of this transaction, but it must never survive a
         # failed transfer as a resource that only exists on paper.
+        #
+        # Expunged as well as rolled back. The binding was flushed inside a
+        # savepoint that was then released, which leaves the session holding it
+        # as pending rather than discarding it — and the next query on this
+        # session would autoflush it straight back into the table the rollback
+        # just cleared.
         message = f"File {file.id} could not be copied into Session {session.id}"
         await db.rollback()
         raise SandboxUnavailable(message) from exc
 
     await db.commit()
     return attached
+
+
+# How many times a mount steps its name aside before giving up. High enough
+# that a real conversation never reaches it, low enough to fail rather than
+# spin when something is systematically wrong.
+_MOUNT_NAME_ATTEMPTS = 20
+
+
+def _stepped_name(name: str, attempt: int) -> str:
+    """`report.pdf` → `report_1.pdf`, keeping the suffix where a reader expects it."""
+    if attempt == 0:
+        return name
+    stem, dot, suffix = name.rpartition(".")
+    if not stem or not dot:
+        return f"{name}_{attempt}"
+    return f"{stem}_{attempt}.{suffix}"
+
+
+async def _attach_under_free_name(
+    db: AsyncSession,
+    session: Session,
+    *,
+    file: File,
+    requested: str,
+    taken: set[str],
+) -> SessionFile:
+    """Bind the file at the first name this session is not already using.
+
+    `taken` is every binding committed before this transaction started, which
+    is what makes the ordinary case — a name nobody else has — one INSERT with
+    no negotiation. It cannot see a mount running right now in another request,
+    so two attachments of one filename arriving together can still pick the
+    same name; `uq_session_files_path` refuses the second and the request
+    fails, for the caller to retry.
+
+    Recovering from that in here would mean flushing inside a savepoint, and a
+    released savepoint leaves the binding behind when the E2B transfer later
+    fails and the transaction is rolled back — trading a rare retry for a
+    resource that exists on paper only. The rarer problem is the better one.
+    """
+    for attempt in range(_MOUNT_NAME_ATTEMPTS):
+        candidate = _stepped_name(requested, attempt)
+        if candidate not in taken:
+            return await sessions_q.attach_file(
+                db, session, file_id=file.id, path=candidate
+            )
+    raise Conflict(
+        f"No free name for {requested!r} in Session {session.id} "
+        f"after {_MOUNT_NAME_ATTEMPTS} attempts"
+    )
 
 
 def _output_path(requested: str) -> str:

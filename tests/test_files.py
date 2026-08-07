@@ -439,6 +439,41 @@ async def test_a_live_upload_does_not_overwrite_an_occupied_path(
     assert len(live_uploader.calls) == 1
 
 
+async def test_two_files_of_one_name_land_beside_each_other(
+    client, headers, bucket, agent, environment, live_uploader, db
+):
+    """No path given means no opinion about the path, so a clash is not an error.
+
+    Naming is decided here rather than by the caller retrying: this is the side
+    that holds the uniqueness constraint and has already read the bindings, so
+    it can pick a free name in the work it was doing anyway. A caller stepping
+    the name itself pays a refused round trip to learn each name it cannot have.
+
+    An explicit `path` is a different request and still refuses — see above.
+    """
+    from app.db.queries import sessions as sessions_q
+    from app.utils.sandbox import UPLOADS_DIR
+
+    first = await upload(client, headers, bucket, "report.csv")
+    second = await upload(client, headers, bucket, "report.csv")
+    session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
+
+    one = await attach_live(client, headers, session_id, first)
+    two = await attach_live(client, headers, session_id, second)
+
+    assert (one.status_code, two.status_code) == (201, 201)
+    assert one.json()["mount_path"] == f"{UPLOADS_DIR}/report.csv"
+    assert two.json()["mount_path"] == f"{UPLOADS_DIR}/report_1.csv"
+
+    rows = await sessions_q.list_session_files(db, session_id=session_id)
+    assert sorted(row.path for row in rows) == ["report.csv", "report_1.csv"]
+    # Both sets of bytes are in the container, at the names just reported.
+    assert [call[0] for call in live_uploader.calls] == [
+        f"{UPLOADS_DIR}/report.csv",
+        f"{UPLOADS_DIR}/report_1.csv",
+    ]
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -463,9 +498,21 @@ async def test_a_live_upload_cannot_escape_or_ambiguously_name_uploads(
     assert live_uploader.calls == []
 
 
-async def test_a_busy_session_refuses_a_live_upload(
+async def test_a_busy_session_still_accepts_a_live_upload(
     client, headers, bucket, agent, environment, live_uploader, db
 ):
+    """Attaching does not wait for the agent to stop talking.
+
+    This used to be a 409. It was refused so that no turn could observe a file
+    that had bytes in the container but no binding yet — a state the transaction
+    already rules out on its own, since the binding is committed only after the
+    copy succeeds. What the refusal actually cost was every attachment queueing
+    behind every other one, on the path between pressing send and the agent
+    starting.
+
+    A turn already running has snapshotted `session_files` for its prompt and
+    will not see this file. The next one will.
+    """
     from app.db.queries import sessions as sessions_q
 
     file_id = await upload(client, headers, bucket)
@@ -475,9 +522,8 @@ async def test_a_busy_session_refuses_a_live_upload(
 
     response = await attach_live(client, headers, session_id, file_id)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["type"] == "session_busy"
-    assert live_uploader.calls == []
+    assert response.status_code == 201
+    assert len(live_uploader.calls) == 1
 
 
 async def test_an_archived_session_refuses_a_live_upload(

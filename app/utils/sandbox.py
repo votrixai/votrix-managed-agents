@@ -18,6 +18,7 @@ import asyncio
 import mimetypes
 import re
 import shlex
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
@@ -68,6 +69,13 @@ GUEST_USER = "user"
 SKILLS_DIR = f"{WORKDIR}/skills"
 UPLOADS_DIR = f"{WORKDIR}/uploads"
 OUTPUTS_DIR = f"{WORKDIR}/outputs"
+
+# How long a connection just proven live is taken at its word before being
+# checked again. Long enough to cover a burst — copying one file in is two
+# calls back to back — and short enough that `set_timeout`, which is both the
+# liveness check and what stops an active container pausing, still runs often
+# against anything doing real work.
+_CONNECTION_FRESH_SECONDS = 15.0
 
 # Compatibility layout consumed by the shared CMA/VMA Agent prompts and
 # Skills.  VMA keeps its canonical E2B paths under /home/user; these aliases
@@ -451,6 +459,9 @@ class Sandbox:
         self._session_id = session_id
         self._organization_id = organization_id
         self._native = native
+        # When this handle was last proven live. None for a handle handed in
+        # rather than opened here — it gets checked once like any other.
+        self._verified_at: float | None = None
 
     @property
     def sandbox_id(self) -> str:
@@ -583,9 +594,25 @@ class Sandbox:
 
         Both branches are timed and told apart by `reused`, because they are
         not the same expense and the cheap-looking one is not free: keeping an
-        existing connection still costs an `is_running` and a `set_timeout`,
-        two round trips to E2B, and this runs before *every* backend call.
+        existing connection still costs a `set_timeout`, a round trip to E2B,
+        and this runs before *every* backend call.
+
+        Which is why a connection just proven live is taken at its word for a
+        few seconds. Calls arrive in bursts — copying one file in is two of
+        them back to back, and mounting three attachments was six — and asking
+        E2B six times in as many seconds whether a container is still there
+        buys nothing the first answer did not. A handle that goes stale inside
+        the window is still handled: `run` drops it and reconnects.
+
+        The window also bounds how long `set_timeout` can go uncalled, which is
+        what keeps a busy container from pausing underneath a turn.
         """
+        if (
+            self._native is not None
+            and self._verified_at is not None
+            and time.monotonic() - self._verified_at < _CONNECTION_FRESH_SECONDS
+        ):
+            return
         async with timed(
             "sandbox_connected", session_id=self._session_id, sandbox_id=self._sandbox_id
         ) as span:
@@ -600,6 +627,7 @@ class Sandbox:
                         get_settings().sandbox_timeout_seconds
                     )
                     span["reused"] = True
+                    self._verified_at = time.monotonic()
                     return
                 except Exception as exc:
                     # Not swallowed: the reconnect below either succeeds or
@@ -613,6 +641,7 @@ class Sandbox:
                 timeout=get_settings().sandbox_timeout_seconds,
                 api_key=get_settings().e2b_api_key,
             )
+            self._verified_at = time.monotonic()
 
     async def run(self, command: str, **kwargs: Any) -> ExecuteResponse:
         """Run a command in the container.
@@ -649,7 +678,10 @@ class Sandbox:
                         raise
                     # Drop the handle so `ensure_connected` builds a fresh
                     # client rather than reaching into the same dead pool.
+                    # Clearing the freshness stamp with it is what stops the
+                    # retry from being waved through as recently verified.
                     self._native = None
+                    self._verified_at = None
                     span["retried"] = "stale_connection"
                     continue
                 span["exit_code"] = getattr(result, "exit_code", None)
