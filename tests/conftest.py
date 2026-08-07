@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db.models import Base
 from app.db.queries import accounts, agents, environments
+from app.db.queries import vma_api_keys as api_keys_q
 from app.db.queries import sessions as sessions_q
 
 
@@ -32,6 +33,38 @@ async def org(db):
     organization = await accounts.create_organization(db, slug="acme", name="Acme")
     await db.commit()
     return organization.id
+
+
+@pytest_asyncio.fixture
+async def api_key(db, org):
+    """A real key for `org`, because requests are authenticated by one.
+
+    Which tenant a request reaches is read off the key, so a test cannot name
+    a tenant it has no key for — the same thing a caller cannot do.
+    """
+    _, token = await api_keys_q.create_vma_api_key(db, organization_id=org, name="test")
+    await db.commit()
+    return token
+
+
+@pytest_asyncio.fixture
+async def headers(api_key):
+    return {"x-api-key": api_key}
+
+
+@pytest_asyncio.fixture
+async def other_tenant(db):
+    """A second Organization and the key that reaches it.
+
+    Reaching one takes a key issued for it — a test cannot name a tenant it
+    holds no key for, which is exactly what a caller cannot do.
+    """
+    other = await accounts.create_organization(db, slug="other", name="Other")
+    _, token = await api_keys_q.create_vma_api_key(
+        db, organization_id=other.id, name="other"
+    )
+    await db.commit()
+    return other.id, {"x-api-key": token}
 
 
 @pytest_asyncio.fixture

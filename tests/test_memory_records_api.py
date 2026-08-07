@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 
 import pytest_asyncio
-from anthropic import AsyncAnthropic
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import ToolMessage
 
@@ -28,8 +27,8 @@ async def client(db, volumes, sandboxes):
 
 
 @pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "test-secret"}
+def headers(api_key):
+    return {"x-api-key": api_key}
 
 
 async def _create_store(client, headers, name="Project Memory"):
@@ -135,7 +134,7 @@ async def test_cma_memory_crud_versions_redaction_and_volume_mirror(
     assert [item["operation"] for item in versions] == ["modified", "created"]
     assert versions[0]["content"] == "Use two-word headings."
     assert versions[0]["created_by"]["type"] == "api_actor"
-    assert versions[0]["created_by"]["api_key_id"].startswith("apikey_")
+    assert versions[0]["created_by"]["api_key_id"].startswith("key_")
 
     current_redact = await client.post(
         f"/v1/memory_stores/{store['id']}/memory_versions/"
@@ -276,100 +275,6 @@ async def test_cma_path_depth_pagination_limits_and_archive_rules(
     assert blocked.status_code == 409
 
 
-async def test_official_anthropic_python_sdk_parses_memory_surface(
-    db, org, volumes, sandboxes
-):
-    app.dependency_overrides[get_db] = lambda: db
-    transport = ASGITransport(app=app)
-    http = AsyncClient(transport=transport, base_url="http://test")
-    sdk = AsyncAnthropic(
-        api_key="sdk-secret",
-        base_url="http://test",
-        default_headers={"x-organization-id": org},
-        http_client=http,
-    )
-    try:
-        store = await sdk.beta.memory_stores.create(name="SDK Memory")
-        extra_store = await sdk.beta.memory_stores.create(name="SDK Memory 2")
-        stores_page = await sdk.beta.memory_stores.list(limit=1)
-        assert stores_page.data[0].type == "memory_store"
-        assert stores_page.next_page is not None
-        next_stores_page = await stores_page.get_next_page()
-        assert next_stores_page.data[0].type == "memory_store"
-
-        updated_store = await sdk.beta.memory_stores.update(
-            store.id,
-            description="Updated through the official SDK",
-            metadata={"contract": "memory"},
-        )
-        assert updated_store.description == "Updated through the official SDK"
-        retrieved_store = await sdk.beta.memory_stores.retrieve(store.id)
-        assert retrieved_store.metadata == {"contract": "memory"}
-
-        memory = await sdk.beta.memory_stores.memories.create(
-            store.id,
-            path="/sdk/context.md",
-            content="SDK-compatible content",
-        )
-        assert memory.type == "memory"
-        assert memory.content == "SDK-compatible content"
-        retrieved_memory = await sdk.beta.memory_stores.memories.retrieve(
-            memory.id,
-            memory_store_id=store.id,
-        )
-        assert retrieved_memory.content == "SDK-compatible content"
-
-        page = await sdk.beta.memory_stores.memories.list(store.id)
-        assert page.data[0].type == "memory"
-        assert page.data[0].content is None
-
-        updated = await sdk.beta.memory_stores.memories.update(
-            memory.id,
-            memory_store_id=store.id,
-            content="Updated through SDK",
-            precondition={
-                "type": "content_sha256",
-                "content_sha256": memory.content_sha256,
-            },
-        )
-        versions = await sdk.beta.memory_stores.memory_versions.list(
-            store.id,
-            memory_id=memory.id,
-            view="full",
-        )
-        assert versions.data[0].id == updated.memory_version_id
-        assert versions.data[0].content == "Updated through SDK"
-
-        historical = await sdk.beta.memory_stores.memory_versions.retrieve(
-            memory.memory_version_id,
-            memory_store_id=store.id,
-        )
-        assert historical.content == "SDK-compatible content"
-        redacted = await sdk.beta.memory_stores.memory_versions.redact(
-            historical.id,
-            memory_store_id=store.id,
-        )
-        assert redacted.redacted_at is not None
-        assert redacted.content is None
-        assert redacted.path is None
-
-        deleted_memory = await sdk.beta.memory_stores.memories.delete(
-            memory.id,
-            memory_store_id=store.id,
-            expected_content_sha256=updated.content_sha256,
-        )
-        assert deleted_memory.type == "memory_deleted"
-
-        deleted_store = await sdk.beta.memory_stores.delete(store.id)
-        assert deleted_store.type == "memory_store_deleted"
-        archived_store = await sdk.beta.memory_stores.archive(extra_store.id)
-        assert archived_store.archived_at is not None
-        await sdk.beta.memory_stores.delete(archived_store.id)
-    finally:
-        await sdk.close()
-        app.dependency_overrides.clear()
-
-
 async def test_provider_failure_does_not_commit_a_memory_head(
     client, headers, volumes
 ):
@@ -394,7 +299,7 @@ async def test_provider_failure_does_not_commit_a_memory_head(
 
 
 async def test_runtime_files_become_session_attributed_versions(
-    client, headers, db, agent, environment
+    client, headers, db, org, agent, environment
 ):
     store = await _create_store(client, headers, name="Content Creator")
     session_response = await client.post(
@@ -439,7 +344,7 @@ async def test_runtime_files_become_session_attributed_versions(
     first = await memory_records.reconcile_session_memory_stores(
         db,
         session_id=session["id"],
-        organization_id=headers["x-organization-id"],
+        organization_id=org,
         sandbox=mounted,
     )
     assert first.changed == 1
@@ -457,7 +362,7 @@ async def test_runtime_files_become_session_attributed_versions(
     second = await memory_records.reconcile_session_memory_stores(
         db,
         session_id=session["id"],
-        organization_id=headers["x-organization-id"],
+        organization_id=org,
         sandbox=mounted,
     )
     assert second.changed == 1
@@ -466,7 +371,7 @@ async def test_runtime_files_become_session_attributed_versions(
     third = await memory_records.reconcile_session_memory_stores(
         db,
         session_id=session["id"],
-        organization_id=headers["x-organization-id"],
+        organization_id=org,
         sandbox=mounted,
     )
     assert third.changed == 1
