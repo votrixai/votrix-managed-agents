@@ -4920,22 +4920,6 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
           },
-          "byok_usage_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-          },
-          "byok_usage_daily_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-          },
-          "byok_usage_weekly_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-          },
-          "byok_usage_monthly_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-          },
           "limit_usd": {
             "anyOf": [
               {
@@ -4966,11 +4950,7 @@
           "usage_usd",
           "usage_daily_usd",
           "usage_weekly_usd",
-          "usage_monthly_usd",
-          "byok_usage_usd",
-          "byok_usage_daily_usd",
-          "byok_usage_weekly_usd",
-          "byok_usage_monthly_usd"
+          "usage_monthly_usd"
         ],
         "title": "AccountUsageResponse",
         "description": "What an Account has spent, in USD, as the provider counts it.\n\nRead from the provider rather than accumulated here, so it includes\neverything the Account's credential was charged for — not only the calls\nthis platform observed.\n\nEvery figure is cumulative within its window and updates as calls complete.\nThe period figures reset on the provider's UTC boundaries; `usage_usd` never\nresets, which is what makes a difference between two readings meaningful."

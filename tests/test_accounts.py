@@ -527,7 +527,6 @@ async def test_usage_comes_from_the_provider_that_charges_it(db, org):
     )
 
     assert usage.usage_usd == Decimal("2.5")
-    assert usage.byok_usage_usd == Decimal("0")
 
 
 async def test_usage_reports_the_headroom_left_under_a_limit(db, org):
