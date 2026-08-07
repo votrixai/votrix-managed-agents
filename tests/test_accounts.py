@@ -508,3 +508,85 @@ async def test_an_unprovisioned_account_has_no_key_to_hand_over(db, org):
         )
 
     assert "provisioned" in str(raised.value)
+
+
+async def test_usage_comes_from_the_provider_that_charges_it(db, org):
+    """Read where the money leaves, not where we happened to be looking.
+
+    A total accumulated from turns we observed is short by whatever we did not
+    observe, and short in one direction only.
+    """
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Research", keys=keys
+    )
+    keys.usage[account.credential.key_hash] = Decimal("2.5")
+
+    usage = await service.get_account_usage(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    assert usage.usage_usd == Decimal("2.5")
+
+
+async def test_usage_reports_the_headroom_left_under_a_limit(db, org):
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Capped", limit_usd=Decimal("10"), keys=keys
+    )
+    keys.usage[account.credential.key_hash] = Decimal("4")
+
+    usage = await service.get_account_usage(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    assert usage.limit_usd == Decimal("10")
+    assert usage.limit_remaining_usd == Decimal("6")
+
+
+async def test_an_uncapped_account_reports_no_ceiling_rather_than_zero(db, org):
+    """None is uncapped; zero would read as an Account that may spend nothing."""
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Open", keys=keys
+    )
+
+    usage = await service.get_account_usage(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    assert usage.limit_usd is None
+    assert usage.limit_remaining_usd is None
+
+
+async def test_a_suspended_account_still_reports_what_it_spent(db, org):
+    """Most of the reason an Account is suspended rather than removed."""
+    keys = FakeKeys()
+    account = await service.create_account(
+        db, organization_id=org, name="Research", keys=keys
+    )
+    keys.usage[account.credential.key_hash] = Decimal("7.25")
+    await service.suspend_account(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    usage = await service.get_account_usage(
+        db, organization_id=org, account_id=account.id, keys=keys
+    )
+
+    assert usage.usage_usd == Decimal("7.25")
+
+
+async def test_an_account_with_no_credential_has_nothing_to_report(db, bare_org):
+    keys = FakeKeys()
+    stranded_id = (
+        await accounts_q.create_account(
+            db, organization_id=bare_org, name="Half made", is_default=False
+        )
+    ).id
+    await db.commit()
+
+    with pytest.raises(AccountUnavailable):
+        await service.get_account_usage(
+            db, organization_id=bare_org, account_id=stranded_id, keys=keys
+        )

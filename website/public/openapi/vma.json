@@ -508,6 +508,66 @@
         "description": "Retrieve Account within the Organization selected by the `x-organization-id` header."
       }
     },
+    "/v1/accounts/{account_id}/usage": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Retrieve Account Usage",
+        "description": "What this Account has spent, in USD.\n\nRead live from the provider that charges it, so the answer includes every\ncall made on this Account's credential rather than only the ones this\nplatform recorded. It is current as of the request; there is no settlement\ndelay to wait out.\n\nAnswered for a suspended Account too. What one spent has to stay readable,\nwhich is most of the reason Accounts are suspended rather than removed.",
+        "operationId": "retrieve_account_usage_v1_accounts__account_id__usage_get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountUsageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/accounts/{account_id}/suspend": {
       "post": {
         "tags": [
@@ -4823,6 +4883,67 @@
           "is_default"
         ],
         "title": "AccountResponse"
+      },
+      "AccountUsageResponse": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "account_usage",
+            "default": "account_usage"
+          },
+          "usage_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "usage_daily_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "usage_weekly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "usage_monthly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "limit_usd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit_remaining_usd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "usage_usd",
+          "usage_daily_usd",
+          "usage_weekly_usd",
+          "usage_monthly_usd"
+        ],
+        "title": "AccountUsageResponse",
+        "description": "What an Account has spent, in USD, as the provider counts it.\n\nRead from the provider rather than accumulated here, so it includes\neverything the Account's credential was charged for — not only the calls\nthis platform observed.\n\nEvery figure is cumulative within its window and updates as calls complete.\nThe period figures reset on the provider's UTC boundaries; `usage_usd` never\nresets, which is what makes a difference between two readings meaningful."
       },
       "AgentCreateRequest": {
         "properties": {

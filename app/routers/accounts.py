@@ -10,7 +10,11 @@ from fastapi import APIRouter, status
 from app.db.models import OrganizationAccount
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models.common import ListResponse, page_of
-from app.models.accounts import AccountCreateRequest, AccountResponse
+from app.models.accounts import (
+    AccountCreateRequest,
+    AccountResponse,
+    AccountUsageResponse,
+)
 from app.routers.deps import Db, OrganizationId
 from app.services import accounts as service
 
@@ -71,6 +75,36 @@ async def retrieve_account(
         db, organization_id=organization_id, account_id=account_id
     )
     return to_account(account)
+
+
+@router.get("/{account_id}/usage", response_model=AccountUsageResponse)
+async def retrieve_account_usage(
+    account_id: str,
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """What this Account has spent, in USD.
+
+    Read live from the provider that charges it, so the answer includes every
+    call made on this Account's credential rather than only the ones this
+    platform recorded. It is current as of the request; there is no settlement
+    delay to wait out.
+
+    Answered for a suspended Account too. What one spent has to stay readable,
+    which is most of the reason Accounts are suspended rather than removed.
+    """
+    usage = await service.get_account_usage(
+        db, organization_id=organization_id, account_id=account_id
+    )
+    return AccountUsageResponse(
+        account_id=account_id,
+        usage_usd=usage.usage_usd,
+        usage_daily_usd=usage.usage_daily_usd,
+        usage_weekly_usd=usage.usage_weekly_usd,
+        usage_monthly_usd=usage.usage_monthly_usd,
+        limit_usd=usage.limit_usd,
+        limit_remaining_usd=usage.limit_remaining_usd,
+    )
 
 
 @router.post("/{account_id}/suspend", response_model=AccountResponse)

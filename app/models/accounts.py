@@ -46,4 +46,29 @@ class AccountResponse(ApiModel):
     limit_usd: Decimal | None = None
 
 
-__all__ = ["AccountCreateRequest", "AccountResponse"]
+class AccountUsageResponse(ApiModel):
+    """What an Account has spent, in USD, as the provider counts it.
+
+    Read from the provider rather than accumulated here, so it includes
+    everything the Account's credential was charged for — not only the calls
+    this platform observed.
+
+    Every figure is cumulative within its window and updates as calls complete.
+    The period figures reset on the provider's UTC boundaries; `usage_usd` never
+    resets, which is what makes a difference between two readings meaningful.
+    """
+
+    account_id: str
+    type: Literal["account_usage"] = "account_usage"
+    # The Account's whole life. Bill from differences between readings of this
+    # rather than from the period figures, whose resets fall on UTC boundaries
+    # that are unlikely to be anyone's billing period.
+    usage_usd: Decimal
+    usage_daily_usd: Decimal
+    usage_weekly_usd: Decimal
+    usage_monthly_usd: Decimal
+    limit_usd: Decimal | None = None
+    limit_remaining_usd: Decimal | None = None
+
+
+__all__ = ["AccountCreateRequest", "AccountResponse", "AccountUsageResponse"]
