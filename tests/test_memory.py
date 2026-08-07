@@ -8,8 +8,8 @@ from app.db.models.memory import (
     VOLUME_PROVISIONING,
     VOLUME_READY,
 )
-from app.db.queries import accounts
-from app.services import accounts as accounts_service
+from app.db.queries import organizations
+from app.services import organizations as organizations_service
 from tests.conftest import FakeKeys
 from app.db.queries import memory as memory_q
 
@@ -82,7 +82,7 @@ async def test_provider_failure_is_persisted_for_a_retry(db, org):
 
 
 async def test_a_store_can_only_be_read_inside_its_organization(db, org):
-    other = await accounts_service.create_organization(db, keys=FakeKeys(), slug="other", name="Other")
+    other = await organizations_service.create_organization(db, keys=FakeKeys(), slug="other", name="Other")
     store = await memory_q.create_memory_store(
         db, organization_id=org, name="Private memory"
     )

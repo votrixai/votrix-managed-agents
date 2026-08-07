@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from app.security.secret_cipher import (
+from app.utils.secret_cipher import (
     SecretCipher,
     SecretCipherConfigurationError,
     SecretCipherError,

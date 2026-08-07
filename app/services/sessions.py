@@ -54,7 +54,7 @@ from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
 from app.services import memory_records
-from app.services import organization_accounts as billing_accounts
+from app.services import accounts as accounts_service
 from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
 from app.utils.volume import (
@@ -196,7 +196,7 @@ async def _create_session(
     # cannot pay stops the Session here rather than after minutes of
     # provisioning. Pinned, so this conversation's spend stays on one Account
     # even if the Organization's default moves later.
-    account = await billing_accounts.require_spendable_account(
+    account = await accounts_service.require_spendable_account(
         db, organization_id=organization_id, account_id=account_id
     )
 
@@ -601,7 +601,7 @@ async def process_session(
     #
     # `account_id` is None on Sessions opened before Accounts existed; those
     # fall back to the Organization's default.
-    inference_key = await billing_accounts.resolve_spendable_key(
+    inference_key = await accounts_service.resolve_spendable_key(
         db,
         organization_id=session.organization_id,
         account_id=session.account_id,

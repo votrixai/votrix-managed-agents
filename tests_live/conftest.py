@@ -169,11 +169,11 @@ async def organization(server) -> str:
     when something has to be looked at by hand afterwards.
     """
     from app.db.engine import session_scope
-    from app.db.queries import accounts
+    from app.db.queries import organizations
 
     slug = f"live-{uuid.uuid4().hex[:10]}"
     async with session_scope() as db:
-        created = await accounts.create_organization(db, slug=slug, name="Live tests")
+        created = await organizations.create_organization(db, slug=slug, name="Live tests")
         await db.commit()
         return created.id
 

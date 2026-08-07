@@ -30,8 +30,8 @@ from sqlalchemy import select
 
 from app.db.engine import session_scope
 from app.db.models import Organization
-from app.db.queries import organization_accounts as accounts_q
-from app.services import organization_accounts as billing_accounts
+from app.db.queries import accounts as accounts_q
+from app.services import accounts as accounts_service
 
 
 @dataclass
@@ -67,7 +67,7 @@ async def _run(*, dry_run: bool, limit: int | None) -> Result:
                 continue
 
             try:
-                await billing_accounts.ensure_default_account(
+                await accounts_service.ensure_default_account(
                     db, organization_id=organization_id
                 )
             except Exception as exc:

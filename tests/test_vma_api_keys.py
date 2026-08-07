@@ -2,12 +2,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.services import accounts as accounts_service
+from app.services import organizations as organizations_service
 from tests.conftest import FakeKeys
 from sqlalchemy.exc import IntegrityError
 
 from app.config import clear_settings_cache
-from app.db.queries import accounts
+from app.db.queries import organizations
 from app.db.queries import vma_api_keys as keys
 
 
@@ -67,7 +67,7 @@ async def test_create_vma_api_key_only_persists_hash(db, org):
 
 
 async def test_vma_api_key_queries_are_tenant_scoped(db, org):
-    other = await accounts_service.create_organization(db, keys=FakeKeys(), slug="other-keys", name="Other")
+    other = await organizations_service.create_organization(db, keys=FakeKeys(), slug="other-keys", name="Other")
     first, _ = await keys.create_vma_api_key(
         db,
         organization_id=org,
@@ -204,7 +204,7 @@ async def test_only_one_key_can_replace_a_generation(db, org):
 
 
 async def test_replacement_lineage_cannot_cross_organizations(db, org):
-    other = await accounts_service.create_organization(
+    other = await organizations_service.create_organization(
         db,
         keys=FakeKeys(),
         slug="other-lineage",

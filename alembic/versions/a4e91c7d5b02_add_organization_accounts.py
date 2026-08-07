@@ -1,4 +1,4 @@
-"""add billing accounts and their provider credentials
+"""add organization accounts and their provider credentials
 
 Revision ID: a4e91c7d5b02
 Revises: d4f7a9c2e106

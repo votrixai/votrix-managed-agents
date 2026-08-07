@@ -18,15 +18,15 @@ from pydantic import SecretStr
 
 from app.config import get_settings
 from app.db.models import Base
-from app.db.queries import accounts, agents, environments
+from app.db.queries import organizations, agents, environments
 from app.db.queries import vma_api_keys as api_keys_q
 from app.db.queries import sessions as sessions_q
 from app.integrations.openrouter_management import (
     CreatedOpenRouterKey,
     OpenRouterKeyMetadata,
 )
+from app.services import organizations as organizations_service
 from app.services import accounts as accounts_service
-from app.services import organization_accounts as billing_accounts
 
 # 32 bytes, base64url. Real deployments read this from a secret; a test only
 # needs the cipher to round-trip.
@@ -88,10 +88,10 @@ def encryption_key(monkeypatch):
     """Account credentials are never stored in the clear, tests included."""
     monkeypatch.setenv("VMA_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
     get_settings.cache_clear()
-    billing_accounts._cipher.cache_clear()
+    accounts_service._cipher.cache_clear()
     yield
     get_settings.cache_clear()
-    billing_accounts._cipher.cache_clear()
+    accounts_service._cipher.cache_clear()
 
 
 @pytest_asyncio.fixture
@@ -112,7 +112,7 @@ async def org(db):
     Sessions resolve their Account from here, so an Organization without one
     cannot open a conversation at all.
     """
-    organization = await accounts_service.create_organization(
+    organization = await organizations_service.create_organization(
         db, slug="acme", name="Acme", keys=FakeKeys()
     )
     await db.commit()
@@ -126,7 +126,7 @@ async def bare_org(db):
     What one made before Accounts existed looks like, and what a creation that
     stopped halfway leaves behind.
     """
-    organization = await accounts.create_organization(db, slug="bare", name="Bare")
+    organization = await organizations.create_organization(db, slug="bare", name="Bare")
     await db.commit()
     return organization.id
 
@@ -155,7 +155,7 @@ async def other_tenant(db):
     Reaching one takes a key issued for it — a test cannot name a tenant it
     holds no key for, which is exactly what a caller cannot do.
     """
-    other = await accounts.create_organization(db, slug="other", name="Other")
+    other = await organizations.create_organization(db, slug="other", name="Other")
     _, token = await api_keys_q.create_vma_api_key(
         db, organization_id=other.id, name="other"
     )

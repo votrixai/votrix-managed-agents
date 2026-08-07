@@ -21,21 +21,21 @@ from app.models.errors import (
 from app.routers import (
     accounts,
     agents,
-    billing_accounts,
     environments,
     files,
     health,
     internal_work,
     llm,
     memory,
+    organizations,
     sessions,
     skills,
 )
 
 ROUTERS = (
     health.router,
+    organizations.router,
     accounts.router,
-    billing_accounts.router,
     agents.router,
     sessions.router,
     environments.router,

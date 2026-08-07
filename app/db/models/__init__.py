@@ -1,4 +1,4 @@
-from app.db.models.accounts import (
+from app.db.models.organizations import (
     MEMBER_ROLE_ADMIN,
     MEMBER_ROLE_MEMBER,
     MEMBER_ROLE_OWNER,
@@ -7,7 +7,7 @@ from app.db.models.accounts import (
     OrganizationMember,
 )
 from app.db.models.agents import Agent, AgentVersion
-from app.db.models.organization_accounts import (
+from app.db.models.accounts import (
     ACCOUNT_ACTIVE,
     ACCOUNT_PROVISIONING,
     ACCOUNT_STATUSES,
