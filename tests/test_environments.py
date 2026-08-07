@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.queries import accounts
+from app.db.queries import organizations
 from app.db.queries import vma_api_keys as api_keys_q
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

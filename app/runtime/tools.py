@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 
-from app.config import get_settings
 from app.models.llm import OPENROUTER_SLUGS
 from app.utils.sandbox import WORKDIR
 
@@ -121,8 +120,13 @@ def custom_tool(spec: dict[str, Any]) -> StructuredTool:
     )
 
 
-async def describe_image(data: bytes, mime_type: str, query: str) -> str:
+async def describe_image(
+    data: bytes, mime_type: str, query: str, *, api_key: str
+) -> str:
     """Ask the vision model one question about one image.
+
+    Billed to the same Account as the turn that called the tool, so looking at
+    a picture is not quietly charged somewhere else.
 
     Separate from the tool so a test can replace the network call and still
     exercise everything around it.
@@ -131,7 +135,7 @@ async def describe_image(data: bytes, mime_type: str, query: str) -> str:
 
     vision = ChatOpenRouter(
         model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
-        api_key=get_settings().openrouter_api_key,
+        api_key=api_key,
     )
     encoded = base64.b64encode(data).decode("ascii")
     answer = await vision.ainvoke(
@@ -160,7 +164,7 @@ async def describe_image(data: bytes, mime_type: str, query: str) -> str:
     ).strip()
 
 
-def read_image_tool(sandbox: Sandbox) -> StructuredTool:
+def read_image_tool(sandbox: Sandbox, *, api_key: str) -> StructuredTool:
     """Looking at an image, for a model that cannot.
 
     `read_file` already returns an image as a content block, which is the right
@@ -181,7 +185,7 @@ def read_image_tool(sandbox: Sandbox) -> StructuredTool:
                 f"read_image cannot open {target}: it reads "
                 f"{', '.join(sorted(READ_IMAGE_TYPES))} and this is {suffix or 'extensionless'}."
             )
-        if not get_settings().openrouter_api_key:
+        if not api_key:
             return "read_image is unavailable: no vision model is configured on this server."
 
         try:
@@ -194,7 +198,7 @@ def read_image_tool(sandbox: Sandbox) -> StructuredTool:
             return f"read_image could not read {target}: {type(exc).__name__}: {exc}"
 
         try:
-            return await describe_image(data, mime_type, query)
+            return await describe_image(data, mime_type, query, api_key=api_key)
         except Exception as exc:
             return f"read_image could not look at {target}: {type(exc).__name__}: {exc}"
 

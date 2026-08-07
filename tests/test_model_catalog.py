@@ -45,16 +45,16 @@ def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
 
 def test_an_uncatalogued_model_is_refused_before_any_client_is_built():
     with pytest.raises(UnknownModelError):
-        _build_chat_model("no-such-model")
+        _build_chat_model("no-such-model", api_key="sk-or-v1-test")
 
 
-def test_every_catalog_model_builds_one_gateway_client(monkeypatch):
-    """One client class for all of them — that is the point of the gateway."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    from app.config import get_settings
+def test_every_catalog_model_builds_one_gateway_client():
+    """One client class for all of them — that is the point of the gateway.
 
-    get_settings.cache_clear()
-    built = [_build_chat_model(m.id) for m in MODEL_CATALOG]
+    The credential is handed in rather than read from configuration, which is
+    what lets one deployment run every Account on its own key.
+    """
+    built = [_build_chat_model(m.id, api_key="sk-or-v1-test") for m in MODEL_CATALOG]
 
     assert {type(client).__name__ for client in built} == {"ChatOpenRouter"}
     assert [client.model for client in built] == [

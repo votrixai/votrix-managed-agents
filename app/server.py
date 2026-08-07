@@ -27,12 +27,14 @@ from app.routers import (
     internal_work,
     llm,
     memory,
+    organizations,
     sessions,
     skills,
 )
 
 ROUTERS = (
     health.router,
+    organizations.router,
     accounts.router,
     agents.router,
     sessions.router,

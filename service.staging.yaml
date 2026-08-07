@@ -109,11 +109,16 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url-staging
-            - name: OPENROUTER_API_KEY
+            - name: OPENROUTER_MANAGEMENT_KEY
               valueFrom:
                 secretKeyRef:
                   key: latest
-                  name: vma-openrouter-api-key-staging
+                  name: vma-openrouter-management-key-staging
+            - name: VMA_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-encryption-key-staging
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

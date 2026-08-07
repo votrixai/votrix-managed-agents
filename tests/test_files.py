@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.db.queries import accounts
+from app.db.queries import organizations
 
 from app.db.queries import vma_api_keys as api_keys_q
 import pytest_asyncio
@@ -160,7 +160,7 @@ async def test_where_the_bytes_live_is_never_published(client, headers, bucket):
 
 async def test_another_tenant_cannot_see_the_file(client, headers, bucket, db, other_tenant):
     other_id, other_headers = other_tenant
-    from app.db.queries import accounts
+    from app.db.queries import organizations
 
     file_id = await upload(client, headers, bucket)
 
