@@ -527,16 +527,6 @@
             "description": "Unique identifier of the account addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
