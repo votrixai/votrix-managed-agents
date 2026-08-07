@@ -202,9 +202,15 @@ async def ensure_default_account(
         # one and failed before recording it. Its secret cannot be read back,
         # so it can neither be adopted nor safely replaced from here — minting
         # again would leave a live credential nothing accounts for.
+        #
+        # The name stays out of the message. It spells out the provider, the
+        # environment and our key-naming scheme, and this error is one an
+        # Account holder could be shown. An operator finds the key by building
+        # the same name from the Account id, which the message does give.
         raise Conflict(
-            f"A provider key named {expected} already exists; "
-            "it has to be revoked before this Account can be provisioned"
+            f"Account {default.id} already has a provider key from an "
+            "interrupted attempt; it has to be revoked before this Account "
+            "can be provisioned"
         )
     return await _provision_credential(db, account=default, keys=provider)
 

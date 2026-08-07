@@ -88,6 +88,9 @@ class FakeKeys:
             usage_weekly_usd=spent,
             usage_monthly_usd=spent,
             byok_usage_usd=Decimal("0"),
+            byok_usage_daily_usd=Decimal("0"),
+            byok_usage_weekly_usd=Decimal("0"),
+            byok_usage_monthly_usd=Decimal("0"),
             limit_usd=limit,
             limit_remaining_usd=None if limit is None else limit - spent,
         )

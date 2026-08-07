@@ -63,10 +63,15 @@ class OpenRouterKeyUsage:
     usage_daily_usd: Decimal
     usage_weekly_usd: Decimal
     usage_monthly_usd: Decimal
-    # Spend on a customer's own provider credentials, counted separately by the
-    # provider and excluded from `usage`. Zero until BYOK exists, and here so
-    # that a total is not silently short the day it does.
+    # Spend on a customer's own provider credentials. The provider counts this
+    # apart from everything above and leaves it out of `usage`, so a total that
+    # ignored it would be silently short the day BYOK exists. Same four windows,
+    # because a figure with fewer of them is one nobody can line up against the
+    # others.
     byok_usage_usd: Decimal
+    byok_usage_daily_usd: Decimal
+    byok_usage_weekly_usd: Decimal
+    byok_usage_monthly_usd: Decimal
     limit_usd: Decimal | None
     limit_remaining_usd: Decimal | None
 
@@ -255,6 +260,9 @@ class OpenRouterManagementClient:
             usage_weekly_usd=_decimal(getattr(data, "usage_weekly", None)),
             usage_monthly_usd=_decimal(getattr(data, "usage_monthly", None)),
             byok_usage_usd=_decimal(getattr(data, "byok_usage", None)),
+            byok_usage_daily_usd=_decimal(getattr(data, "byok_usage_daily", None)),
+            byok_usage_weekly_usd=_decimal(getattr(data, "byok_usage_weekly", None)),
+            byok_usage_monthly_usd=_decimal(getattr(data, "byok_usage_monthly", None)),
             limit_usd=_optional_decimal(getattr(data, "limit", None)),
             limit_remaining_usd=_optional_decimal(getattr(data, "limit_remaining", None)),
         )
