@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import uuid
+from decimal import Decimal
 
 import pytest
 import pytest_asyncio
@@ -46,6 +47,10 @@ class FakeKeys:
         self._prefix = uuid.uuid4().hex[:8]
         self.created: list[tuple[str, object]] = []
         self.secrets: list[str] = []
+        # What the provider would report for each key, so a test can say a key
+        # has spent something without pretending to make a call.
+        self.usage: dict[str, Decimal] = {}
+        self.limits: dict[str, Decimal | None] = {}
         self.updates: list[tuple[str, bool | None]] = []
         self.deleted: list[str] = []
 
@@ -53,6 +58,7 @@ class FakeKeys:
         self.created.append((name, limit_usd))
         secret = f"sk-or-v1-{self._prefix}-{len(self.created)}"
         self.secrets.append(secret)
+        self.limits[f"hash-{self._prefix}-{len(self.created)}"] = limit_usd
         return CreatedOpenRouterKey(
             key_hash=f"hash-{self._prefix}-{len(self.created)}",
             key_name=name,
@@ -70,6 +76,21 @@ class FakeKeys:
             )
             for index, (name, _) in enumerate(self.created, start=1)
         ]
+
+    async def get_key_usage(self, key_hash: str):
+        from app.utils.openrouter_management import OpenRouterKeyUsage
+
+        spent = self.usage.get(key_hash, Decimal("0"))
+        limit = self.limits.get(key_hash)
+        return OpenRouterKeyUsage(
+            usage_usd=spent,
+            usage_daily_usd=spent,
+            usage_weekly_usd=spent,
+            usage_monthly_usd=spent,
+            byok_usage_usd=Decimal("0"),
+            limit_usd=limit,
+            limit_remaining_usd=None if limit is None else limit - spent,
+        )
 
     async def disable_key(self, key_hash: str) -> None:
         self.updates.append((key_hash, True))

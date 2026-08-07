@@ -47,6 +47,31 @@ class CreatedOpenRouterKey:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenRouterKeyUsage:
+    """What one key has spent, as the provider counts it.
+
+    These are the provider's own figures — the same ones it bills against —
+    rather than a total we accumulated from what we saw. Anything spent on this
+    key is in here, including calls we never observed.
+
+    Every figure is cumulative and monotonic within its window. `usage` covers
+    the key's whole life, which is the Account's whole life while a key is
+    never rotated.
+    """
+
+    usage_usd: Decimal
+    usage_daily_usd: Decimal
+    usage_weekly_usd: Decimal
+    usage_monthly_usd: Decimal
+    # Spend on a customer's own provider credentials, counted separately by the
+    # provider and excluded from `usage`. Zero until BYOK exists, and here so
+    # that a total is not silently short the day it does.
+    byok_usage_usd: Decimal
+    limit_usd: Decimal | None
+    limit_remaining_usd: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
 class OpenRouterKeyMetadata:
     key_hash: str
     key_name: str
@@ -63,6 +88,8 @@ class OpenRouterKeyAdmin(Protocol):
     ) -> CreatedOpenRouterKey: ...
 
     async def list_keys(self, *, include_disabled: bool = True) -> list[OpenRouterKeyMetadata]: ...
+
+    async def get_key_usage(self, key_hash: str) -> OpenRouterKeyUsage: ...
 
     async def disable_key(self, key_hash: str) -> None: ...
 
@@ -218,6 +245,20 @@ class OpenRouterManagementClient:
                 return result
             offset += len(page)
 
+    async def get_key_usage(self, key_hash: str) -> OpenRouterKeyUsage:
+        """Read one key's counters, without listing every key to find it."""
+        response = await self._sdk.api_keys.get_async(hash=key_hash)
+        data = response.data
+        return OpenRouterKeyUsage(
+            usage_usd=_decimal(getattr(data, "usage", None)),
+            usage_daily_usd=_decimal(getattr(data, "usage_daily", None)),
+            usage_weekly_usd=_decimal(getattr(data, "usage_weekly", None)),
+            usage_monthly_usd=_decimal(getattr(data, "usage_monthly", None)),
+            byok_usage_usd=_decimal(getattr(data, "byok_usage", None)),
+            limit_usd=_optional_decimal(getattr(data, "limit", None)),
+            limit_remaining_usd=_optional_decimal(getattr(data, "limit_remaining", None)),
+        )
+
     async def disable_key(self, key_hash: str) -> None:
         await self.update_key(key_hash, disabled=True)
 
@@ -256,6 +297,20 @@ class OpenRouterManagementClient:
 
 _client: OpenRouterManagementClient | None = None
 _client_lock = Lock()
+
+
+def _decimal(value: object) -> Decimal:
+    """A missing counter is zero spend, not an error.
+
+    The provider omits a field it has nothing to report for, and a key that has
+    never been used has nothing to report.
+    """
+    return Decimal("0") if value is None else Decimal(str(value))
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    """None means uncapped, which is not the same as a cap of zero."""
+    return None if value is None else Decimal(str(value))
 
 
 def _required_string(value: object, *, field: str) -> str:
