@@ -1,8 +1,8 @@
 """OpenRouter management-key boundary.
 
 The credential used here is deliberately incapable of model inference.  The
-runtime never imports this module; it receives a decrypted Organization key
-through :mod:`app.runtime.inference` instead.
+runtime never imports this module; :mod:`app.runtime.engine` reaches the models
+with a decrypted Account key instead.
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ from app.db.models.accounts import (
     CREDENTIAL_SUSPENDED,
 )
 from app.db.queries import accounts as accounts_q
-from app.integrations.openrouter_management import (
+from app.utils.openrouter_management import (
     CreatedOpenRouterKey,
     OpenRouterKeyMetadata,
 )

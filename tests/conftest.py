@@ -21,7 +21,7 @@ from app.db.models import Base
 from app.db.queries import organizations, agents, environments
 from app.db.queries import vma_api_keys as api_keys_q
 from app.db.queries import sessions as sessions_q
-from app.integrations.openrouter_management import (
+from app.utils.openrouter_management import (
     CreatedOpenRouterKey,
     OpenRouterKeyMetadata,
 )

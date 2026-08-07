@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Organization
 from app.db.queries import organizations as organizations_q
-from app.integrations.openrouter_management import OpenRouterKeyAdmin
+from app.utils.openrouter_management import OpenRouterKeyAdmin
 from app.services import accounts as accounts_service
 
 

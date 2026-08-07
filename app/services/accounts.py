@@ -27,7 +27,7 @@ from app.db.models.accounts import (
 )
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.db.queries import accounts as accounts_q
-from app.integrations.openrouter_management import (
+from app.utils.openrouter_management import (
     OpenRouterKeyAdmin,
     OpenRouterManagementClient,
 )
