@@ -27,11 +27,6 @@ from app.routers.sessions import _seq_from, _sse
 from app.services import sessions as service
 
 
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
-
-
 @pytest.fixture
 def scoped(db, monkeypatch):
     """Point the stream's own session handling at the test database.
@@ -230,10 +225,13 @@ async def test_a_single_event_can_still_be_fetched_by_id(client, headers, db, se
     assert response.json()["id"] == event.id
 
 
-async def test_someone_elses_session_is_a_404(client, db, session):
+async def test_someone_elses_session_is_a_404(client, db, session, other_tenant):
+    other_id, other_headers = other_tenant
+    """Not a 403: telling them it exists is telling them something."""
+
     response = await client.get(
         f"/v1/sessions/{session.id}/events/stream",
-        headers={"x-organization-id": "org_someone_else", "x-api-key": "anything"},
+        headers=other_headers,
     )
 
     assert response.status_code == 404

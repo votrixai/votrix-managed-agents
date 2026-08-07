@@ -7,6 +7,9 @@ asked about, and what a session is allowed to do while it is still going.
 from __future__ import annotations
 
 import pytest
+
+from app.db.queries import organizations
+from app.db.queries import vma_api_keys as api_keys_q
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -22,11 +25,6 @@ async def client(db, builds):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         yield http
     app.dependency_overrides.clear()
-
-
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
 
 
 async def create(client, headers, **body):
@@ -194,6 +192,19 @@ async def test_one_name_may_cover_a_whole_history_of_environments(client, header
     )
     assert still_there.status_code == 200
     assert still_there.json()["name"] == "shared"
+
+
+async def test_two_organizations_may_use_the_same_name(client, headers, db, other_tenant):
+    other_id, other_headers = other_tenant
+    await create(client, headers, name="shared")
+
+    response = await create(
+        client,
+        other_headers,
+        name="shared",
+    )
+
+    assert response.status_code == 201
 
 
 async def test_an_archived_environment_cannot_back_a_new_session(client, headers, agent):

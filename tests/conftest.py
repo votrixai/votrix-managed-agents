@@ -7,13 +7,111 @@ provider — a test that needs one of those stubs it explicitly.
 
 from __future__ import annotations
 
+import base64
+import uuid
+from decimal import Decimal
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from pydantic import SecretStr
+
+from app.config import get_settings
 from app.db.models import Base
-from app.db.queries import accounts, agents, environments
+from app.db.queries import organizations, agents, environments
+from app.db.queries import vma_api_keys as api_keys_q
 from app.db.queries import sessions as sessions_q
+from app.utils.openrouter_management import (
+    CreatedOpenRouterKey,
+    OpenRouterKeyMetadata,
+)
+from app.services import organizations as organizations_service
+from app.services import accounts as accounts_service
+
+# 32 bytes, base64url. Real deployments read this from a secret; a test only
+# needs the cipher to round-trip.
+TEST_ENCRYPTION_KEY = base64.urlsafe_b64encode(b"0" * 32).decode().rstrip("=")
+
+
+class FakeKeys:
+    """Stands in for the provider's key management API.
+
+    Records what was asked for, because the name and the limit are the two
+    things the Account service is responsible for getting right out there.
+    """
+
+    def __init__(self) -> None:
+        # Unique across instances, because the provider's hashes are unique
+        # across everything and the column that stores them says so.
+        self._prefix = uuid.uuid4().hex[:8]
+        self.created: list[tuple[str, object]] = []
+        self.secrets: list[str] = []
+        # What the provider would report for each key, so a test can say a key
+        # has spent something without pretending to make a call.
+        self.usage: dict[str, Decimal] = {}
+        self.limits: dict[str, Decimal | None] = {}
+        self.updates: list[tuple[str, bool | None]] = []
+        self.deleted: list[str] = []
+
+    async def create_key(self, *, name, limit_usd=None, limit_reset="monthly"):
+        self.created.append((name, limit_usd))
+        secret = f"sk-or-v1-{self._prefix}-{len(self.created)}"
+        self.secrets.append(secret)
+        self.limits[f"hash-{self._prefix}-{len(self.created)}"] = limit_usd
+        return CreatedOpenRouterKey(
+            key_hash=f"hash-{self._prefix}-{len(self.created)}",
+            key_name=name,
+            secret=SecretStr(secret),
+            limit_usd=limit_usd,
+            limit_reset=limit_reset if limit_usd is not None else None,
+        )
+
+    async def list_keys(self, *, include_disabled: bool = True):
+        return [
+            OpenRouterKeyMetadata(
+                key_hash=f"hash-{self._prefix}-{index}",
+                key_name=name,
+                disabled=False,
+            )
+            for index, (name, _) in enumerate(self.created, start=1)
+        ]
+
+    async def get_key_usage(self, key_hash: str):
+        from app.utils.openrouter_management import OpenRouterKeyUsage
+
+        spent = self.usage.get(key_hash, Decimal("0"))
+        limit = self.limits.get(key_hash)
+        return OpenRouterKeyUsage(
+            usage_usd=spent,
+            usage_daily_usd=spent,
+            usage_weekly_usd=spent,
+            usage_monthly_usd=spent,
+            limit_usd=limit,
+            limit_remaining_usd=None if limit is None else limit - spent,
+        )
+
+    async def disable_key(self, key_hash: str) -> None:
+        self.updates.append((key_hash, True))
+
+    async def update_key(
+        self, key_hash, *, disabled=None, limit_usd=None, limit_reset=None, name=None
+    ) -> None:
+        self.updates.append((key_hash, disabled))
+
+    async def delete_key(self, key_hash: str) -> None:  # pragma: no cover
+        self.deleted.append(key_hash)
+
+
+@pytest.fixture(autouse=True)
+def encryption_key(monkeypatch):
+    """Account credentials are never stored in the clear, tests included."""
+    monkeypatch.setenv("VMA_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
+    get_settings.cache_clear()
+    accounts_service._cipher.cache_clear()
+    yield
+    get_settings.cache_clear()
+    accounts_service._cipher.cache_clear()
 
 
 @pytest_asyncio.fixture
@@ -29,9 +127,60 @@ async def db():
 
 @pytest_asyncio.fixture
 async def org(db):
-    organization = await accounts.create_organization(db, slug="acme", name="Acme")
+    """An Organization with the default Account every one of them is made with.
+
+    Sessions resolve their Account from here, so an Organization without one
+    cannot open a conversation at all.
+    """
+    organization = await organizations_service.create_organization(
+        db, slug="acme", name="Acme", keys=FakeKeys()
+    )
     await db.commit()
     return organization.id
+
+
+@pytest_asyncio.fixture
+async def bare_org(db):
+    """An Organization with no Account at all.
+
+    What one made before Accounts existed looks like, and what a creation that
+    stopped halfway leaves behind.
+    """
+    organization = await organizations.create_organization(db, slug="bare", name="Bare")
+    await db.commit()
+    return organization.id
+
+
+@pytest_asyncio.fixture
+async def api_key(db, org):
+    """A real key for `org`, because requests are authenticated by one.
+
+    Which tenant a request reaches is read off the key, so a test cannot name
+    a tenant it has no key for — the same thing a caller cannot do.
+    """
+    _, token = await api_keys_q.create_vma_api_key(db, organization_id=org, name="test")
+    await db.commit()
+    return token
+
+
+@pytest_asyncio.fixture
+async def headers(api_key):
+    return {"x-api-key": api_key}
+
+
+@pytest_asyncio.fixture
+async def other_tenant(db):
+    """A second Organization and the key that reaches it.
+
+    Reaching one takes a key issued for it — a test cannot name a tenant it
+    holds no key for, which is exactly what a caller cannot do.
+    """
+    other = await organizations.create_organization(db, slug="other", name="Other")
+    _, token = await api_keys_q.create_vma_api_key(
+        db, organization_id=other.id, name="other"
+    )
+    await db.commit()
+    return other.id, {"x-api-key": token}
 
 
 @pytest_asyncio.fixture

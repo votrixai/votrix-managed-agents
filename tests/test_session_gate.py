@@ -459,6 +459,9 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
         events=[MESSAGE],
         sandbox=SimpleNamespace(to_deep_agent_backend=object()),
         emit=_emit,
+        # Which model runs and whose key pays are separate questions; this test
+        # only asks the first, so any credential will do.
+        inference_key="sk-or-v1-test",
     )
 
     assert built == [expected]

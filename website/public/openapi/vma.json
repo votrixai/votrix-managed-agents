@@ -295,6 +295,399 @@
         "description": "Remove Member within the Organization selected by the `x-organization-id` header."
       }
     },
+    "/v1/accounts": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Create Account",
+        "description": "Create an Account with its own provider credential.\n\nSpend on this Account is measured and capped separately from every other\none, because a separate credential is what the provider enforces the\nboundary with: a request either carries this Account's key or it does not.\n\nThe credential is minted during this call, so the Account comes back\n`active` and ready to be spent through.",
+        "operationId": "create_account_v1_accounts_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "List Accounts",
+        "description": "List this Organization's Accounts, oldest first.",
+        "operationId": "list_accounts_v1_accounts_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            },
+            "description": "Maximum number of records returned in this page.",
+            "example": 20
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Return records before this resource identifier."
+          },
+          {
+            "name": "after_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Return records after this resource identifier."
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_AccountResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account_id}": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Retrieve Account",
+        "operationId": "retrieve_account_v1_accounts__account_id__get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Retrieve Account within the Organization selected by the `x-organization-id` header."
+      }
+    },
+    "/v1/accounts/{account_id}/usage": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Retrieve Account Usage",
+        "description": "What this Account has spent, in USD.\n\nRead live from the provider that charges it, so the answer includes every\ncall made on this Account's credential rather than only the ones this\nplatform recorded. It is current as of the request; there is no settlement\ndelay to wait out.\n\nAnswered for a suspended Account too. What one spent has to stay readable,\nwhich is most of the reason Accounts are suspended rather than removed.",
+        "operationId": "retrieve_account_usage_v1_accounts__account_id__usage_get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountUsageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account_id}/suspend": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Suspend Account",
+        "description": "Stop this Account spending, without giving up what it spent.\n\nThe credential is disabled at the provider, not removed, so the Account\nkeeps its id, its limit, and everything recorded against it — and `resume`\nturns the same credential back on.\n\nSessions already running on this Account fail their next model call. That\nis the point: a suspension that let existing work finish would not be one.\n\nThe Organization's default Account is refused. A request naming no Account\nresolves to it, so suspending it stops the whole Organization while reading\nas one Account's business.",
+        "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account_id}/resume": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Resume Account",
+        "description": "Let a suspended Account spend again, on the credential it already had.",
+        "operationId": "resume_account_v1_accounts__account_id__resume_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request."
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "post": {
         "tags": [
@@ -303,16 +696,6 @@
         "summary": "Create Agent",
         "operationId": "create_agent_v1_agents_post",
         "parameters": [
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -462,16 +845,6 @@
             "example": "2026-08-01T00:00:00Z"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -575,16 +948,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -662,16 +1025,6 @@
             "description": "Value supplied for the version query parameter."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -728,16 +1081,6 @@
               "type": "string"
             },
             "description": "Unique identifier of the agent addressed by this request."
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -806,16 +1149,6 @@
               "type": "string"
             },
             "description": "Unique identifier of the agent addressed by this request."
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -887,16 +1220,6 @@
             "description": "Unique identifier of the agent addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -947,16 +1270,6 @@
         "summary": "Create Session",
         "operationId": "create_session_v1_sessions_post",
         "parameters": [
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -1086,16 +1399,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -1157,16 +1460,6 @@
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -1224,16 +1517,6 @@
             },
             "description": "Only return Memory Versions attributed to this Session.",
             "example": "sess_1234567890abcdef1234567890abcdef"
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -1305,16 +1588,6 @@
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -1374,16 +1647,6 @@
             },
             "description": "Only return Memory Versions attributed to this Session.",
             "example": "sess_1234567890abcdef1234567890abcdef"
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -1446,16 +1709,6 @@
             },
             "description": "Only return Memory Versions attributed to this Session.",
             "example": "sess_1234567890abcdef1234567890abcdef"
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -1587,16 +1840,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -1692,16 +1935,6 @@
             "example": "42"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -1770,16 +2003,6 @@
               "type": "string"
             },
             "description": "Unique identifier of the event addressed by this request."
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -1903,16 +2126,6 @@
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -1984,16 +2197,6 @@
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2054,16 +2257,6 @@
         "description": "Register an environment.\n\nDeclaring packages starts an image build that takes minutes, so this comes\nback straight away with `build_state: \"building\"`. Poll this environment\nuntil it reads `ready` — sessions are refused until then.",
         "operationId": "create_environment_v1_environments_post",
         "parameters": [
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -2176,16 +2369,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2246,16 +2429,6 @@
             "description": "Unique identifier of the environment addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2313,16 +2486,6 @@
               "type": "string"
             },
             "description": "Unique identifier of the environment addressed by this request."
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2393,16 +2556,6 @@
             "description": "Unique identifier of the environment addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2463,16 +2616,6 @@
             "description": "Unique identifier of the environment addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2523,16 +2666,6 @@
         "description": "Upload a file, in one call.\n\nFilename and content type ride along in the multipart part rather than\nbeing declared separately, and the size is whatever arrived — so nothing\nabout the file is a claim that has to be checked afterwards.",
         "operationId": "upload_file_v1_files_post",
         "parameters": [
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -2652,16 +2785,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2722,16 +2845,6 @@
             "description": "Unique identifier of the file addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2787,16 +2900,6 @@
               "type": "string"
             },
             "description": "Unique identifier of the file addressed by this request."
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2860,16 +2963,6 @@
             "description": "Unique identifier of the file addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -2918,16 +3011,6 @@
         "description": "Upload a skill package.\n\nMultipart rather than a presigned URL: the package is unpacked inside a\nsandbox and read by the agent as instructions, so it gets checked on the\nway in. Its own SKILL.md is what names it.",
         "operationId": "create_skill_v1_skills_post",
         "parameters": [
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -3040,16 +3123,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3110,16 +3183,6 @@
             "description": "Unique identifier of the skill addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3177,16 +3240,6 @@
               "type": "string"
             },
             "description": "Unique identifier of the skill addressed by this request."
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -3255,16 +3308,6 @@
             "description": "Unique identifier of the skill addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3325,16 +3368,6 @@
             "description": "Unique identifier of the skill addressed by this request."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3383,16 +3416,6 @@
         "summary": "Create Memory Store",
         "operationId": "create_memory_store_v1_memory_stores_post",
         "parameters": [
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -3559,16 +3582,6 @@
             "description": "Return records after this resource identifier."
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3630,16 +3643,6 @@
             "example": "memstore_1234567890abcdef1234567890abcdef"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3697,16 +3700,6 @@
             },
             "description": "Unique identifier of the memory store addressed by this request.",
             "example": "memstore_1234567890abcdef1234567890abcdef"
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -3778,16 +3771,6 @@
             "example": "memstore_1234567890abcdef1234567890abcdef"
           },
           {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
-          },
-          {
             "name": "x-api-key",
             "in": "header",
             "required": false,
@@ -3847,16 +3830,6 @@
             },
             "description": "Unique identifier of the memory store addressed by this request.",
             "example": "memstore_1234567890abcdef1234567890abcdef"
-          },
-          {
-            "name": "x-organization-id",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required Organization scope for this request. The current rewrite trusts this value and does not yet authenticate the caller.",
-            "example": "org_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -3965,6 +3938,160 @@
   },
   "components": {
     "schemas": {
+      "AccountCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "What this Account is called in listings and provider exports."
+          },
+          "limit_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hard spending cap in USD, enforced by the provider rather than by us — it holds even when our own metering does not. Omit to leave the Account uncapped."
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Repeat this on a retry to get back the Account the first attempt made, instead of a second one billing the same thing."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AccountCreateRequest"
+      },
+      "AccountResponse": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "account",
+            "default": "account"
+          },
+          "organization_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "active",
+              "suspended"
+            ]
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "limit_usd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "name",
+          "status",
+          "is_default"
+        ],
+        "title": "AccountResponse"
+      },
+      "AccountUsageResponse": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "account_usage",
+            "default": "account_usage"
+          },
+          "usage_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "usage_daily_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "usage_weekly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "usage_monthly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+          },
+          "limit_usd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit_remaining_usd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "usage_usd",
+          "usage_daily_usd",
+          "usage_weekly_usd",
+          "usage_monthly_usd"
+        ],
+        "title": "AccountUsageResponse",
+        "description": "What an Account has spent, in USD, as the provider counts it.\n\nRead from the provider rather than accumulated here, so it includes\neverything the Account's credential was charged for — not only the calls\nthis platform observed.\n\nEvery figure is cumulative within its window and updates as calls complete.\nThe period figures reset on the provider's UTC boundaries; `usage_usd` never\nresets, which is what makes a difference between two readings meaningful."
+      },
       "AgentCreateRequest": {
         "properties": {
           "name": {
@@ -5024,6 +5151,46 @@
         "title": "Interrupted",
         "description": "The user stopped the turn.\n\nCarries nothing: the client knows what it sent, and a list here beside\n`requires_action`'s — meaning something else entirely — is a mistake\nwaiting to be made."
       },
+      "ListResponse_AccountResponse_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AccountResponse"
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListResponse[AccountResponse]"
+      },
       "ListResponse_AgentResponse_": {
         "properties": {
           "data": {
@@ -5848,6 +6015,17 @@
               "claude-opus-5"
             ]
           },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which Account pays for this Session. Omit to use the Organization's default. Pinned when the Session opens, so its spend stays on one Account for the whole conversation."
+          },
           "title": {
             "anyOf": [
               {
@@ -6041,6 +6219,16 @@
               }
             ],
             "description": "The model pinned to this Session, or null when it follows the Agent version's."
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "title": {
             "anyOf": [
@@ -6666,6 +6854,11 @@
       "name": "skills",
       "description": "Reusable Skill archives available to Agents.",
       "x-displayName": "Skills"
+    },
+    {
+      "name": "accounts",
+      "description": "accounts API operations.",
+      "x-displayName": "accounts"
     }
   ]
 }

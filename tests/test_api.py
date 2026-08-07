@@ -20,11 +20,6 @@ MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
 
 
 @pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
-
-
-@pytest_asyncio.fixture
 async def client(db, sandboxes):
     app.dependency_overrides[get_db] = lambda: db
     transport = ASGITransport(app=app)
@@ -85,16 +80,47 @@ async def test_database_health_runs_a_round_trip(client):
     assert body["uptime_seconds"] >= 0
 
 
-async def test_the_organization_header_is_required(client):
-    response = await client.get("/v1/sessions", headers={"x-api-key": "anything"})
-    assert response.status_code == 422
-    assert response.json()["detail"][0]["loc"] == ["header", "x-organization-id"]
+async def test_a_request_without_a_key_is_refused(client):
+    response = await client.get("/v1/sessions")
+    assert response.status_code == 401
 
 
-async def test_the_api_key_is_accepted_but_not_checked(client, org):
-    """Not yet verified — the shape is in place so adding the lookup changes no client."""
-    response = await client.get("/v1/sessions", headers={"x-organization-id": org})
-    assert response.status_code == 200
+async def test_an_unknown_key_is_refused(client, org):
+    response = await client.get("/v1/sessions", headers={"x-api-key": "sk-nope"})
+    assert response.status_code == 401
+
+
+async def test_naming_a_tenant_does_not_reach_it(client, org):
+    """The header is gone, and sending it anyway changes nothing.
+
+    Which tenant a request reaches comes off the key. A caller that could
+    state its own tenant could state anyone's, and checking the key afterwards
+    only turns that into a comparison — the same answer with one more way to
+    get it wrong.
+    """
+    response = await client.get(
+        "/v1/sessions", headers={"x-organization-id": org}
+    )
+    assert response.status_code == 401
+
+
+async def test_a_revoked_key_stops_working(client, db, org):
+    from app.db.queries import vma_api_keys as keys_q
+
+    api_key, token = await keys_q.create_vma_api_key(
+        db, organization_id=org, name="doomed"
+    )
+    await db.commit()
+    assert (
+        await client.get("/v1/sessions", headers={"x-api-key": token})
+    ).status_code == 200
+
+    await keys_q.revoke_vma_api_key(db, api_key)
+    await db.commit()
+
+    assert (
+        await client.get("/v1/sessions", headers={"x-api-key": token})
+    ).status_code == 401
 
 
 async def test_creating_a_session_returns_it(created):
@@ -207,10 +233,14 @@ async def test_events_can_be_read_back_incrementally(client, headers, created):
     assert response.json()["data"] == []
 
 
-async def test_another_tenant_gets_a_404_not_someone_elses_session(client, headers, created):
+async def test_another_tenant_gets_a_404_not_someone_elses_session(
+    client, db, headers, created, other_tenant):
+    other_id, other_headers = other_tenant
+    """Not a 403: telling them it exists is telling them something."""
+
     response = await client.get(
         f"/v1/sessions/{created['id']}",
-        headers={"x-organization-id": "org_intruder", "x-api-key": "anything"},
+        headers=other_headers,
     )
     assert response.status_code == 404
 

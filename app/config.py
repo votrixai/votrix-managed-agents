@@ -39,12 +39,20 @@ class Settings(BaseSettings):
     # `options=-csearch_path=...` parameter.
     vma_checkpoint_database_url: str = ""
 
-    # The gateway key. Every model is reached through it, so a model this
-    # deployment cannot pay for fails the same way whoever built it.
-    openrouter_api_key: str = ""
-    # Local override — see _build_chat_model. Talks to DeepSeek directly so a
-    # machine without a gateway key can still run a turn.
-    deepseek_api_key: str = ""
+    # Mints the per-Account keys, and the only provider credential this
+    # deployment holds — every key that can actually be spent belongs to an
+    # Account and is stored encrypted. The provider refuses inference on a
+    # provisioning key, so a leak of this one cannot be spent, only used to
+    # enumerate and revoke.
+    openrouter_management_key: str = ""
+    # Which provider workspace new keys are created in. Empty means the
+    # management key's own default.
+    openrouter_workspace_id: str = ""
+
+    # Base64url AES-256 key wrapping provider secrets at rest. Without it no
+    # Account credential can be written or read, which is why provisioning
+    # fails loudly rather than storing a key in the clear.
+    vma_encryption_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""

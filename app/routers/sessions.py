@@ -36,6 +36,7 @@ async def create_session(body: SessionCreateRequest, db: Db, organization_id: Or
         environment_id=body.environment_id,
         agent_version=body.agent_version,
         model=body.model,
+        account_id=body.account_id,
         title=body.title,
         resources=[resource.model_dump() for resource in body.resources],
     )
@@ -367,6 +368,7 @@ async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
         agent_version=session.agent_version,
         environment_id=session.environment_id,
         model=session.model,
+        account_id=session.account_id,
         title=session.title,
         status=session.status,
         stop_reason=session.stop_reason,

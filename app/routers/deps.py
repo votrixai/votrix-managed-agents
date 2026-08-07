@@ -1,7 +1,6 @@
 """Shared FastAPI dependencies for the router layer."""
 
 import asyncio
-import hashlib
 from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, Header, HTTPException, status
@@ -9,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.engine import get_session_factory
+from app.db.models import VmaApiKey
+from app.db.queries import vma_api_keys as api_keys_q
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -21,31 +22,47 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield db
 
 
-async def get_organization_id(
-    x_organization_id: Annotated[str, Header()],
+Db = Annotated[AsyncSession, Depends(get_db)]
+
+
+async def authenticate(
+    db: Db,
     x_api_key: Annotated[str | None, Header()] = None,
-) -> str:
-    """Take the caller's word for which tenant this request belongs to.
+) -> VmaApiKey:
+    """Resolve the key presenting this request, or refuse it.
 
-    `x-api-key` is accepted but not checked yet. When the API opens up, the
-    lookup goes here and no router has to change.
-    """
-    return x_organization_id
+    Which tenant a request belongs to is read off the key rather than taken
+    from a header. A caller that states its own tenant is a caller that can
+    state someone else's, and no amount of checking the key afterwards fixes
+    that — the two would simply have to be compared, which is the same thing
+    as deriving one from the other with an extra way to get it wrong.
 
-
-async def get_api_key_id(
-    x_api_key: Annotated[str | None, Header()] = None,
-) -> str | None:
-    """A non-secret attribution handle until API-key rows own the real id.
-
-    The public secret is never stored in Memory Version history. Once request
-    authentication resolves a persisted key, this dependency can return that
-    row id without changing any Memory route or service signature.
+    Revoked and expired keys are excluded by the lookup, so both arrive here
+    as an unknown key and are refused the same way. Saying which of the three
+    it was would tell an unauthenticated caller whether a key ever existed.
     """
     if not x_api_key:
-        return None
-    digest = hashlib.sha256(x_api_key.encode()).hexdigest()[:32]
-    return f"apikey_{digest}"
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Missing x-api-key"
+        )
+    api_key = await api_keys_q.get_vma_api_key_by_token(db, x_api_key)
+    if api_key is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid x-api-key")
+    await api_keys_q.touch_vma_api_key(db, api_key)
+    return api_key
+
+
+AuthenticatedKey = Annotated[VmaApiKey, Depends(authenticate)]
+
+
+async def get_organization_id(api_key: AuthenticatedKey) -> str:
+    """The tenant this key belongs to, which is the only tenant it can reach."""
+    return api_key.organization_id
+
+
+async def get_api_key_id(api_key: AuthenticatedKey) -> str:
+    """The key row's own id, safe to record: it is not the secret."""
+    return api_key.id
 
 
 async def verify_task_caller(
@@ -90,7 +107,6 @@ async def verify_task_caller(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not the task service account")
 
 
-Db = Annotated[AsyncSession, Depends(get_db)]
 OrganizationId = Annotated[str, Depends(get_organization_id)]
-ApiKeyId = Annotated[str | None, Depends(get_api_key_id)]
+ApiKeyId = Annotated[str, Depends(get_api_key_id)]
 TaskCaller = Depends(verify_task_caller)

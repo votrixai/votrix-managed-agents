@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.llm import DEEPSEEK, MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
 from app.runtime.engine import UnknownModelError, _build_chat_model
 
 
@@ -45,31 +45,18 @@ def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
 
 def test_an_uncatalogued_model_is_refused_before_any_client_is_built():
     with pytest.raises(UnknownModelError):
-        _build_chat_model("no-such-model")
+        _build_chat_model("no-such-model", api_key="sk-or-v1-test")
 
 
-def test_only_deepseek_models_build_while_the_gateway_is_off(monkeypatch):
-    """The gateway is bypassed for now — see `_build_chat_model`.
+def test_every_catalog_model_builds_one_gateway_client():
+    """One client class for all of them — that is the point of the gateway.
 
-    One client class for every model is the point of a gateway, and the slug
-    table above still holds all of them for when it comes back. Until then only
-    DeepSeek is reachable, and naming anything else has to fail here rather
-    than at DeepSeek, which would answer about a model id nobody sent it.
+    The credential is handed in rather than read from configuration, which is
+    what lets one deployment run every Account on its own key.
     """
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-    from app.config import get_settings
+    built = [_build_chat_model(m.id, api_key="sk-or-v1-test") for m in MODEL_CATALOG]
 
-    get_settings.cache_clear()
-
-    deepseek = [m for m in MODEL_CATALOG if m.provider == DEEPSEEK]
-    assert deepseek, "the catalog has no DeepSeek model to reach"
-
-    built = [_build_chat_model(m.id) for m in deepseek]
-    assert {type(client).__name__ for client in built} == {"ChatDeepSeek"}
-    # No slug translation: the catalog id is DeepSeek's own id.
-    assert [client.model_name for client in built] == [m.id for m in deepseek]
-
-    for model in MODEL_CATALOG:
-        if model.provider != DEEPSEEK:
-            with pytest.raises(UnknownModelError):
-                _build_chat_model(model.id)
+    assert {type(client).__name__ for client in built} == {"ChatOpenRouter"}
+    assert [client.model for client in built] == [
+        OPENROUTER_SLUGS[m.id] for m in MODEL_CATALOG
+    ]

@@ -49,7 +49,7 @@ async def _preflight(http: AsyncClient, origin: str, *, method: str = "GET"):
         headers={
             "Origin": origin,
             "Access-Control-Request-Method": method,
-            "Access-Control-Request-Headers": "x-api-key,x-organization-id",
+            "Access-Control-Request-Headers": "x-api-key",
         },
     )
 
@@ -61,7 +61,6 @@ async def test_preflight_from_an_allowed_origin_succeeds(configured, http):
     assert response.headers["access-control-allow-origin"] == ALLOWED
     allowed_headers = response.headers["access-control-allow-headers"].lower()
     assert "x-api-key" in allowed_headers
-    assert "x-organization-id" in allowed_headers
 
 
 async def test_a_real_request_is_readable_by_an_allowed_origin(configured, http):

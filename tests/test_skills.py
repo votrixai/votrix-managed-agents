@@ -73,11 +73,6 @@ async def client(db, bucket):
     app.dependency_overrides.clear()
 
 
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
-
-
 async def upload(client, headers, content=None, **form):
     return await client.post(
         "/v1/skills",
@@ -180,12 +175,13 @@ async def test_deleting_removes_the_object_too(client, headers, bucket):
     assert bucket == {}
 
 
-async def test_another_tenant_cannot_download_it(client, headers):
+async def test_another_tenant_cannot_download_it(client, db, headers, other_tenant):
+    other_id, other_headers = other_tenant
     skill_id = (await upload(client, headers)).json()["id"]
 
     response = await client.get(
         f"/v1/skills/{skill_id}/content",
-        headers={"x-organization-id": "org_intruder", "x-api-key": "anything"},
+        headers=other_headers,
     )
     assert response.status_code == 404
 

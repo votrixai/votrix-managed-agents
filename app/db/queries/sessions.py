@@ -35,6 +35,7 @@ async def create_session(
     agent_version: int,
     environment_id: str,
     model: dict[str, Any] | None = None,
+    account_id: str | None = None,
     title: str | None = None,
 ) -> Session:
     session = Session(
@@ -44,6 +45,7 @@ async def create_session(
         agent_version=agent_version,
         environment_id=environment_id,
         model=model,
+        account_id=account_id,
         title=title,
         status=IDLE,
     )

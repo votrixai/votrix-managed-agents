@@ -1,131 +1,172 @@
+"""Reads and writes over billing Accounts.
+
+No delete. An Account carries the record of what it was charged, so removing
+one removes that record; suspension is how an Account stops being usable.
+"""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    MEMBER_ROLE_MEMBER,
-    MEMBER_ROLES,
-    Organization,
-    OrganizationMember,
+from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
+
+from app.db.models.accounts import (
+    ACCOUNT_PROVISIONING,
+    CREDENTIAL_ACTIVE,
+    AccountProviderCredential,
+    OrganizationAccount,
 )
 from app.utils.id_generator import new_id
 
 
-async def create_organization(db: AsyncSession, *, slug: str, name: str) -> Organization:
-    organization = Organization(id=new_id("org"), slug=slug, name=name)
-    db.add(organization)
-    await db.flush()
-    return organization
-
-
-async def get_organization(db: AsyncSession, *, organization_id: str) -> Organization | None:
-    return await db.get(Organization, organization_id)
-
-
-async def get_organization_by_slug(db: AsyncSession, *, slug: str) -> Organization | None:
-    result = await db.execute(select(Organization).where(Organization.slug == slug))
-    return result.scalar_one_or_none()
-
-
-async def list_organizations(
-    db: AsyncSession,
-    *,
-    include_archived: bool = False,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[Organization]:
-    stmt = select(Organization)
-    if not include_archived:
-        stmt = stmt.where(Organization.archived_at.is_(None))
-    stmt = stmt.order_by(Organization.created_at.desc()).limit(limit).offset(offset)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
-
-
-async def update_organization(db: AsyncSession, organization: Organization, *, name: str) -> None:
-    organization.name = name
-    await db.flush()
-
-
-async def archive_organization(db: AsyncSession, organization: Organization) -> None:
-    organization.archived_at = datetime.now(timezone.utc)
-    await db.flush()
-
-
-def normalize_member_role(role: str) -> str:
-    normalized = str(role).strip().lower()
-    if normalized not in MEMBER_ROLES:
-        expected = ", ".join(sorted(MEMBER_ROLES))
-        raise ValueError(f"role must be one of: {expected}")
-    return normalized
-
-
-async def add_member(
+async def create_account(
     db: AsyncSession,
     *,
     organization_id: str,
-    user_id: str,
-    email: str | None = None,
-    role: str = MEMBER_ROLE_MEMBER,
-) -> OrganizationMember:
-    member = OrganizationMember(
-        id=new_id("member"),
+    name: str,
+    is_default: bool = False,
+    limit_usd: Decimal | None = None,
+    idempotency_key: str | None = None,
+) -> OrganizationAccount:
+    """Write the Account row, before it has anything to spend through.
+
+    It starts in `provisioning` because minting the credential is a call to
+    another service: the row has to exist first so a mint that fails halfway
+    leaves something to find, rather than a key nobody can trace.
+    """
+    account = OrganizationAccount(
+        id=new_id("acct"),
         organization_id=organization_id,
-        user_id=user_id,
-        email=email,
-        role=normalize_member_role(role),
+        name=name,
+        status=ACCOUNT_PROVISIONING,
+        # NULL rather than False, so the one-default constraint counts only
+        # the real default.
+        is_default=True if is_default else None,
+        limit_usd=limit_usd,
+        idempotency_key=idempotency_key,
     )
-    db.add(member)
+    db.add(account)
     await db.flush()
-    return member
+    return account
 
 
-async def get_member(
-    db: AsyncSession,
-    *,
-    organization_id: str,
-    user_id: str,
-) -> OrganizationMember | None:
+async def get_account(
+    db: AsyncSession, *, organization_id: str, account_id: str
+) -> OrganizationAccount | None:
     result = await db.execute(
-        select(OrganizationMember).where(
-            OrganizationMember.organization_id == organization_id,
-            OrganizationMember.user_id == user_id,
+        select(OrganizationAccount).where(
+            OrganizationAccount.id == account_id,
+            OrganizationAccount.organization_id == organization_id,
         )
     )
     return result.scalar_one_or_none()
 
 
-async def list_members(
+async def get_by_idempotency_key(
+    db: AsyncSession, *, organization_id: str, idempotency_key: str
+) -> OrganizationAccount | None:
+    result = await db.execute(
+        select(OrganizationAccount).where(
+            OrganizationAccount.organization_id == organization_id,
+            OrganizationAccount.idempotency_key == idempotency_key,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_default_account(
+    db: AsyncSession, *, organization_id: str
+) -> OrganizationAccount | None:
+    result = await db.execute(
+        select(OrganizationAccount).where(
+            OrganizationAccount.organization_id == organization_id,
+            OrganizationAccount.is_default.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_accounts(
     db: AsyncSession,
     *,
     organization_id: str,
-    role: str | None = None,
-) -> list[OrganizationMember]:
-    stmt = select(OrganizationMember).where(
-        OrganizationMember.organization_id == organization_id
+    limit: int = DEFAULT_PAGE_SIZE,
+    before_id: str | None = None,
+    after_id: str | None = None,
+) -> Page:
+    """Oldest first, so the default an Organization started with reads first.
+
+    The other lists in this API run newest first, where the newest row is the
+    one a caller just made. Accounts are a small, stable set that gets read as
+    a whole, and the one that answers "who pays when nobody says" belongs at
+    the top of it.
+    """
+    return await fetch_page(
+        db,
+        select(OrganizationAccount).where(
+            OrganizationAccount.organization_id == organization_id
+        ),
+        sort=OrganizationAccount.created_at,
+        id_column=OrganizationAccount.id,
+        limit=limit,
+        before_id=before_id,
+        after_id=after_id,
+        descending=False,
     )
-    if role is not None:
-        stmt = stmt.where(OrganizationMember.role == normalize_member_role(role))
-    result = await db.execute(
-        stmt.order_by(OrganizationMember.created_at, OrganizationMember.id)
-    )
-    return list(result.scalars().all())
 
 
-async def update_member_role(
+async def attach_credential(
     db: AsyncSession,
-    member: OrganizationMember,
     *,
-    role: str,
-) -> OrganizationMember:
-    member.role = normalize_member_role(role)
+    account: OrganizationAccount,
+    key_hash: str,
+    provider_key_name: str,
+    encrypted_key: str,
+    generation: int = 1,
+) -> AccountProviderCredential:
+    credential = AccountProviderCredential(
+        id=new_id("acctcred"),
+        account_id=account.id,
+        organization_id=account.organization_id,
+        key_hash=key_hash,
+        provider_key_name=provider_key_name,
+        encrypted_key=encrypted_key,
+        status=CREDENTIAL_ACTIVE,
+        generation=generation,
+    )
+    db.add(credential)
     await db.flush()
-    return member
+    return credential
 
 
-async def delete_member(db: AsyncSession, member: OrganizationMember) -> None:
-    await db.delete(member)
+async def set_status(
+    db: AsyncSession,
+    *,
+    account: OrganizationAccount,
+    account_status: str,
+    credential_status: str,
+) -> None:
+    """Move the Account and its credential together.
+
+    Separately would let the two disagree, and the pair is what a suspension
+    means: an Account marked suspended whose key still spends is a suspension
+    only on paper.
+    """
+    account.status = account_status
+    if account.credential is not None:
+        account.credential.status = credential_status
     await db.flush()
+
+
+__all__ = [
+    "attach_credential",
+    "create_account",
+    "get_account",
+    "get_by_idempotency_key",
+    "get_default_account",
+    "list_accounts",
+    "set_status",
+]
