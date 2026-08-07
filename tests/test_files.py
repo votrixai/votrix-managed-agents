@@ -16,6 +16,10 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
+
+from app.db.queries import accounts
+
+from app.db.queries import vma_api_keys as api_keys_q
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -70,11 +74,6 @@ def bucket(monkeypatch):
                  "object_size", "delete_object"):
         monkeypatch.setattr(f"app.utils.storage.{name}", getattr(fake, name))
     return fake
-
-
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
 
 
 @pytest_asyncio.fixture
@@ -159,16 +158,15 @@ async def test_where_the_bytes_live_is_never_published(client, headers, bucket):
     assert "organization_id" not in body
 
 
-async def test_another_tenant_cannot_see_the_file(client, headers, bucket, db):
+async def test_another_tenant_cannot_see_the_file(client, headers, bucket, db, other_tenant):
+    other_id, other_headers = other_tenant
     from app.db.queries import accounts
 
     file_id = await upload(client, headers, bucket)
-    other = await accounts.create_organization(db, slug="other", name="Other")
-    await db.commit()
 
     response = await client.get(
         f"/v1/files/{file_id}",
-        headers={"x-organization-id": other.id, "x-api-key": "anything"},
+        headers=other_headers,
     )
 
     assert response.status_code == 404
@@ -860,15 +858,16 @@ async def test_only_outputs_can_be_taken(client, headers, running, container, pa
     assert response.status_code == 409
 
 
-async def test_taking_from_a_session_with_no_sandbox_is_refused(client, headers, agent, environment, db):
+async def test_taking_from_a_session_with_no_sandbox_is_refused(
+    client, headers, agent, environment, db, org
+):
     """The file was in a container that no longer exists. Anything already
     collected is on `/v1/files` instead."""
     from app.db.queries import sessions as sessions_q
 
     session_id = (await attach(client, headers, agent, environment, [])).json()["id"]
     sandbox = await sessions_q.get_sandbox(
-        db, session_id=session_id, organization_id=(await client.get(
-            f"/v1/sessions/{session_id}", headers=headers)).json() and headers["x-organization-id"]
+        db, session_id=session_id, organization_id=org
     )
     await sessions_q.update_sandbox_state(db, sandbox, state="terminated")
     await db.commit()

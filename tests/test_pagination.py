@@ -18,11 +18,6 @@ from app.routers.deps import get_db
 
 
 @pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
-
-
-@pytest_asyncio.fixture
 async def client(db):
     app.dependency_overrides[get_db] = lambda: db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:

@@ -22,11 +22,6 @@ async def client(db, volumes, sandboxes):
     app.dependency_overrides.clear()
 
 
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
-
-
 async def create_store(client, headers, **body):
     body.setdefault("name", "Content Creator")
     return await client.post("/v1/memory_stores", headers=headers, json=body)

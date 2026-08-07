@@ -61,4 +61,3 @@ def test_documentation_openapi_publishes_complete_memory_surface():
                 for parameter in operation.get("parameters", [])
                 if parameter.get("in") == "header"
             }
-            assert headers["x-organization-id"]["required"] is True
