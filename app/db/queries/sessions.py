@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.config import get_settings
 from app.db.models import (
     MemoryStore,
     Session,
@@ -154,12 +155,26 @@ async def append_event(
     matter: the ordering these numbers carry is "not the same as each other",
     not "in the order I would have guessed".
     """
+    # The wake-up rides along in the statement that was going out anyway. It
+    # reads as though it fires too early — the event row is not inserted until
+    # below — and it does not: Postgres holds a notification until the
+    # transaction commits, so a reader cannot be woken before the row it is
+    # being woken for is visible. What the fold saves is a round trip on every
+    # event a turn emits, and against the hosted pooler a round trip is ~150ms.
+    #
+    # Only the session id travels. What the event says is read back from the
+    # table, so a notification lost, doubled or late costs a reader nothing but
+    # the wait it would have had anyway.
+    returning: list[Any] = [Session.last_event_seq]
+    if _wakes_readers(db):
+        returning.append(func.pg_notify(event_channel(), session.id))
+
     seq = (
         await db.execute(
             update(Session)
             .where(Session.id == session.id)
             .values(last_event_seq=Session.last_event_seq + 1)
-            .returning(Session.last_event_seq)
+            .returning(*returning)
         )
     ).scalar_one()
 
@@ -183,6 +198,30 @@ async def append_event(
     db.add(event)
     await db.flush()
     return event
+
+
+def event_channel() -> str:
+    """The `NOTIFY` channel streams are woken on.
+
+    One channel for the whole deployment rather than one per session: a listener
+    holds a single shared connection, and issuing `LISTEN`/`UNLISTEN` on it as
+    every stream opens and closes is a race that buys nothing — a process with
+    no reader for a session drops the notification on a dictionary lookup.
+
+    The schema is in the name because staging and production can sit in one
+    Postgres, and notifications are not scoped by `search_path`.
+    """
+    return f"vma_session_events_{get_settings().database_schema or 'public'}"
+
+
+def _wakes_readers(db: AsyncSession) -> bool:
+    """Whether this database can carry a wake-up at all.
+
+    SQLite has no `pg_notify`, and a fresh checkout runs on SQLite. There is
+    nothing to fall back to and nothing to warn about: with no listener there is
+    no reader waiting to be told, and the stream polls as it always did.
+    """
+    return db.get_bind().dialect.name == "postgresql"
 
 
 async def list_events(
