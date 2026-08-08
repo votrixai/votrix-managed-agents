@@ -50,10 +50,10 @@ from app.models.errors import (
     SessionCancelled,
 )
 from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
+from app.services import agents as agents_service
 from app.services import environments as environments_service
 from app.services import files as files_service
 from app.services import memory as memory_service
-from app.services import memory_records
 from app.services import accounts as accounts_service
 from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
@@ -64,8 +64,11 @@ from app.utils.volume import (
     memory_mount_path,
 )
 
-# A turn may hold the session this long before we call it hung.
-TURN_TIMEOUT_SECONDS = 600
+# A turn may hold the session this long before we call it hung. The queue is
+# given this plus a margin (see _enqueue_task), and Cloud Run's own request
+# timeout is 3600 — both stay above it, so this is the limit that actually
+# fires and the one to move when a turn legitimately needs longer.
+TURN_TIMEOUT_SECONDS = 1200
 
 # Deliberately much shorter than a turn: the lease is not a time budget, it is
 # a liveness signal. A worker that dies is noticed within this window rather
@@ -125,6 +128,7 @@ async def create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    model: str | dict[str, Any] | None = None,
     account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
@@ -133,6 +137,9 @@ async def create_session(
 
     The agent version is pinned now and never moves, so editing the agent
     later cannot change what a conversation already in flight is running.
+
+    A ``model`` is pinned on the same terms. Left out, the session stores none
+    and the pinned agent version's model applies at run time.
 
     Attached files go in while the container is being built. That is the only
     chance: a session keeps one sandbox for its whole life, so there is nowhere
@@ -152,6 +159,7 @@ async def create_session(
             environment_id=environment_id,
             account_id=account_id,
             agent_version=agent_version,
+            model=model,
             title=title,
             resources=resources,
         )
@@ -166,6 +174,7 @@ async def _create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    model: str | dict[str, Any] | None = None,
     account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
@@ -206,6 +215,9 @@ async def _create_session(
         agent_id=agent_id,
         agent_version=version_number,
         environment_id=environment_id,
+        # Normalised on the way in, never on the way out, so every reader of the
+        # column — runtime, API response, a future query — sees one shape.
+        model=agents_service.normalize_model(model) if model is not None else None,
         account_id=account.id,
         title=title,
     )
@@ -341,7 +353,6 @@ async def send_events(
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
     await _dispatch_turn(
-        db,
         session_id=session_id,
         generation=session.lock_version,
         events=events,
@@ -482,8 +493,13 @@ async def stream_events(
             await asyncio.sleep(STREAM_POLL_SECONDS)
 
 
+# Inline turns in flight. Held here because asyncio keeps only a weak
+# reference to a running task: without a strong one somewhere, a turn can be
+# collected mid-reply and simply stop.
+_inline_turns: set[asyncio.Task[None]] = set()
+
+
 async def _dispatch_turn(
-    db: AsyncSession,
     *,
     session_id: str,
     generation: int,
@@ -491,9 +507,12 @@ async def _dispatch_turn(
 ) -> None:
     """Get the turn running, by whichever route this deployment uses.
 
-    `inline` runs it here and now, so the request does not come back until the
-    agent is done. Slow, but a fresh checkout can hold a conversation without
-    a queue, a worker process, or any configuration.
+    Neither route waits for it. `cloud` hands the turn to a queue that calls a
+    worker back; `inline` runs it in this process on a task of its own. Either
+    way the request returns as soon as the message is *accepted*, which is what
+    lets the caller open the event stream and watch output appear — a request
+    that only came back when the agent was done would deliver the whole turn at
+    the end, and no amount of streaming further down could undo that.
 
     Failures are swallowed in either mode. The message really was accepted —
     it is committed — and `_fail` records what went wrong as a `session.error`
@@ -504,8 +523,26 @@ async def _dispatch_turn(
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
         return
 
+    task = asyncio.create_task(_run_inline_turn(session_id=session_id, events=events))
+    _inline_turns.add(task)
+    task.add_done_callback(_inline_turns.discard)
+
+
+async def _run_inline_turn(*, session_id: str, events: list[dict[str, Any]]) -> None:
+    """One turn, on a database session of its own.
+
+    The session that accepted the message belongs to the request and is closed
+    when the response is sent — which is now long before the turn ends. Same
+    reason `_hold_lease` opens its own.
+
+    Nothing waits for this task, shutdown included: a process going down drops
+    the turn, and the session's lease lapses so the next message can claim it.
+    That is the trade `inline` exists to make — no queue, no worker, no
+    configuration. `cloud` is where a dropped turn gets retried.
+    """
     try:
-        await process_session(db, session_id=session_id, events=events)
+        async with session_scope() as db:
+            await process_session(db, session_id=session_id, events=events)
     except Exception:
         logger.exception("inline_turn_failed", session_id=session_id)
 
@@ -582,18 +619,6 @@ async def process_session(
         session.organization_id,
     )
 
-    async def _sync_after_filesystem_tool(_tool_name: str) -> None:
-        # The callback runs after the tool result has been emitted, so every
-        # write is complete before its mounted files are hashed. Failures are
-        # retried by the final reconciliation rather than failing the model's
-        # otherwise successful turn.
-        await collect_memories(
-            db,
-            session,
-            container,
-            report_failure=False,
-        )
-
     # Fetched per turn rather than held on the Session, because suspending an
     # Account is meant to bite on the next call — not on the next Session. A
     # Session pinned to an Account that has since been stopped fails here, with
@@ -627,11 +652,6 @@ async def process_session(
                     inference_key=inference_key,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
-                    tool_completed=(
-                        _sync_after_filesystem_tool
-                        if attached_memory_stores
-                        else None
-                    ),
                     emit=_emitter(db, session, generation),
                 ),
                 timeout=TURN_TIMEOUT_SECONDS,
@@ -640,12 +660,10 @@ async def process_session(
         # cancel_session already released the session and recorded the stop.
         # The agent may still have finished something before it was cut off,
         # and a half-written deliverable is the user's too.
-        await collect_memories(db, session, container)
         await collect_outputs(db, session, container)
         await db.commit()
         return
     except BaseException as exc:
-        await collect_memories(db, session, container)
         await collect_outputs(db, session, container)
         await _fail(db, session, exc)
         raise
@@ -655,7 +673,6 @@ async def process_session(
     # Before the release, never after: the client takes `idle` as the sign that
     # the turn is done, and everything the turn produced has to be fetchable by
     # then. It is also the last moment the container is certainly awake.
-    await collect_memories(db, session, container)
     await collect_outputs(db, session, container)
     await sessions_q.release_session(db, session, status=IDLE)
     await db.commit()
@@ -864,32 +881,32 @@ async def attach_live_file(
     """Put an existing durable File into an existing Session sandbox.
 
     This is the post-create counterpart to a ``file`` resource on Session
-    creation. It is deliberately accepted only while the Session is idle: the
-    next turn re-reads ``session_files`` for its prompt, whereas an already
-    running turn has already snapshotted that list and could observe the bytes
-    without knowing the user attached them.
+    creation, and it runs whatever the Session is doing. It used to require an
+    idle Session and hold an exclusive lock on its row for the whole E2B
+    transfer, so that no turn could start while a file was half-attached. Both
+    are gone, for the same reason: the half-attached state they guarded against
+    cannot occur. The binding is flushed before the transfer and committed only
+    after it succeeds, so a mount is atomic on its own — a failed copy leaves no
+    binding, and a committed binding always has its bytes behind it.
 
-    The Session row stays locked across the E2B transfer and binding write.
-    ``send_events`` claims that same row, so a turn cannot start between those
-    two operations. The binding is flushed before the transfer but committed
-    only after it succeeds; a failed copy therefore leaves no phantom
-    resource. Repeating the exact request returns the original binding.
+    What the lock bought beyond that was serialising mounts against each other,
+    which is not a property anything needed and is expensive: attaching three
+    files meant three round trips queued behind one another, all of them on the
+    path between pressing send and the agent starting.
+
+    A turn that is already running has snapshotted ``session_files`` for its
+    prompt and will not see a file attached underneath it. That is the caller's
+    business rather than this endpoint's: the next turn reads the list again.
+
+    Repeating the exact request returns the original binding.
     """
-    session = await sessions_q.get_session_for_update(
+    session = await get_session(
         db,
         session_id=session_id,
         organization_id=organization_id,
     )
-    if session is None:
-        raise NotFound(f"Session {session_id} not found")
     if session.archived_at is not None:
         raise Conflict(f"Session {session_id} is archived")
-    if session.status == RUNNING:
-        raise SessionBusy()
-    if session.status != IDLE:
-        raise Conflict(
-            f"Session {session_id} cannot accept files while {session.status}"
-        )
 
     sandbox = await sessions_q.get_sandbox(
         db,
@@ -908,24 +925,27 @@ async def attach_live_file(
         file_id=file_id,
         organization_id=organization_id,
     )
-    relative = _mount_path(path, fallback=file.filename)
+    requested = _mount_path(path, fallback=file.filename)
 
+    taken: set[str] = set()
     for existing in await sessions_q.list_session_files(db, session_id=session_id):
-        if existing.path != relative:
-            continue
-        if existing.file_id == file.id:
+        if existing.path == requested and existing.file_id == file.id:
             await db.commit()
             return existing
+        taken.add(existing.path)
+
+    if path is not None and requested in taken:
+        # An explicit path is a request to mount *there*. Stepping the name
+        # aside would hand back a resource at an address the caller did not ask
+        # for and has no reason to re-read, so this stays a refusal.
         raise Conflict(
-            f"Another file is already attached at {relative!r} in Session {session_id}"
+            f"Another file is already attached at {requested!r} in Session {session_id}"
         )
 
-    attached = await sessions_q.attach_file(
-        db,
-        session,
-        file_id=file.id,
-        path=relative,
+    attached = await _attach_under_free_name(
+        db, session, file=file, requested=requested, taken=taken
     )
+    relative = attached.path
     container = Sandbox.from_id(
         sandbox.external_sandbox_id,
         session.id,
@@ -942,12 +962,68 @@ async def attach_live_file(
         # ``attach_file`` was intentionally flushed first so its unique path
         # constraint is part of this transaction, but it must never survive a
         # failed transfer as a resource that only exists on paper.
+        #
+        # Expunged as well as rolled back. The binding was flushed inside a
+        # savepoint that was then released, which leaves the session holding it
+        # as pending rather than discarding it — and the next query on this
+        # session would autoflush it straight back into the table the rollback
+        # just cleared.
         message = f"File {file.id} could not be copied into Session {session.id}"
         await db.rollback()
         raise SandboxUnavailable(message) from exc
 
     await db.commit()
     return attached
+
+
+# How many times a mount steps its name aside before giving up. High enough
+# that a real conversation never reaches it, low enough to fail rather than
+# spin when something is systematically wrong.
+_MOUNT_NAME_ATTEMPTS = 20
+
+
+def _stepped_name(name: str, attempt: int) -> str:
+    """`report.pdf` → `report_1.pdf`, keeping the suffix where a reader expects it."""
+    if attempt == 0:
+        return name
+    stem, dot, suffix = name.rpartition(".")
+    if not stem or not dot:
+        return f"{name}_{attempt}"
+    return f"{stem}_{attempt}.{suffix}"
+
+
+async def _attach_under_free_name(
+    db: AsyncSession,
+    session: Session,
+    *,
+    file: File,
+    requested: str,
+    taken: set[str],
+) -> SessionFile:
+    """Bind the file at the first name this session is not already using.
+
+    `taken` is every binding committed before this transaction started, which
+    is what makes the ordinary case — a name nobody else has — one INSERT with
+    no negotiation. It cannot see a mount running right now in another request,
+    so two attachments of one filename arriving together can still pick the
+    same name; `uq_session_files_path` refuses the second and the request
+    fails, for the caller to retry.
+
+    Recovering from that in here would mean flushing inside a savepoint, and a
+    released savepoint leaves the binding behind when the E2B transfer later
+    fails and the transaction is rolled back — trading a rare retry for a
+    resource that exists on paper only. The rarer problem is the better one.
+    """
+    for attempt in range(_MOUNT_NAME_ATTEMPTS):
+        candidate = _stepped_name(requested, attempt)
+        if candidate not in taken:
+            return await sessions_q.attach_file(
+                db, session, file_id=file.id, path=candidate
+            )
+    raise Conflict(
+        f"No free name for {requested!r} in Session {session.id} "
+        f"after {_MOUNT_NAME_ATTEMPTS} attempts"
+    )
 
 
 def _output_path(requested: str) -> str:
@@ -999,68 +1075,6 @@ async def collect_outputs(db: AsyncSession, session: Session, sandbox: Sandbox) 
         return
     if collected:
         logger.info("outputs_collected", session_id=session.id, count=len(collected))
-
-
-async def collect_memories(
-    db: AsyncSession,
-    session: Session,
-    sandbox: Sandbox,
-    *,
-    report_failure: bool = True,
-) -> bool:
-    """Index mounted Volume changes without turning delivery into turn failure."""
-    try:
-        result = await memory_records.reconcile_session_memory_stores(
-            db,
-            session_id=session.id,
-            organization_id=session.organization_id,
-            sandbox=sandbox,
-        )
-    except Exception as exc:
-        await db.rollback()
-        logger.exception("memory_reconciliation_failed", session_id=session.id)
-        if report_failure:
-            await sessions_q.append_event(
-                db,
-                session,
-                type=event_types.SESSION_ERROR,
-                source="system",
-                payload={
-                    "error": {
-                        "type": "memory_reconciliation_failed",
-                        "message": str(exc),
-                    }
-                },
-            )
-        return False
-
-    if result.changed:
-        logger.info(
-            "memories_reconciled",
-            session_id=session.id,
-            changed=result.changed,
-        )
-    if result.issues:
-        logger.warning(
-            "memory_reconciliation_rejected_files",
-            session_id=session.id,
-            count=len(result.issues),
-        )
-        if report_failure:
-            await sessions_q.append_event(
-                db,
-                session,
-                type=event_types.SESSION_ERROR,
-                source="system",
-                payload={
-                    "error": {
-                        "type": "memory_write_rejected",
-                        "message": "Some mounted files could not become CMA Memories",
-                        "issues": list(result.issues[:20]),
-                    }
-                },
-            )
-    return True
 
 
 async def _attach_files(

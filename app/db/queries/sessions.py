@@ -34,6 +34,7 @@ async def create_session(
     agent_id: str,
     agent_version: int,
     environment_id: str,
+    model: dict[str, Any] | None = None,
     account_id: str | None = None,
     title: str | None = None,
 ) -> Session:
@@ -43,6 +44,7 @@ async def create_session(
         agent_id=agent_id,
         agent_version=agent_version,
         environment_id=environment_id,
+        model=model,
         account_id=account_id,
         title=title,
         status=IDLE,
@@ -75,31 +77,6 @@ async def get_session(
             Session.organization_id == organization_id,
             Session.deleted_at.is_(None),
         )
-    )
-    return result.scalar_one_or_none()
-
-
-async def get_session_for_update(
-    db: AsyncSession,
-    *,
-    session_id: str,
-    organization_id: str,
-) -> Session | None:
-    """Tenant-scoped Session lookup that serializes resource mutations.
-
-    A live upload holds this lock while the durable File is copied into E2B
-    and its ``session_files`` binding is committed. The ordinary turn claim is
-    an UPDATE of this same row, so a message cannot start in the narrow window
-    where the file exists in only one of those two places.
-    """
-    result = await db.execute(
-        select(Session)
-        .where(
-            Session.id == session_id,
-            Session.organization_id == organization_id,
-            Session.deleted_at.is_(None),
-        )
-        .with_for_update()
     )
     return result.scalar_one_or_none()
 

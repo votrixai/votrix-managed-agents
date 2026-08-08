@@ -59,6 +59,13 @@ class Session(TimestampMixin, Base):
         ForeignKey("environments.id"),
         nullable=False,
     )
+    # The model this conversation runs on, chosen when it opened and pinned for
+    # its lifetime — same rule as agent_version above. NULL means the caller
+    # expressed no preference and the pinned Agent version's own model applies,
+    # resolved at run time rather than copied here, so that a conversation left
+    # to the Agent's choice keeps following it.
+    model: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
     # Which Account pays for this Session, pinned when it opens and never moved.
     # Resolving it per turn instead would split one conversation's spend across
     # two Accounts the moment the Organization's default changed under it.

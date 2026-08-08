@@ -108,6 +108,16 @@ the current production caller and target SDK both pass the consumer suite.
   preview frames are best-effort and non-replayable.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
+- [ ] Reconcile `GET /v1/sessions/{id}/events/stream` with the `pg_notify`
+  preview broker above. `services/sessions.py::stream_events` reads the
+  durable log by polling the `SessionEvent` table every `STREAM_POLL_SECONDS`
+  (0.3s) — flagged during a `votrix-backend` design review as a latency
+  concern for real-time chat (a new event can take up to ~300ms to reach a
+  watcher, and every open stream is its own poll loop against Postgres). Worth
+  checking whether this endpoint is meant to sit behind the same `pg_notify`
+  push path as `event_deltas`, or whether polling here is an intentional,
+  separate tradeoff (simplicity, no missed-notify edge cases) that should just
+  be written down as such.
 
 Hosted boundary: API instances autoscale independently. Private workers use
 OIDC-authenticated Cloud Tasks turn requests with `minScale=1`; the permanent

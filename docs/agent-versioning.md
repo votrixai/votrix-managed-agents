@@ -52,12 +52,13 @@ The same shape is stored when the caller supplies the object explicitly.
 
 ## Update
 
-`POST` or `PATCH /v1/agents/{agent_id}` requires the current `version` in the
-request body.
+`POST` or `PATCH /v1/agents/{agent_id}` takes only the fields that change.
 
-The version is an optimistic concurrency guard. If the Agent has advanced since
-the client read it, the update returns `409` instead of overwriting a newer
-snapshot.
+There is no `version` in the request. Numbering versions is the service's job,
+and a caller that had to name one first would have to read the Agent before
+every write to supply a number it has no opinion about. The edit lands on
+whatever is active when it arrives, and the response's `version` says which
+version it became.
 
 Update behavior:
 
@@ -67,6 +68,11 @@ Update behavior:
 - the next version number is `active_version + 1`;
 - an edit whose resulting snapshot is identical returns the existing active
   version and does not create a duplicate.
+
+Two edits racing therefore both apply, and the later one wins on any field they
+both set. Nothing is lost that was not overwritten deliberately: the merge base
+is the live active version, so a field one caller never mentioned keeps the
+other's change.
 
 The comparison covers every versioned field, including runtime configuration
 and metadata.

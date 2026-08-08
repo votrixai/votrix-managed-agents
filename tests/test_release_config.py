@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.db.engine import _connect_args
-from app.runtime.engine import _configure_checkpoint_schema, _postgres_dsn
+from app.runtime.engine import _configure_checkpoint_connection, _postgres_dsn
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,14 +44,22 @@ def test_checkpoint_database_url_is_explicitly_configurable():
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_schema_is_set_after_connecting():
+async def test_checkpoint_schema_is_set_on_every_pooled_connection(monkeypatch):
+    """Per connection, not once per saver.
+
+    The checkpointer borrows from a pool now, so there is no one connection to
+    configure — each new one has to be pointed at the schema as it is opened.
+    """
+    monkeypatch.setattr(
+        "app.runtime.engine.get_settings",
+        lambda: SimpleNamespace(database_schema="vma_rewrite_production"),
+    )
     connection = AsyncMock()
     cursor = AsyncMock()
     cursor.fetchone.return_value = {"current_schema": "vma_rewrite_production"}
     connection.execute.side_effect = [None, cursor]
-    saver = SimpleNamespace(conn=connection)
 
-    await _configure_checkpoint_schema(saver, "vma_rewrite_production")
+    await _configure_checkpoint_connection(connection)
 
     assert connection.execute.await_args_list == [
         call(
@@ -63,18 +71,18 @@ async def test_checkpoint_schema_is_set_after_connecting():
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_schema_configuration_fails_closed():
+async def test_checkpoint_schema_configuration_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "app.runtime.engine.get_settings",
+        lambda: SimpleNamespace(database_schema="missing_checkpoint_schema"),
+    )
     connection = AsyncMock()
     cursor = AsyncMock()
     cursor.fetchone.return_value = {"current_schema": None}
     connection.execute.side_effect = [None, cursor]
-    saver = SimpleNamespace(conn=connection)
 
     with pytest.raises(RuntimeError, match="did not select"):
-        await _configure_checkpoint_schema(
-            saver,
-            "missing_checkpoint_schema",
-        )
+        await _configure_checkpoint_connection(connection)
 
 
 def test_runtime_manifests_use_direct_checkpoint_database_secrets():
@@ -113,11 +121,10 @@ def test_runtime_manifests_use_the_actual_sandbox_timeout_setting():
         assert "VMA_E2B_TIMEOUT_SECONDS" not in manifest
 
 
-def test_migration_job_initializes_langgraph_checkpoints():
+def test_migration_job_runs_alembic():
     script = (ROOT / "scripts/migrate.sh").read_text(encoding="utf-8")
 
     assert 'alembic upgrade "${ALEMBIC_TARGET:-head}"' in script
-    assert "python -m app.runtime.checkpoint_setup" in script
 
 
 def test_operator_bootstrap_targets_the_deployed_database_schema():

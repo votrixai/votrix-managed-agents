@@ -175,12 +175,23 @@ async def test_changing_packages_rebuilds(client, headers, builds):
 # --- names, archiving, deleting ----------------------------------------------
 
 
-async def test_names_are_unique_within_an_organization(client, headers):
-    await create(client, headers, name="shared")
+async def test_one_name_may_cover_a_whole_history_of_environments(client, headers):
+    """An environment is never edited, so moving a recipe forward means
+    registering a new one beside the old — under the same label, because it is
+    the same logical environment. The first must survive untouched: sessions
+    are still running on it."""
 
-    response = await create(client, headers, name="shared")
+    first = await create(client, headers, name="shared")
+    second = await create(client, headers, name="shared")
 
-    assert response.status_code == 409
+    assert second.status_code == 201
+    assert second.json()["id"] != first.json()["id"]
+
+    still_there = await client.get(
+        f"/v1/environments/{first.json()['id']}", headers=headers
+    )
+    assert still_there.status_code == 200
+    assert still_there.json()["name"] == "shared"
 
 
 async def test_two_organizations_may_use_the_same_name(client, headers, db, other_tenant):

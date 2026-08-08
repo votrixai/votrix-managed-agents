@@ -38,21 +38,6 @@ async def create_environment(
     return environment
 
 
-async def get_environment_by_name(
-    db: AsyncSession,
-    *,
-    name: str,
-    organization_id: str,
-) -> Environment | None:
-    result = await db.execute(
-        select(Environment).where(
-            Environment.name == name,
-            Environment.organization_id == organization_id,
-        )
-    )
-    return result.scalar_one_or_none()
-
-
 async def count_sessions_using(db: AsyncSession, *, environment_id: str) -> int:
     """How many sessions still point at this environment."""
     result = await db.execute(

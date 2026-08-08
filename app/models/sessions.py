@@ -50,6 +50,17 @@ class SessionCreateRequest(ApiModel):
     agent_id: str
     environment_id: str
     agent_version: int | None = None
+    model: str | dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional model for this Session, pinned for its lifetime. When "
+            "omitted or null the pinned Agent version's own model applies, "
+            "resolved at run time — so a Session that expresses no preference "
+            "keeps following the Agent instead of freezing a copy of it. A bare "
+            "string is shorthand for `{\"id\": ...}`, as on an Agent."
+        ),
+        examples=["claude-opus-5"],
+    )
     account_id: str | None = Field(
         default=None,
         description=(
@@ -99,6 +110,13 @@ class SessionResponse(ApiModel):
     agent_id: str
     agent_version: int
     environment_id: str
+    model: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The model pinned to this Session, or null when it follows the "
+            "Agent version's."
+        ),
+    )
     # Which Account this Session is billed to. Read back rather than assumed:
     # omitting it on create resolves the Organization's default, and this says
     # which one that turned out to be.

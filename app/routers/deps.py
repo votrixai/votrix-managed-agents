@@ -24,6 +24,11 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 
 Db = Annotated[AsyncSession, Depends(get_db)]
 
+# Strong references to the in-flight `last_used_at` writes. asyncio only holds
+# a weak one, so without this the garbage collector is free to cancel a task
+# mid-statement.
+_touching: set[asyncio.Task[None]] = set()
+
 
 async def authenticate(
     db: Db,
@@ -40,6 +45,14 @@ async def authenticate(
     Revoked and expired keys are excluded by the lookup, so both arrive here
     as an unknown key and are refused the same way. Saying which of the three
     it was would tell an unauthenticated caller whether a key ever existed.
+
+    `last_used_at` is stamped beside the request rather than in it. Written on
+    this session it would hold a row lock — one row, shared by every request
+    presenting this key — until the request committed, which for a file being
+    copied into a sandbox is several seconds. Every other request on the key
+    would queue behind it at the door. It is also written at most once a
+    minute, because it answers "is this key still in use" and nothing reads it
+    sooner than that.
     """
     if not x_api_key:
         raise HTTPException(
@@ -48,7 +61,10 @@ async def authenticate(
     api_key = await api_keys_q.get_vma_api_key_by_token(db, x_api_key)
     if api_key is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid x-api-key")
-    await api_keys_q.touch_vma_api_key(db, api_key)
+    if api_keys_q.last_used_is_stale(api_key):
+        task = asyncio.create_task(api_keys_q.record_vma_api_key_use(api_key.id))
+        _touching.add(task)
+        task.add_done_callback(_touching.discard)
     return api_key
 
 

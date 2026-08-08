@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 from typing import Any
 
-from e2b import AsyncVolume, NotFoundException
+from e2b import AsyncVolume
 
 from app.config import get_settings
 from app.db.models import MemoryStore
@@ -64,24 +63,6 @@ class Volume:
         # our delete saga: retrying a completed provider side effect must be a
         # no-op rather than a new failure.
         await AsyncVolume.destroy(volume_id, api_key=settings.e2b_api_key)
-
-    @classmethod
-    async def write_file(cls, store: MemoryStore, path: str, content: str) -> None:
-        """Write one CMA Memory document to its provider Volume."""
-        native = await cls._connect(store)
-        parent = str(PurePosixPath(path).parent)
-        if parent != "/":
-            await native.make_dir(parent, force=True)
-        await native.write_file(path, content, force=True)
-
-    @classmethod
-    async def remove_file(cls, store: MemoryStore, path: str) -> None:
-        """Remove one document; an already absent path is an idempotent success."""
-        native = await cls._connect(store)
-        try:
-            await native.remove(path)
-        except NotFoundException:
-            return
 
     @classmethod
     def mount(cls, store: MemoryStore, mount_path: str) -> SandboxVolumeMount:

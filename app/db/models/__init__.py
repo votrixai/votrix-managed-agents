@@ -38,9 +38,7 @@ from app.db.models.memory import (
     VOLUME_PROVISIONING,
     VOLUME_PROVISIONING_STATES,
     VOLUME_READY,
-    Memory,
     MemoryStore,
-    MemoryVersion,
     SessionMemoryStore,
 )
 from app.db.models.sessions import (
@@ -69,9 +67,7 @@ __all__ = [
     "Base",
     "Environment",
     "File",
-    "Memory",
     "MemoryStore",
-    "MemoryVersion",
     "MEMORY_ACCESS_MODES",
     "MEMORY_ACCESS_READ_ONLY",
     "MEMORY_ACCESS_READ_WRITE",

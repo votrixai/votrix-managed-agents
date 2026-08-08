@@ -1,7 +1,7 @@
 """add organization accounts and their provider credentials
 
 Revision ID: a4e91c7d5b02
-Revises: d4f7a9c2e106
+Revises: f2a9c47d1b08
 Create Date: 2026-08-06
 
 An Account is where an Organization's spend is measured and capped. One
@@ -20,7 +20,12 @@ from alembic import op
 
 
 revision: str = "a4e91c7d5b02"
-down_revision: Union[str, None] = "d4f7a9c2e106"
+# Rebased onto the peteryue chain at the merge rather than left as a second
+# head. Both branches grew from d4f7a9c2e106 and touch different tables — this
+# one adds organization_accounts, the other adds sessions.model — so the order
+# between them carries no meaning and a linear history is worth more than a
+# merge revision recording a coincidence.
+down_revision: Union[str, None] = "f2a9c47d1b08"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

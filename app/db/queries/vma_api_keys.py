@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
+import structlog
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.models import VMA_API_SCOPE, VmaApiKey
 from app.utils.id_generator import new_id
+
+logger = structlog.get_logger()
 
 
 VMA_API_KEYS_MANAGE_SCOPE = "api_keys:manage"
@@ -206,10 +209,57 @@ async def list_vma_api_keys(
     return list(result.scalars().all())
 
 
+# How stale `last_used_at` is allowed to get. It answers "is this key still in
+# use", which nothing reads in real time and no one asks to the minute — so
+# most requests can leave it alone entirely.
+LAST_USED_RESOLUTION = timedelta(minutes=1)
+
+
+def last_used_is_stale(api_key: VmaApiKey, *, now: datetime | None = None) -> bool:
+    """Whether this key's `last_used_at` is old enough to be worth rewriting."""
+    if api_key.last_used_at is None:
+        return True
+    moment = now or datetime.now(timezone.utc)
+    return moment - api_key.last_used_at >= LAST_USED_RESOLUTION
+
+
 async def touch_vma_api_key(db: AsyncSession, api_key: VmaApiKey) -> VmaApiKey:
+    """Record that this key was just used.
+
+    Do not call this on the request's own session. Every request presenting one
+    key writes this one row, and a row written inside a transaction stays
+    locked until that transaction commits — so a request that goes on to spend
+    eight seconds copying a file into a sandbox makes every other request on
+    the same key wait those eight seconds first, at the door, before doing any
+    work of its own. Measured: three concurrent attachments waited 0s, 7.2s and
+    14.0s here, for a timestamp none of them read.
+
+    `record_vma_api_key_use` is the caller-facing version and owns that rule.
+    """
     api_key.last_used_at = datetime.now(timezone.utc)
     await db.flush()
     return api_key
+
+
+async def record_vma_api_key_use(api_key_id: str) -> None:
+    """Stamp `last_used_at` in a transaction of its own, if it is stale.
+
+    Its own session, so the row is locked for one statement rather than for
+    however long the request that triggered it turns out to take. Failures are
+    swallowed: this is bookkeeping, and a request that did its work should not
+    fail because a timestamp did not get written.
+    """
+    from app.db.engine import session_scope
+
+    try:
+        async with session_scope() as db:
+            api_key = await db.get(VmaApiKey, api_key_id)
+            if api_key is None or not last_used_is_stale(api_key):
+                return
+            api_key.last_used_at = datetime.now(timezone.utc)
+            await db.commit()
+    except Exception:
+        logger.warning("vma_api_key_touch_failed", api_key_id=api_key_id, exc_info=True)
 
 
 async def revoke_vma_api_key(

@@ -4,7 +4,7 @@ from fastapi.responses import Response
 from app.db.models import Skill
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models.common import DeletedResponse, ListResponse, page_of
-from app.models.skills import SkillResponse, SkillUpdateRequest
+from app.models.skills import SkillResponse
 from app.routers.deps import Db, OrganizationId
 from app.services import skills as service
 
@@ -65,17 +65,37 @@ async def retrieve_skill(skill_id: str, db: Db, organization_id: OrganizationId)
 @router.post("/{skill_id}", response_model=SkillResponse)
 async def update_skill(
     skill_id: str,
-    body: SkillUpdateRequest,
     db: Db,
     organization_id: OrganizationId,
+    file: UploadFile | None = File(
+        default=None, description="A replacement package, as a zip"
+    ),
+    name: str | None = Form(default=None),
+    description: str | None = Form(default=None),
 ):
-    skill = await service.update_skill(
-        db,
-        skill_id=skill_id,
-        organization_id=organization_id,
-        name=body.name,
-        description=body.description,
-    )
+    """Edit a skill, optionally replacing what is in it.
+
+    Multipart, like create, because the package can come through here too. The
+    id does not change, so every Agent already referencing this skill picks up
+    the new contents without being edited — which is the reason this exists
+    rather than callers deleting and re-uploading.
+
+    Sending a package re-derives the name from its SKILL.md and ignores `name`:
+    a package that disagreed with the name stored beside it would fail to load
+    in the sandbox. Sessions already running keep the package their container
+    was built with.
+    """
+    try:
+        skill = await service.update_skill(
+            db,
+            skill_id=skill_id,
+            organization_id=organization_id,
+            content=await file.read() if file is not None else None,
+            name=name,
+            description=description,
+        )
+    except service.InvalidSkillPackage as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return to_skill(skill)
 
 

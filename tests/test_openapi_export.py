@@ -11,22 +11,27 @@ from scripts.export_openapi import (
 )
 
 
+# The store's lifecycle, and nothing about what is inside one: a Memory Store
+# is a Volume the Agent mounts, so its contents are reached through the
+# filesystem in a Session rather than over HTTP.
 MEMORY_OPERATIONS = {
     "DELETE /v1/memory_stores/{memory_store_id}",
-    "DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
     "GET /v1/memory_stores",
     "GET /v1/memory_stores/{memory_store_id}",
-    "GET /v1/memory_stores/{memory_store_id}/memories",
-    "GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
-    "GET /v1/memory_stores/{memory_store_id}/memory_versions",
-    "GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}",
     "POST /v1/memory_stores",
     "POST /v1/memory_stores/{memory_store_id}",
     "POST /v1/memory_stores/{memory_store_id}/archive",
-    "POST /v1/memory_stores/{memory_store_id}/memories",
-    "POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
-    "POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact",
 }
+
+
+def test_no_document_api_is_published_over_a_memory_store():
+    """Deliberately absent. Documents used to have their own CRUD and version
+    history, kept in step by hashing the whole mount after every turn, and
+    nothing ever read it."""
+
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    assert not [path for path in schema["paths"] if "/memories" in path]
+    assert not [path for path in schema["paths"] if "memory_versions" in path]
 
 
 def _operations(schema: dict) -> set[str]:

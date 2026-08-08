@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     # is work that has to happen either way.
     vma_db_pool_pre_ping: bool = True
 
+    # LangGraph's checkpoint traffic, pooled the same way and for the same
+    # reasons. Sized small on purpose: a turn borrows a connection per
+    # checkpoint call and gives it straight back, so this caps concurrent
+    # checkpoint statements, not concurrent turns.
+    vma_checkpoint_pool_max_size: int = 3
+    vma_checkpoint_pool_max_lifetime_seconds: float = 300.0
+
     e2b_api_key: str = ""
     # How long a container may sit idle before E2B pauses it. Long enough to
     # cover a model thinking between tool calls; short enough that an abandoned

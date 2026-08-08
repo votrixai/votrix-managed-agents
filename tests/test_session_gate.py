@@ -205,10 +205,54 @@ async def test_a_cancelled_worker_stops_even_once_a_new_turn_is_running(db, sess
         await emit("agent.message", {"text": "from the turn before"})
 
 
-# --- handing the turn to Cloud Tasks -----------------------------------------
+# --- handing the turn over ---------------------------------------------------
 #
-# Everything above runs the turn inline. These are about the other route: the
-# request returns as soon as the message is accepted, and a queue calls back.
+# Everything above stubs dispatch out entirely: accepting a message and running
+# it are separate concerns. These are about the handover itself, on both routes.
+# Neither one waits for the turn, and that is the property being pinned.
+
+
+async def test_accepting_a_message_does_not_wait_for_the_turn(db, session, monkeypatch):
+    """`inline` runs the turn on its own task and returns immediately.
+
+    A request that only came back once the agent was done would hand the client
+    the whole conversation at once: by the time it could open the event stream,
+    every event would already be in the log, and no amount of streaming further
+    down could undo that. So it is pinned here, at the handover, rather than
+    left to the stream's own tests.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def _turn_that_hangs(_db, *, session_id, events):
+        started.set()
+        await finish.wait()
+
+    @asynccontextmanager
+    async def _test_scope():
+        # The turn opens a session of its own; in tests that has to be this
+        # one, because the real one would reach the configured Postgres.
+        yield db
+
+    monkeypatch.setattr(service, "process_session", _turn_that_hangs)
+    monkeypatch.setattr(service, "session_scope", _test_scope)
+    # `never_dispatch` is autouse, so the real one has to go back for this test.
+    monkeypatch.setattr(service, "_dispatch_turn", REAL_DISPATCH)
+
+    # Times out rather than hanging if the request ever waits for the turn again.
+    await asyncio.wait_for(send(db, session), timeout=2)
+    await asyncio.wait_for(started.wait(), timeout=2)
+    assert service._inline_turns, "a turn nothing holds can be collected mid-reply"
+
+    finish.set()
+    for task in list(service._inline_turns):
+        await task
+
+
+# --- handing the turn to Cloud Tasks -----------------------------------------
 
 
 class FakeTasksClient:
@@ -345,3 +389,79 @@ def test_cloud_dispatch_will_not_start_half_configured(monkeypatch):
     assert "TASKS_QUEUE" in str(caught.value)
 
     clear_settings_cache()
+
+
+# --- which model actually runs -----------------------------------------------
+#
+# Lives here rather than in its own file because the engine has no test module
+# of its own, and this is a fact about one session's lifetime: what it was
+# opened with is what it keeps running on.
+
+
+@pytest.mark.parametrize(
+    ("session_model", "expected"),
+    [
+        ({"id": "claude-opus-5"}, {"id": "claude-opus-5"}),
+        (None, {"id": "agent-default"}),
+    ],
+    ids=["the session's own model wins", "no preference follows the agent"],
+)
+async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
+    """Resolved per turn, not copied onto the session when it was created.
+
+    A session that named no model keeps following its agent, so editing the
+    agent still reaches it — which is the whole reason the column is nullable
+    instead of holding a snapshot.
+    """
+    from types import SimpleNamespace
+
+    from app.runtime import engine
+
+    built: list[dict] = []
+
+    class _Checkpoint:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class _Graph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(next=(), values={"messages": []}, interrupts=())
+
+        async def astream(self, *_args, **_kwargs):
+            if False:
+                yield {}
+
+    def _capture(spec, *_args, **_kwargs):
+        built.append(spec)
+        return object()
+
+    monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
+    monkeypatch.setattr(engine, "_build_chat_model", _capture)
+    monkeypatch.setattr(engine, "read_image_tool", lambda *_a, **_kw: object())
+    monkeypatch.setattr(engine, "create_deep_agent", lambda **_kw: _Graph())
+
+    async def _emit(_event, _payload):
+        return None
+
+    await engine.execute_agent(
+        session=SimpleNamespace(id="sess_model_resolution", model=session_model),
+        version=SimpleNamespace(
+            agent_id="agent_model_resolution",
+            version=1,
+            tools=[{"type": engine.AGENT_TOOLSET}],
+            skills=[],
+            model={"id": "agent-default"},
+            system=None,
+        ),
+        events=[MESSAGE],
+        sandbox=SimpleNamespace(to_deep_agent_backend=object()),
+        emit=_emit,
+        # Which model runs and whose key pays are separate questions; this test
+        # only asks the first, so any credential will do.
+        inference_key="sk-or-v1-test",
+    )
+
+    assert built == [expected]

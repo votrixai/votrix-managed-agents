@@ -129,6 +129,34 @@ async def test_creating_a_session_returns_it(created):
     assert created["id"].startswith("sess_")
 
 
+async def test_session_pins_the_model_it_was_given(
+    client, headers, agent, environment
+):
+    response = await client.post(
+        "/v1/sessions",
+        headers=headers,
+        json={
+            "agent_id": agent.id,
+            "environment_id": environment.id,
+            "model": "claude-opus-5",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    # Normalised on the way in: a bare string is shorthand for {"id": ...}, the
+    # same as on an Agent, so every reader sees one shape.
+    assert response.json()["model"] == {"id": "claude-opus-5"}
+
+
+async def test_a_session_without_a_model_follows_the_agent(created):
+    """Null, not a copy of the Agent's model.
+
+    Copying it at creation would freeze the choice: editing the Agent later
+    would stop reaching a conversation that never asked to opt out of it.
+    """
+    assert created["model"] is None
+
+
 async def test_a_session_never_exposes_its_internals(created):
     for hidden in ("organization_id", "lock_version", "lease_expires_at"):
         assert hidden not in created

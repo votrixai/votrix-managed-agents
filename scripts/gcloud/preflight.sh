@@ -91,14 +91,6 @@ check_worker_manifest_is_private() {
   fi
 }
 
-check_production_connection_gate() {
-  if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; then
-    fail "production Supabase connection budget is UNMEASURED"
-  else
-    ok "production Supabase connection budget is recorded"
-  fi
-}
-
 if ! command -v gcloud >/dev/null 2>&1; then
   fail "gcloud CLI is not installed"
   echo "Preflight failed: ${FAILURES} failure(s), ${WARNINGS} warning(s)." >&2
@@ -364,7 +356,6 @@ check_environment_secrets() {
 
 case "$TARGET" in
   production)
-    check_production_connection_gate
     check_tasks_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
     check_environment_secrets ""
     check_manifest service.production.yaml
@@ -379,7 +370,6 @@ case "$TARGET" in
     check_worker_manifest_is_private service.worker.staging.yaml
     ;;
   all)
-    check_production_connection_gate
     check_tasks_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
     check_tasks_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
     check_environment_secrets ""

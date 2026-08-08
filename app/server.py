@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -47,8 +49,20 @@ ROUTERS = (
 )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # The checkpoint pools outlive any one turn, so nothing else would ever
+    # close them. Imported here rather than at module scope: `app.runtime` pulls
+    # in LangGraph and the model clients, and the API process should not pay
+    # that import unless it actually runs a turn.
+    from app.runtime.engine import aclose_checkpoint_pools
+
+    await aclose_checkpoint_pools()
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Votrix Managed Agents", version="0.1.0")
+    app = FastAPI(title="Votrix Managed Agents", version="0.1.0", lifespan=lifespan)
     for router in ROUTERS:
         app.include_router(router)
     _install_cors(app)
