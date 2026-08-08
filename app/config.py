@@ -132,6 +132,21 @@ class Settings(BaseSettings):
     tasks_service_account: str = ""
     worker_url: str = ""
 
+    # Run the janitor (app/worker.py) inside this process, as a background loop.
+    #
+    # Off by default because most processes must not: it is one sweep of the
+    # whole tenant's stranded sessions per minute, and it belongs to whichever
+    # deployment is guaranteed to have an instance awake to run it. Ours is the
+    # worker service — `minScale: 1` keeps one alive and `cpu-throttling: false`
+    # lets it think between requests, which is exactly what a background loop
+    # needs and what a scale-to-zero API service cannot promise.
+    #
+    # Safe on more than one instance, but only because the sweep selects its
+    # batch `FOR UPDATE SKIP LOCKED` (see `list_stuck_sessions`). Without that
+    # two sweepers would read the same stranded session and both write it an
+    # error event. `maxScale` on the worker is 4, so this is not hypothetical.
+    vma_run_sweeper: bool = False
+
     @property
     def cors_origins(self) -> tuple[str, ...]:
         """The configured origins, in order, without blanks or duplicates."""

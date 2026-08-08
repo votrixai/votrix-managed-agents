@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -51,7 +52,13 @@ ROUTERS = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
+    sweeper = _start_sweeper()
+    try:
+        yield
+    finally:
+        if sweeper is not None:
+            sweeper.cancel()
+
     # The checkpoint pools outlive any one turn, so nothing else would ever
     # close them. Imported here rather than at module scope: `app.runtime` pulls
     # in LangGraph and the model clients, and the API process should not pay
@@ -59,6 +66,25 @@ async def lifespan(app: FastAPI):
     from app.runtime.engine import aclose_checkpoint_pools
 
     await aclose_checkpoint_pools()
+
+
+def _start_sweeper() -> asyncio.Task | None:
+    """Put the janitor on this process's event loop, if it is the one for it.
+
+    A turn dropped by a dying instance leaves its session `running` forever —
+    the lease lapses, so the next message can still claim it, but until someone
+    sends one the conversation reads as though the agent is still typing. The
+    sweep is what closes those out without a user having to bump into one.
+
+    Held in a variable because asyncio keeps only a weak reference to a running
+    task: without a strong one the loop could be collected mid-sleep.
+    """
+    if not get_settings().vma_run_sweeper:
+        return None
+
+    from app.worker import run_forever
+
+    return asyncio.create_task(run_forever())
 
 
 def create_app() -> FastAPI:

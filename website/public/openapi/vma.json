@@ -1863,7 +1863,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResponse_Annotated_Union_UserMessageEvent__UserInterruptEvent__UserToolConfirmationEvent__UserCustomToolResultEvent__AgentMessageEvent__AgentThinkingEvent__AgentToolUseEvent__AgentCustomToolUseEvent__AgentToolResultEvent__SessionStatusRunningEvent__SessionStatusIdleEvent__SessionStatusTerminatedEvent__SessionErrorEvent___FieldInfo_annotation_NoneType__required_True__discriminator__type____"
+                  "$ref": "#/components/schemas/ListEventsResponse"
                 }
               }
             }
@@ -5151,6 +5151,115 @@
         "title": "Interrupted",
         "description": "The user stopped the turn.\n\nCarries nothing: the client knows what it sent, and a list here beside\n`requires_action`'s — meaning something else entirely — is a mistake\nwaiting to be made."
       },
+      "ListEventsResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/UserMessageEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/UserInterruptEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/UserToolConfirmationEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/UserCustomToolResultEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentMessageEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentThinkingEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentToolUseEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentCustomToolUseEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/AgentToolResultEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SessionStatusRunningEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SessionStatusIdleEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SessionStatusTerminatedEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SessionErrorEvent"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "agent.custom_tool_use": "#/components/schemas/AgentCustomToolUseEvent",
+                  "agent.message": "#/components/schemas/AgentMessageEvent",
+                  "agent.thinking": "#/components/schemas/AgentThinkingEvent",
+                  "agent.tool_result": "#/components/schemas/AgentToolResultEvent",
+                  "agent.tool_use": "#/components/schemas/AgentToolUseEvent",
+                  "session.error": "#/components/schemas/SessionErrorEvent",
+                  "session.status_idle": "#/components/schemas/SessionStatusIdleEvent",
+                  "session.status_running": "#/components/schemas/SessionStatusRunningEvent",
+                  "session.status_terminated": "#/components/schemas/SessionStatusTerminatedEvent",
+                  "user.custom_tool_result": "#/components/schemas/UserCustomToolResultEvent",
+                  "user.interrupt": "#/components/schemas/UserInterruptEvent",
+                  "user.message": "#/components/schemas/UserMessageEvent",
+                  "user.tool_confirmation": "#/components/schemas/UserToolConfirmationEvent"
+                }
+              }
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_event_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListEventsResponse",
+        "description": "One page of the log, and where the log ended when it was read.\n\nA window has to be aimed before it is fetched, so a client paging\nbackwards aims with its own idea of the end — which is stale exactly when\na turn ran while it was not watching. `last_event_seq` makes that visible\nin the same response instead of costing a `GET /v1/sessions/{id}` first,\nand it is free to say: the ownership check this endpoint already performs\nhas the session row in hand."
+      },
       "ListResponse_AccountResponse_": {
         "properties": {
           "data": {
@@ -5270,104 +5379,6 @@
           "data"
         ],
         "title": "ListResponse[AgentVersionResponse]"
-      },
-      "ListResponse_Annotated_Union_UserMessageEvent__UserInterruptEvent__UserToolConfirmationEvent__UserCustomToolResultEvent__AgentMessageEvent__AgentThinkingEvent__AgentToolUseEvent__AgentCustomToolUseEvent__AgentToolResultEvent__SessionStatusRunningEvent__SessionStatusIdleEvent__SessionStatusTerminatedEvent__SessionErrorEvent___FieldInfo_annotation_NoneType__required_True__discriminator__type____": {
-        "properties": {
-          "data": {
-            "items": {
-              "oneOf": [
-                {
-                  "$ref": "#/components/schemas/UserMessageEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/UserInterruptEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/UserToolConfirmationEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/UserCustomToolResultEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/AgentMessageEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/AgentThinkingEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/AgentToolUseEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/AgentCustomToolUseEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/AgentToolResultEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/SessionStatusRunningEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/SessionStatusIdleEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/SessionStatusTerminatedEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/SessionErrorEvent"
-                }
-              ],
-              "discriminator": {
-                "propertyName": "type",
-                "mapping": {
-                  "agent.custom_tool_use": "#/components/schemas/AgentCustomToolUseEvent",
-                  "agent.message": "#/components/schemas/AgentMessageEvent",
-                  "agent.thinking": "#/components/schemas/AgentThinkingEvent",
-                  "agent.tool_result": "#/components/schemas/AgentToolResultEvent",
-                  "agent.tool_use": "#/components/schemas/AgentToolUseEvent",
-                  "session.error": "#/components/schemas/SessionErrorEvent",
-                  "session.status_idle": "#/components/schemas/SessionStatusIdleEvent",
-                  "session.status_running": "#/components/schemas/SessionStatusRunningEvent",
-                  "session.status_terminated": "#/components/schemas/SessionStatusTerminatedEvent",
-                  "user.custom_tool_result": "#/components/schemas/UserCustomToolResultEvent",
-                  "user.interrupt": "#/components/schemas/UserInterruptEvent",
-                  "user.message": "#/components/schemas/UserMessageEvent",
-                  "user.tool_confirmation": "#/components/schemas/UserToolConfirmationEvent"
-                }
-              }
-            },
-            "type": "array"
-          },
-          "has_more": {
-            "type": "boolean",
-            "default": false
-          },
-          "first_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "last_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "title": "ListResponse[Annotated[Union[UserMessageEvent, UserInterruptEvent, UserToolConfirmationEvent, UserCustomToolResultEvent, AgentMessageEvent, AgentThinkingEvent, AgentToolUseEvent, AgentCustomToolUseEvent, AgentToolResultEvent, SessionStatusRunningEvent, SessionStatusIdleEvent, SessionStatusTerminatedEvent, SessionErrorEvent], FieldInfo(annotation=NoneType, required=True, discriminator='type')]]"
       },
       "ListResponse_EnvironmentResponse_": {
         "properties": {

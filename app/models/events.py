@@ -50,7 +50,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import Field, model_validator
 
-from app.models.common import ApiModel
+from app.models.common import ApiModel, ListResponse
 
 # --- the vocabulary ----------------------------------------------------------
 #
@@ -353,6 +353,20 @@ class SendEventsResponse(ApiModel):
     it comes back as a 409 `SessionBusyError` with nothing appended."""
 
     data: list[EventResponse] = Field(default_factory=list)
+
+
+class ListEventsResponse(ListResponse[EventResponse]):
+    """One page of the log, and where the log ended when it was read.
+
+    A window has to be aimed before it is fetched, so a client paging
+    backwards aims with its own idea of the end — which is stale exactly when
+    a turn ran while it was not watching. `last_event_seq` makes that visible
+    in the same response instead of costing a `GET /v1/sessions/{id}` first,
+    and it is free to say: the ownership check this endpoint already performs
+    has the session row in hand.
+    """
+
+    last_event_seq: int | None = None
 
 
 # --- the log, read back ------------------------------------------------------

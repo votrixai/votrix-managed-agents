@@ -319,11 +319,21 @@ async def release_session(
 
 
 async def list_stuck_sessions(db: AsyncSession, *, limit: int = 100) -> list[Session]:
-    """Sessions left `running` by a worker that never came back.
+    """Sessions left `running` by a worker that never came back, claimed.
 
     The lease already lets the next message take one of these over, so this is
     for the janitor: tidy them back to `idle` and tear down their sandbox
     rather than waiting for a user to bump into it.
+
+    `SKIP LOCKED` is what makes more than one janitor safe. The sweep reads
+    these and then writes to each — an error event and a release — so two
+    sweepers reading the same row would both append, and the conversation
+    would end with two identical `worker_lost` frames. Locking on the way out
+    of the select hands each sweeper a set nobody else is holding, and the
+    rows stay locked until the sweep commits.
+
+    Nothing live is ever locked here: a session only qualifies once its lease
+    has lapsed, which is to say once whoever was renewing it is gone.
     """
     now = _now()
     stmt = (
@@ -338,6 +348,7 @@ async def list_stuck_sessions(db: AsyncSession, *, limit: int = 100) -> list[Ses
         )
         .order_by(Session.updated_at)
         .limit(limit)
+        .with_for_update(skip_locked=True)
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
