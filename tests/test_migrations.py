@@ -11,7 +11,8 @@ from app.config import clear_settings_cache
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PREVIOUS_HEAD = "b7e1c4d9a620"
-CURRENT_HEAD = "b7f2d4a91c53"
+REWIRED_RELEASE_HEAD = "b7f2d4a91c53"
+CURRENT_HEAD = "e3a14b7c9d52"
 
 
 def test_member_migration_preserves_existing_owner_and_has_one_head(
@@ -139,3 +140,64 @@ def test_postgres_offline_downgrade_emits_role_guard(monkeypatch):
     assert "DO $$" in sql
     assert "WHERE role <> 'owner'" in sql
     assert "RENAME CONSTRAINT organization_members_pkey" in sql
+
+
+def test_reconciliation_repairs_database_stamped_by_rewired_history(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "rewired-release.sqlite"
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    clear_settings_cache()
+
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    config.set_main_option(
+        "script_location",
+        str(REPOSITORY_ROOT / "alembic"),
+    )
+
+    try:
+        # The old release reached this schema, then recorded the later revision
+        # IDs through a graph that did not contain the three inserted migrations.
+        command.upgrade(config, "d4f7a9c2e106")
+        command.stamp(config, REWIRED_RELEASE_HEAD)
+        command.upgrade(config, "head")
+
+        with sqlite3.connect(database_path) as connection:
+            session_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(sessions)")
+            }
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            unique_environment_indexes = set()
+            for index in connection.execute("PRAGMA index_list(environments)"):
+                if not index[2]:
+                    continue
+                columns = tuple(
+                    row[2]
+                    for row in connection.execute(
+                        f'PRAGMA index_info("{index[1]}")'
+                    )
+                )
+                unique_environment_indexes.add(columns)
+            revision = connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()
+
+        assert revision == (CURRENT_HEAD,)
+        assert "model" in session_columns
+        # The repair must not turn the skipped cleanup migration into an
+        # unannounced destructive operation on an already-running database.
+        assert "memories" in tables
+        assert "memory_versions" in tables
+        assert ("organization_id", "name") not in unique_environment_indexes
+    finally:
+        clear_settings_cache()

@@ -114,11 +114,6 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-openrouter-management-key-staging
-            - name: VMA_ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: latest
-                  name: vma-encryption-key-staging
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

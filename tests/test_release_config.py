@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 from unittest.mock import AsyncMock, call
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from app.config import Settings
@@ -12,6 +13,27 @@ from app.runtime.engine import _configure_checkpoint_connection, _postgres_dsn
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_cloud_run_manifests_have_unique_environment_variable_names():
+    for manifest_name in (
+        "service.production.yaml",
+        "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
+    ):
+        manifest = yaml.safe_load(
+            (ROOT / manifest_name).read_text(encoding="utf-8")
+        )
+        for container in manifest["spec"]["template"]["spec"]["containers"]:
+            names = [entry["name"] for entry in container.get("env", [])]
+            duplicates = sorted(
+                name for name in set(names) if names.count(name) > 1
+            )
+            assert not duplicates, (
+                f"{manifest_name} contains duplicate environment variables: "
+                f"{duplicates}"
+            )
 
 
 def test_postgres_schema_is_applied_to_asyncpg_connections():
