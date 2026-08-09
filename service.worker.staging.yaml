@@ -142,6 +142,11 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-e2b-api-key-staging
+            - name: FIRECRAWL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-firecrawl-api-key-staging
             - name: S3_ENDPOINT_URL
               valueFrom:
                 secretKeyRef:

@@ -102,6 +102,7 @@ VMA_SUPABASE_URL=
 VMA_SUPABASE_PUBLISHABLE_KEY=
 VMA_ENCRYPTION_KEY=
 OPENROUTER_MANAGEMENT_KEY=
+FIRECRAWL_API_KEY=
 E2B_API_KEY=
 S3_ENDPOINT_URL=
 S3_ACCESS_KEY_ID=
@@ -128,6 +129,7 @@ only these names:
 | `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
 | `OPENROUTER_MANAGEMENT_KEY` | `vma-openrouter-management-key` | `vma-openrouter-management-key-staging` |
+| `FIRECRAWL_API_KEY` | `vma-firecrawl-api-key` | `vma-firecrawl-api-key-staging` |
 | `E2B_API_KEY` | `vma-e2b-api-key` | `vma-e2b-api-key-staging` |
 | `S3_ENDPOINT_URL` | `vma-s3-endpoint-url` | `vma-s3-endpoint-url-staging` |
 | `S3_ACCESS_KEY_ID` | `vma-s3-access-key-id` | `vma-s3-access-key-id-staging` |
