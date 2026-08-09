@@ -342,6 +342,7 @@ check_environment_secrets() {
     listen-database-url \
     encryption-key \
     e2b-api-key \
+    firecrawl-api-key \
     supabase-url \
     supabase-publishable-key \
     s3-endpoint-url \

@@ -107,6 +107,7 @@ VMA_SUPABASE_URL|vma-supabase-url
 VMA_SUPABASE_PUBLISHABLE_KEY|vma-supabase-publishable-key
 VMA_ENCRYPTION_KEY|vma-encryption-key
 E2B_API_KEY|vma-e2b-api-key
+FIRECRAWL_API_KEY|vma-firecrawl-api-key
 S3_ENDPOINT_URL|vma-s3-endpoint-url
 S3_ACCESS_KEY_ID|vma-s3-access-key-id
 S3_SECRET_ACCESS_KEY|vma-s3-secret-access-key

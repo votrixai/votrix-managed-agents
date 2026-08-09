@@ -51,14 +51,14 @@ class Settings(BaseSettings):
     # provisioning key, so a leak of this one cannot be spent, only used to
     # enumerate and revoke.
     openrouter_management_key: str = ""
-    # Which provider workspace new keys are created in. Empty means the
-    # management key's own default.
-    openrouter_workspace_id: str = ""
 
     # Base64url AES-256 key wrapping provider secrets at rest. Without it no
     # Account credential can be written or read, which is why provisioning
     # fails loudly rather than storing a key in the clear.
     vma_encryption_key: str = ""
+
+    # Server-side credential used by the web_search and web_fetch tools.
+    firecrawl_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""

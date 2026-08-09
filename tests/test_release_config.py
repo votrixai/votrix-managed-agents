@@ -36,6 +36,34 @@ def test_cloud_run_manifests_have_unique_environment_variable_names():
             )
 
 
+def test_firecrawl_secret_is_imported_and_injected_into_every_runtime():
+    expected = {
+        "service.production.yaml": "vma-firecrawl-api-key",
+        "service.worker.production.yaml": "vma-firecrawl-api-key",
+        "service.staging.yaml": "vma-firecrawl-api-key-staging",
+        "service.worker.staging.yaml": "vma-firecrawl-api-key-staging",
+    }
+
+    importer = (ROOT / "scripts/gcloud/1-create-secrets.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "FIRECRAWL_API_KEY|vma-firecrawl-api-key" in importer
+
+    preflight = (ROOT / "scripts/gcloud/preflight.sh").read_text(encoding="utf-8")
+    assert "firecrawl-api-key" in preflight
+
+    for manifest_name, secret_name in expected.items():
+        manifest = yaml.safe_load(
+            (ROOT / manifest_name).read_text(encoding="utf-8")
+        )
+        env = manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        firecrawl = next(entry for entry in env if entry["name"] == "FIRECRAWL_API_KEY")
+        assert firecrawl["valueFrom"]["secretKeyRef"] == {
+            "key": "latest",
+            "name": secret_name,
+        }
+
+
 def test_postgres_schema_is_applied_to_asyncpg_connections():
     settings = Settings(_env_file=None, database_schema="vma_rewrite_staging")
 
