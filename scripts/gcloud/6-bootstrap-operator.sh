@@ -14,9 +14,9 @@ TARGET=${1:?Usage: $0 <staging|production>}
 case "$TARGET" in
   staging)
     SECRET_SUFFIX="-staging"
-    DEFAULT_ORGANIZATION_ID="org_votrix_staging"
-    DEFAULT_ORGANIZATION_SLUG="votrix-staging"
-    DEFAULT_ORGANIZATION_NAME="Votrix Staging"
+    DEFAULT_ORGANIZATION_ID="org_019fda5a22b2725cb1360e7f8ee6f0e7"
+    DEFAULT_ORGANIZATION_SLUG="votrix-ai"
+    DEFAULT_ORGANIZATION_NAME="Votrix AI"
     DEFAULT_DATABASE_SCHEMA="vma_rewrite_staging"
     ;;
   production)
