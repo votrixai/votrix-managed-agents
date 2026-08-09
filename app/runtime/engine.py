@@ -104,7 +104,7 @@ async def execute_agent(
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         tools.append(web_search_tool())
         tools.append(web_fetch_tool(sandbox))
-        
+
     for spec in declared:
         if isinstance(spec, dict) and spec.get("type") == "custom":
             name = str(spec["name"])

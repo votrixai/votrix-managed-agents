@@ -75,8 +75,58 @@ READ_IMAGE_INSTRUCTION = (
 )
 
 FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v2"
+FIRECRAWL_RESPONSE_MAX_BYTES = 5 * 1024 * 1024
 WEB_SEARCH_MAX_RESULTS = 10
 WEB_FETCH_INLINE_MAX_CHARS = 8000
+
+
+class _FirecrawlResponseError(RuntimeError):
+    """A successful HTTP response that does not satisfy Firecrawl's contract."""
+
+
+class _FirecrawlResponseTooLarge(_FirecrawlResponseError):
+    """The response crossed our memory boundary while it was being downloaded."""
+
+
+async def _firecrawl_data(
+    endpoint: str,
+    *,
+    api_key: str,
+    request_body: dict[str, Any],
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Return one bounded, validated Firecrawl ``data`` object.
+
+    A normal ``AsyncClient.post`` buffers the complete response before it
+    returns. Firecrawl can turn documents into very large Markdown payloads,
+    so the boundary has to be enforced while bytes arrive, before JSON parsing
+    creates another in-memory representation of the same content.
+    """
+
+    body = bytearray()
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async with client.stream(
+            "POST",
+            f"{FIRECRAWL_API_BASE}/{endpoint}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=request_body,
+        ) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > FIRECRAWL_RESPONSE_MAX_BYTES:
+                    raise _FirecrawlResponseTooLarge
+                body.extend(chunk)
+
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise _FirecrawlResponseError from exc
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        raise _FirecrawlResponseError
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise _FirecrawlResponseError
+    return data
 
 
 def resolve_tool_interrupts(tools: list[dict[str, Any]]) -> dict[str, Any]:
@@ -233,30 +283,39 @@ def web_search_tool() -> StructuredTool:
             return "web_search is unavailable: no Firecrawl API key is configured on this server."
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{FIRECRAWL_API_BASE}/search",
-                    headers={"Authorization": f"Bearer {settings.firecrawl_api_key}"},
-                    json={"query": query, "limit": WEB_SEARCH_MAX_RESULTS},
-                )
-                response.raise_for_status()
-                payload = response.json()
+            data = await _firecrawl_data(
+                "search",
+                api_key=settings.firecrawl_api_key,
+                request_body={"query": query, "limit": WEB_SEARCH_MAX_RESULTS},
+                timeout_seconds=30.0,
+            )
+            results = data.get("web") or []
+            if not isinstance(results, list) or not all(
+                isinstance(item, dict) for item in results
+            ):
+                raise _FirecrawlResponseError
+
+            if not results:
+                return f"web_search found no results for {query!r}."
+
+            results = results[:WEB_SEARCH_MAX_RESULTS]
+            lines = [f"Top {len(results)} results for {query!r}:", ""]
+            for i, item in enumerate(results, start=1):
+                title = item.get("title") or "(untitled)"
+                url = item.get("url") or ""
+                description = item.get("description") or ""
+                lines.append(f"{i}. {title}\n   {url}\n   {description}")
+            return "\n".join(lines)
         except httpx.HTTPStatusError as exc:
             return f"web_search failed: Firecrawl returned {exc.response.status_code} for {query!r}."
         except httpx.HTTPError as exc:
-            return f"web_search failed: {type(exc).__name__}: {exc}"
-
-        results = (payload.get("data") or {}).get("web") or []
-        if not results:
-            return f"web_search found no results for {query!r}."
-
-        lines = [f"Top {len(results)} results for {query!r}:", ""]
-        for i, item in enumerate(results, start=1):
-            title = item.get("title") or "(untitled)"
-            url = item.get("url") or ""
-            description = item.get("description") or ""
-            lines.append(f"{i}. {title}\n   {url}\n   {description}")
-        return "\n".join(lines)
+            return f"web_search failed: Firecrawl request raised {type(exc).__name__} for {query!r}."
+        except _FirecrawlResponseTooLarge:
+            return f"web_search failed: Firecrawl response exceeded the 5 MiB limit for {query!r}."
+        except _FirecrawlResponseError:
+            return f"web_search failed: Firecrawl returned an invalid response for {query!r}."
+        except Exception as exc:
+            return f"web_search failed while processing {query!r}: {type(exc).__name__}."
 
     return StructuredTool.from_function(
         coroutine=web_search,
@@ -277,36 +336,45 @@ def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
             return "web_fetch is unavailable: no Firecrawl API key is configured on this server."
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    f"{FIRECRAWL_API_BASE}/scrape",
-                    headers={"Authorization": f"Bearer {settings.firecrawl_api_key}"},
-                    json={"url": url, "formats": ["markdown","summary"]},
-                )
-                response.raise_for_status()
-                payload = response.json()
+            data = await _firecrawl_data(
+                "scrape",
+                api_key=settings.firecrawl_api_key,
+                request_body={"url": url, "formats": ["markdown", "summary"]},
+                timeout_seconds=60.0,
+            )
+            markdown = data.get("markdown") or ""
+            if not isinstance(markdown, str):
+                raise _FirecrawlResponseError
+            if not markdown:
+                return f"web_fetch got no readable content from {url!r}."
+
+            if len(markdown) <= WEB_FETCH_INLINE_MAX_CHARS:
+                return markdown
+
+            digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+            cache_path = f"{WEB_CACHE_DIR}/{digest}.md"
+            await sandbox.write_bytes(cache_path, markdown.encode("utf-8"))
+            raw_summary = data.get("summary")
+            summary = (
+                raw_summary
+                if isinstance(raw_summary, str) and raw_summary
+                else markdown
+            )[:WEB_FETCH_INLINE_MAX_CHARS]
+            return (
+                f"{url} is {len(markdown)} characters, too long to return directly. "
+                f"The full page was saved to `{cache_path}` — use read_file to read more of it "
+                f"if this summary is not enough.\n\n---\n\n{summary}"
+            )
         except httpx.HTTPStatusError as exc:
             return f"web_fetch failed: Firecrawl returned {exc.response.status_code} for {url!r}."
         except httpx.HTTPError as exc:
-            return f"web_fetch failed: {type(exc).__name__}: {exc}"
-
-        data = payload.get("data") or {}
-        markdown = data.get("markdown") or ""
-        if not markdown:
-            return f"web_fetch got no readable content from {url!r}."
-
-        if len(markdown) <= WEB_FETCH_INLINE_MAX_CHARS:
-            return markdown
-
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
-        cache_path = f"{WEB_CACHE_DIR}/{digest}.md"
-        await sandbox.write_bytes(cache_path, markdown.encode("utf-8"))
-        summary = data.get("summary") or markdown[:WEB_FETCH_INLINE_MAX_CHARS]
-        return (
-            f"{url} is {len(markdown)} characters, too long to return directly. "
-            f"The full page was saved to `{cache_path}` — use read_file to read more of it "
-            f"if this summary is not enough.\n\n---\n\n{summary}"
-        )
+            return f"web_fetch failed: Firecrawl request raised {type(exc).__name__} for {url!r}."
+        except _FirecrawlResponseTooLarge:
+            return f"web_fetch failed: Firecrawl response exceeded the 5 MiB limit for {url!r}."
+        except _FirecrawlResponseError:
+            return f"web_fetch failed: Firecrawl returned an invalid response for {url!r}."
+        except Exception as exc:
+            return f"web_fetch failed while processing {url!r}: {type(exc).__name__}."
 
     return StructuredTool.from_function(
         coroutine=web_fetch,
@@ -328,6 +396,7 @@ def _policy(config: dict[str, Any], default: str) -> str:
 
 __all__ = [
     "AGENT_TOOLSET",
+    "FIRECRAWL_RESPONSE_MAX_BYTES",
     "READ_IMAGE_MAX_BYTES",
     "READ_IMAGE_MODEL",
     "READ_IMAGE_TYPES",

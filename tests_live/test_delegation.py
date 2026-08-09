@@ -1,4 +1,4 @@
-"""Scenarios 45–49: the tools nothing had ever called.
+"""Scenarios 45–48: the tools nothing had ever called.
 
 `ask_user` is the second custom tool and had never been invoked. `write_todos`
 and `task` were forbidden outright by the strict agent's system prompt, which
@@ -19,20 +19,16 @@ from tests_live.helpers import (
     AGENT_CUSTOM_TOOL_USE,
     AGENT_TOOL_RESULT,
     AGENT_TOOL_USE,
-    SESSION_ERROR,
     allow,
     answer,
     call_named,
     calls,
     deny,
-    kinds,
-    of_type,
     pending,
     respond,
     results,
     run_turn,
     said,
-    status,
     stop_reason,
     tool_output,
 )
@@ -149,42 +145,3 @@ async def test_48_a_refused_delegation_makes_the_agent_do_it_itself(api, plannin
         for c in calls(after)
         if c["tool_use_id"] in results(after)
     ), said(after)
-
-
-async def test_49_web_fetch_is_not_offered_to_the_model(api, session):
-    """The landmine, defused — and this is what keeps it defused.
-
-    `web_fetch` used to be installed whenever the web toolset was declared,
-    with a body that raises `NotImplementedError`. LangGraph's default
-    tool-error handler re-raises anything that is not a bad-arguments error, so
-    calling it took the exception out of the tools node, out of the stream, and
-    ended the turn with a `session.error`. An earlier version of this test
-    confirmed the model really does reach for it when a prompt says "fetch this
-    URL".
-
-    It is no longer installed. A tool the model can see is a tool the model
-    will call, and there is nothing behind this one.
-
-    What the agent does instead is its own business and is not asserted: told
-    to fetch a URL with no fetching tool, it has reached for `execute` and a
-    shell — which pauses for permission — and it could as easily have said it
-    cannot. Both are fine. The claim here is only that the turn does not *die*,
-    which is what it used to do.
-
-    If `web_fetch` is ever implemented and put back, this test fails and asks
-    to be rewritten. That is the point of it.
-    """
-    events = await run_turn(
-        api,
-        session,
-        "Fetch the page at https://example.com and tell me what its first line "
-        "says. If you have no tool that can fetch a URL, say so.",
-    )
-
-    assert not [call for call in calls(events) if call["name"] == "web_fetch"], (
-        "web_fetch is being offered again; either it now works — in which case "
-        "rewrite this test — or the turn is about to die"
-    )
-    assert not of_type(events, SESSION_ERROR), kinds(events)
-    assert stop_reason(events)["type"] != "error", stop_reason(events)
-    assert await status(api, session) == "idle"
