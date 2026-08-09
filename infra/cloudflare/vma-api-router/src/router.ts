@@ -230,7 +230,11 @@ function buildPublicResponse(
       redirectTarget = undefined;
     }
 
-    if (redirectTarget?.origin === config.origin.origin) {
+    // Matched on host rather than origin. An upstream that has not been told
+    // it sits behind TLS termination answers with an `http://` Location for
+    // its own address, and comparing whole origins lets exactly that case —
+    // the one worth rewriting — slip through unchanged.
+    if (redirectTarget?.host === config.origin.host) {
       redirectTarget.protocol = "https:";
       redirectTarget.username = "";
       redirectTarget.password = "";

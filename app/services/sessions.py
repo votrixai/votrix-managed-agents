@@ -32,28 +32,44 @@ from app.db.models import (
     File,
     Session,
     SessionEvent,
+    SessionFile,
     SessionSandbox,
 )
+from app.db.models.memory import MEMORY_ACCESS_READ_WRITE
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as environments_q
 from app.db.queries import sessions as sessions_q
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.models import events as event_types
-from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
-from app.services import environments as environments_service
-from app.services import files as files_service
 from app.models.errors import (
     Conflict,
+    MemoryStoreUnavailable,
     NotFound,
     SandboxUnavailable,
     SessionBusy,
     SessionCancelled,
 )
-from app.utils.sandbox import OUTPUTS_DIR, Image, Sandbox
+from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
+from app.services import agents as agents_service
+from app.services import environments as environments_service
+from app.services import event_broker
+from app.services import files as files_service
+from app.services import memory as memory_service
+from app.services import accounts as accounts_service
+from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
+from app.utils.volume import (
+    InvalidVolumeBinding,
+    SandboxVolumeMount,
+    Volume,
+    memory_mount_path,
+)
 
-# A turn may hold the session this long before we call it hung.
-TURN_TIMEOUT_SECONDS = 600
+# A turn may hold the session this long before we call it hung. The queue is
+# given this plus a margin (see _enqueue_task), and Cloud Run's own request
+# timeout is 3600 — both stay above it, so this is the limit that actually
+# fires and the one to move when a turn legitimately needs longer.
+TURN_TIMEOUT_SECONDS = 1200
 
 # Deliberately much shorter than a turn: the lease is not a time budget, it is
 # a liveness signal. A worker that dies is noticed within this window rather
@@ -70,10 +86,22 @@ FILE_URL_TTL_SECONDS = 300
 
 # The same ceiling CMA puts on an agent.
 MAX_SKILLS_PER_AGENT = 20
+MAX_MEMORY_STORES_PER_SESSION = 8
 
-# How often a stream looks for new events. A turn produces something every few
-# seconds at best, so this is well inside "live" for a reader, and the query it
-# runs is an indexed range scan that almost always comes back empty.
+# A Cloud Run instance accepts many cheap API requests at once, but a cold
+# Session fans out into an E2B container plus up to ten simultaneous object
+# downloads.  Bound only that expensive path; reads, streams and warm turns do
+# not pass through this semaphore.
+MAX_CONCURRENT_SESSION_PROVISIONS = 4
+_session_provision_slots = asyncio.Semaphore(MAX_CONCURRENT_SESSION_PROVISIONS)
+
+# How often a stream looks for new events when nothing is telling it to. A
+# writer normally wakes it through `event_broker` the moment an event commits;
+# this is what that degrades to — with no listener configured, or none working,
+# every stream simply polls the way it always did. The query is an indexed range
+# scan that almost always comes back empty, which is exactly why waiting to be
+# told is worth having: at 0.3s a room full of idle readers runs hundreds of
+# them a second to learn nothing.
 STREAM_POLL_SECONDS = 0.3
 # Proxies and load balancers close connections that go quiet. A turn can think
 # for minutes without emitting, so the stream says something regardless.
@@ -105,6 +133,8 @@ async def create_session(
     agent_id: str,
     environment_id: str,
     agent_version: int | None = None,
+    model: str | dict[str, Any] | None = None,
+    account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
 ) -> Session:
@@ -113,10 +143,47 @@ async def create_session(
     The agent version is pinned now and never moves, so editing the agent
     later cannot change what a conversation already in flight is running.
 
+    A ``model`` is pinned on the same terms. Left out, the session stores none
+    and the pinned agent version's model applies at run time.
+
     Attached files go in while the container is being built. That is the only
     chance: a session keeps one sandbox for its whole life, so there is nowhere
     to put a file handed over later.
     """
+    async with timed(
+        "session_provision_slot_wait",
+        organization_id=organization_id,
+        max_concurrent=MAX_CONCURRENT_SESSION_PROVISIONS,
+    ):
+        await _session_provision_slots.acquire()
+    try:
+        return await _create_session(
+            db,
+            organization_id=organization_id,
+            agent_id=agent_id,
+            environment_id=environment_id,
+            account_id=account_id,
+            agent_version=agent_version,
+            model=model,
+            title=title,
+            resources=resources,
+        )
+    finally:
+        _session_provision_slots.release()
+
+
+async def _create_session(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    agent_id: str,
+    environment_id: str,
+    agent_version: int | None = None,
+    model: str | dict[str, Any] | None = None,
+    account_id: str | None = None,
+    title: str | None = None,
+    resources: list[dict[str, Any]] | None = None,
+) -> Session:
     agent = await _require_agent(db, agent_id=agent_id, organization_id=organization_id)
     version_number = agent_version if agent_version is not None else agent.active_version
     version = await agents_q.get_agent_version(
@@ -139,12 +206,24 @@ async def create_session(
     # would have nothing to run in.
     environment = await environments_service.require_usable(db, environment)
 
+    # Resolved and checked before the sandbox is built, so an Account that
+    # cannot pay stops the Session here rather than after minutes of
+    # provisioning. Pinned, so this conversation's spend stays on one Account
+    # even if the Organization's default moves later.
+    account = await accounts_service.require_spendable_account(
+        db, organization_id=organization_id, account_id=account_id
+    )
+
     session = await sessions_q.create_session(
         db,
         organization_id=organization_id,
         agent_id=agent_id,
         agent_version=version_number,
         environment_id=environment_id,
+        # Normalised on the way in, never on the way out, so every reader of the
+        # column — runtime, API response, a future query — sees one shape.
+        model=agents_service.normalize_model(model) if model is not None else None,
+        account_id=account.id,
         title=title,
     )
     # Resolved before the container exists, so a missing or half-uploaded file
@@ -191,6 +270,16 @@ async def list_sessions(
         before_id=before_id,
         after_id=after_id,
     )
+
+
+async def list_session_files(db: AsyncSession, *, session_id: str):
+    """The File resources snapshotted onto one Session."""
+    return await sessions_q.list_session_files(db, session_id=session_id)
+
+
+async def list_session_memory_stores(db: AsyncSession, *, session_id: str):
+    """The Memory Store resources snapshotted onto one Session."""
+    return await sessions_q.list_session_memory_stores(db, session_id=session_id)
 
 
 async def update_session(
@@ -269,7 +358,6 @@ async def send_events(
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
     await _dispatch_turn(
-        db,
         session_id=session_id,
         generation=session.lock_version,
         events=events,
@@ -407,11 +495,19 @@ async def stream_events(
             return
         if not events:
             yield None
-            await asyncio.sleep(STREAM_POLL_SECONDS)
+            # Waits to be told, and falls back to the poll interval when there
+            # is nobody to tell it. Either way what happens next is this same
+            # query, so the two are the same code path.
+            await event_broker.wait(session_id, poll_interval=STREAM_POLL_SECONDS)
+
+
+# Inline turns in flight. Held here because asyncio keeps only a weak
+# reference to a running task: without a strong one somewhere, a turn can be
+# collected mid-reply and simply stop.
+_inline_turns: set[asyncio.Task[None]] = set()
 
 
 async def _dispatch_turn(
-    db: AsyncSession,
     *,
     session_id: str,
     generation: int,
@@ -419,9 +515,12 @@ async def _dispatch_turn(
 ) -> None:
     """Get the turn running, by whichever route this deployment uses.
 
-    `inline` runs it here and now, so the request does not come back until the
-    agent is done. Slow, but a fresh checkout can hold a conversation without
-    a queue, a worker process, or any configuration.
+    Neither route waits for it. `cloud` hands the turn to a queue that calls a
+    worker back; `inline` runs it in this process on a task of its own. Either
+    way the request returns as soon as the message is *accepted*, which is what
+    lets the caller open the event stream and watch output appear — a request
+    that only came back when the agent was done would deliver the whole turn at
+    the end, and no amount of streaming further down could undo that.
 
     Failures are swallowed in either mode. The message really was accepted —
     it is committed — and `_fail` records what went wrong as a `session.error`
@@ -432,8 +531,26 @@ async def _dispatch_turn(
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
         return
 
+    task = asyncio.create_task(_run_inline_turn(session_id=session_id, events=events))
+    _inline_turns.add(task)
+    task.add_done_callback(_inline_turns.discard)
+
+
+async def _run_inline_turn(*, session_id: str, events: list[dict[str, Any]]) -> None:
+    """One turn, on a database session of its own.
+
+    The session that accepted the message belongs to the request and is closed
+    when the response is sent — which is now long before the turn ends. Same
+    reason `_hold_lease` opens its own.
+
+    Nothing waits for this task, shutdown included: a process going down drops
+    the turn, and the session's lease lapses so the next message can claim it.
+    That is the trade `inline` exists to make — no queue, no worker, no
+    configuration. `cloud` is where a dropped turn gets retried.
+    """
     try:
-        await process_session(db, session_id=session_id, events=events)
+        async with session_scope() as db:
+            await process_session(db, session_id=session_id, events=events)
     except Exception:
         logger.exception("inline_turn_failed", session_id=session_id)
 
@@ -491,11 +608,36 @@ async def process_session(
         row.path
         for row in await sessions_q.list_session_files(db, session_id=session_id)
     ]
+    attached_memory_stores = [
+        {
+            "name": row.name,
+            "description": row.description,
+            "instructions": row.instructions,
+            "access": row.access,
+            "mount_path": row.mount_path,
+        }
+        for row in await sessions_q.list_session_memory_stores(
+            db, session_id=session_id
+        )
+    ]
 
     container = Sandbox.from_id(
         sandbox.external_sandbox_id,
         session.id,
         session.organization_id,
+    )
+
+    # Fetched per turn rather than held on the Session, because suspending an
+    # Account is meant to bite on the next call — not on the next Session. A
+    # Session pinned to an Account that has since been stopped fails here, with
+    # a reason, instead of as a bare 401 from the provider.
+    #
+    # `account_id` is None on Sessions opened before Accounts existed; those
+    # fall back to the Organization's default.
+    inference_key = await accounts_service.resolve_spendable_key(
+        db,
+        organization_id=session.organization_id,
+        account_id=session.account_id,
     )
 
     heartbeat = asyncio.create_task(_hold_lease(session_id))
@@ -515,7 +657,9 @@ async def process_session(
                     version=version,
                     events=events,
                     sandbox=container,
+                    inference_key=inference_key,
                     attached_files=attached,
+                    attached_memory_stores=attached_memory_stores,
                     emit=_emitter(db, session, generation),
                 ),
                 timeout=TURN_TIMEOUT_SECONDS,
@@ -666,12 +810,29 @@ async def provision_sandbox(
     image = Image.from_environment(environment)
     if image is None:
         raise SandboxUnavailable(f"Environment {environment.id} has no image to start from")
+    declared = resources or []
+    for resource in declared:
+        if resource.get("type") not in (None, "file", "memory_store"):
+            raise Conflict(f"Unsupported resource type {resource.get('type')!r}")
+
+    files = await _attach_files(
+        db,
+        session,
+        [resource for resource in declared if resource.get("type") in (None, "file")],
+    )
+    memory_mounts = await _attach_memory_stores(
+        db,
+        session,
+        [resource for resource in declared if resource.get("type") == "memory_store"],
+    )
+
     return await Sandbox.provision(
         db,
         session,
         image=image,
         skill_ids=_skill_ids(version),
-        files=await _attach_files(db, session, resources or []),
+        files=files,
+        memory_mounts=memory_mounts,
     )
 
 
@@ -715,6 +876,162 @@ async def capture_file(
         raise NotFound(f"{path!r} is not a file in this session's outputs") from exc
     await db.commit()
     return file
+
+
+async def attach_live_file(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    organization_id: str,
+    file_id: str,
+    path: str | None = None,
+) -> SessionFile:
+    """Put an existing durable File into an existing Session sandbox.
+
+    This is the post-create counterpart to a ``file`` resource on Session
+    creation, and it runs whatever the Session is doing. It used to require an
+    idle Session and hold an exclusive lock on its row for the whole E2B
+    transfer, so that no turn could start while a file was half-attached. Both
+    are gone, for the same reason: the half-attached state they guarded against
+    cannot occur. The binding is flushed before the transfer and committed only
+    after it succeeds, so a mount is atomic on its own — a failed copy leaves no
+    binding, and a committed binding always has its bytes behind it.
+
+    What the lock bought beyond that was serialising mounts against each other,
+    which is not a property anything needed and is expensive: attaching three
+    files meant three round trips queued behind one another, all of them on the
+    path between pressing send and the agent starting.
+
+    A turn that is already running has snapshotted ``session_files`` for its
+    prompt and will not see a file attached underneath it. That is the caller's
+    business rather than this endpoint's: the next turn reads the list again.
+
+    Repeating the exact request returns the original binding.
+    """
+    session = await get_session(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+    )
+    if session.archived_at is not None:
+        raise Conflict(f"Session {session_id} is archived")
+
+    sandbox = await sessions_q.get_sandbox(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+    )
+    if sandbox is None or _sandbox_is_gone(sandbox):
+        raise Conflict(f"Session {session_id} no longer has a sandbox to write to")
+    if sandbox.provider != "e2b":
+        raise Conflict(
+            f"Session {session_id} uses unsupported sandbox provider {sandbox.provider!r}"
+        )
+
+    file = await files_service.get_file(
+        db,
+        file_id=file_id,
+        organization_id=organization_id,
+    )
+    requested = _mount_path(path, fallback=file.filename)
+
+    taken: set[str] = set()
+    for existing in await sessions_q.list_session_files(db, session_id=session_id):
+        if existing.path == requested and existing.file_id == file.id:
+            await db.commit()
+            return existing
+        taken.add(existing.path)
+
+    if path is not None and requested in taken:
+        # An explicit path is a request to mount *there*. Stepping the name
+        # aside would hand back a resource at an address the caller did not ask
+        # for and has no reason to re-read, so this stays a refusal.
+        raise Conflict(
+            f"Another file is already attached at {requested!r} in Session {session_id}"
+        )
+
+    attached = await _attach_under_free_name(
+        db, session, file=file, requested=requested, taken=taken
+    )
+    relative = attached.path
+    container = Sandbox.from_id(
+        sandbox.external_sandbox_id,
+        session.id,
+        session.organization_id,
+    )
+    try:
+        # Existing sandboxes may predate the shared CMA/VMA path contract.
+        # Re-applying the idempotent layout both backfills those aliases and
+        # fails the attachment instead of committing bytes the agent cannot
+        # reach through /mnt/session/uploads.
+        await container.prepare_directories()
+        await container.upload_file(db, f"{UPLOADS_DIR}/{relative}", file.id)
+    except Exception as exc:
+        # ``attach_file`` was intentionally flushed first so its unique path
+        # constraint is part of this transaction, but it must never survive a
+        # failed transfer as a resource that only exists on paper.
+        #
+        # Expunged as well as rolled back. The binding was flushed inside a
+        # savepoint that was then released, which leaves the session holding it
+        # as pending rather than discarding it — and the next query on this
+        # session would autoflush it straight back into the table the rollback
+        # just cleared.
+        message = f"File {file.id} could not be copied into Session {session.id}"
+        await db.rollback()
+        raise SandboxUnavailable(message) from exc
+
+    await db.commit()
+    return attached
+
+
+# How many times a mount steps its name aside before giving up. High enough
+# that a real conversation never reaches it, low enough to fail rather than
+# spin when something is systematically wrong.
+_MOUNT_NAME_ATTEMPTS = 20
+
+
+def _stepped_name(name: str, attempt: int) -> str:
+    """`report.pdf` → `report_1.pdf`, keeping the suffix where a reader expects it."""
+    if attempt == 0:
+        return name
+    stem, dot, suffix = name.rpartition(".")
+    if not stem or not dot:
+        return f"{name}_{attempt}"
+    return f"{stem}_{attempt}.{suffix}"
+
+
+async def _attach_under_free_name(
+    db: AsyncSession,
+    session: Session,
+    *,
+    file: File,
+    requested: str,
+    taken: set[str],
+) -> SessionFile:
+    """Bind the file at the first name this session is not already using.
+
+    `taken` is every binding committed before this transaction started, which
+    is what makes the ordinary case — a name nobody else has — one INSERT with
+    no negotiation. It cannot see a mount running right now in another request,
+    so two attachments of one filename arriving together can still pick the
+    same name; `uq_session_files_path` refuses the second and the request
+    fails, for the caller to retry.
+
+    Recovering from that in here would mean flushing inside a savepoint, and a
+    released savepoint leaves the binding behind when the E2B transfer later
+    fails and the transaction is rolled back — trading a rare retry for a
+    resource that exists on paper only. The rarer problem is the better one.
+    """
+    for attempt in range(_MOUNT_NAME_ATTEMPTS):
+        candidate = _stepped_name(requested, attempt)
+        if candidate not in taken:
+            return await sessions_q.attach_file(
+                db, session, file_id=file.id, path=candidate
+            )
+    raise Conflict(
+        f"No free name for {requested!r} in Session {session.id} "
+        f"after {_MOUNT_NAME_ATTEMPTS} attempts"
+    )
 
 
 def _output_path(requested: str) -> str:
@@ -782,13 +1099,6 @@ async def _attach_files(
     attached: list[tuple[str, str]] = []
     seen: set[str] = set()
     for resource in resources:
-        # `mcp_server` and `github_repository` exist in the wider contract and
-        # we support neither, so anything that is not a file is refused rather
-        # than dropped — a silently ignored resource is a session that starts
-        # without what it was promised.
-        if resource.get("type") not in (None, "file"):
-            raise Conflict(f"Unsupported resource type {resource.get('type')!r}")
-
         file = await files_service.get_file(
             db,
             file_id=str(resource.get("file_id") or ""),
@@ -804,6 +1114,63 @@ async def _attach_files(
     return attached
 
 
+async def _attach_memory_stores(
+    db: AsyncSession,
+    session: Session,
+    resources: list[dict[str, Any]],
+) -> list[SandboxVolumeMount]:
+    """Resolve persistent Stores into native E2B mounts before provisioning."""
+    if len(resources) > MAX_MEMORY_STORES_PER_SESSION:
+        raise Conflict(
+            f"A Session may attach at most {MAX_MEMORY_STORES_PER_SESSION} Memory Stores"
+        )
+
+    mounts: list[SandboxVolumeMount] = []
+    seen_stores: set[str] = set()
+    seen_paths: set[str] = set()
+    for resource in resources:
+        memory_store_id = str(resource.get("memory_store_id") or "")
+        if memory_store_id in seen_stores:
+            raise Conflict(f"Memory Store {memory_store_id} was attached more than once")
+        seen_stores.add(memory_store_id)
+
+        access = str(resource.get("access") or MEMORY_ACCESS_READ_WRITE)
+        if access != MEMORY_ACCESS_READ_WRITE:
+            # E2B 2.31.0 has no read-only Volume mount option. Rejecting this is
+            # the security boundary: filtering write_file/edit_file alone
+            # would still let the execute tool write through the same mount.
+            raise Conflict("read_only Memory Store mounts are not supported by E2B")
+
+        store = await memory_service.require_attachable(
+            db,
+            memory_store_id=memory_store_id,
+            organization_id=session.organization_id,
+        )
+        mount_path = memory_mount_path(store.name, store.id)
+        if mount_path in seen_paths:
+            raise Conflict(
+                f"Two Memory Stores resolve to the same mount path {mount_path!r}"
+            )
+        seen_paths.add(mount_path)
+
+        instructions = resource.get("instructions")
+        attached = await sessions_q.attach_memory_store(
+            db,
+            session,
+            store,
+            access=access,
+            instructions=str(instructions) if instructions is not None else None,
+            mount_path=mount_path,
+        )
+        try:
+            mounts.append(Volume.mount(store, attached.mount_path))
+        except InvalidVolumeBinding as exc:
+            raise MemoryStoreUnavailable(
+                f"Memory Store {store.id} has no mountable provider Volume"
+            ) from exc
+    return mounts
+
+
 def _mount_path(requested: str | None, *, fallback: str) -> str:
     """Where inside `uploads/` a file lands.
 
@@ -816,15 +1183,23 @@ def _mount_path(requested: str | None, *, fallback: str) -> str:
         raise Conflict("A file resource needs a path or a filename")
     if len(candidate) > 512:
         raise Conflict("That path is too long")
+    if "\x00" in candidate:
+        raise Conflict("A file resource path cannot contain NUL")
+    if "\\" in candidate:
+        raise Conflict("A file resource path must use forward slashes")
     # Stripping the leading slash off `/etc/passwd` would put the file in
     # `uploads/etc/passwd` — safe, and not what was asked for. A request that
     # cannot be honoured exactly is refused rather than turned into a different
     # one the client never made.
     if candidate.startswith("/"):
         raise Conflict(f"{candidate!r} must be relative to uploads/")
-    parts = PurePosixPath(candidate).parts
-    if any(part in ("..", ".") for part in parts):
+    raw_parts = candidate.split("/")
+    if any(part in ("", "..", ".") for part in raw_parts):
         raise Conflict(f"{candidate!r} is not a path inside uploads/")
+    # PurePosixPath is retained as a final platform-independent sanity check;
+    # unlike it, the raw split above deliberately refuses paths it would
+    # normalize (``a//b`` or ``a/./b``) rather than silently changing them.
+    parts = PurePosixPath(candidate).parts
     return "/".join(parts)
 
 

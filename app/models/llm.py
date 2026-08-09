@@ -98,3 +98,29 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         display_name="DeepSeek V4 Flash",
     ),
 )
+
+
+# What the gateway calls each model. Written out rather than derived from
+# `f"{provider}/{id}"`, which is right for twelve of these and wrong for the two
+# Anthropic ids that spell their version with a dot. A wrong slug fails at the
+# gateway, whose error names a model nobody wrote down, so the mapping is stated
+# here where a reader can check it against the catalog.
+#
+# Kept out of `ModelResponse` deliberately: that model is the body of
+# `GET /v1/models`, and which gateway serves a model is not a caller's business.
+OPENROUTER_SLUGS: dict[str, str] = {
+    "claude-opus-5": "anthropic/claude-opus-5",
+    "claude-sonnet-5": "anthropic/claude-sonnet-5",
+    "claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
+    "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+    "gemini-3.1-pro-preview": "google/gemini-3.1-pro-preview",
+    "gemini-3.6-flash": "google/gemini-3.6-flash",
+    "gemini-3.5-flash": "google/gemini-3.5-flash",
+    "gemini-3.5-flash-lite": "google/gemini-3.5-flash-lite",
+    "gemini-2.5-pro": "google/gemini-2.5-pro",
+    "gpt-5.6-sol": "openai/gpt-5.6-sol",
+    "gpt-5.6-terra": "openai/gpt-5.6-terra",
+    "gpt-5.6-luna": "openai/gpt-5.6-luna",
+    "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+}

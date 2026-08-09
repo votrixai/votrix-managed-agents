@@ -1,71 +1,104 @@
 ---
-title: Agent Versioning Contract
-description: Versioning, update, archive, and pinning semantics for Agent resources.
+title: Agent Versioning
+description: Agent snapshots, optimistic updates, and Session pinning in the active rewrite.
 ---
 
-This project follows the Claude Managed Agents versioning shape for Agent resources.
+Snapshot: 2026-07-30
 
-Official basis:
+An Agent is a stable public handle whose executable definition lives in
+immutable versions.
 
-- Claude Managed Agents "Define your agent": https://platform.claude.com/docs/en/managed-agents/agent-setup
-- Claude Managed Agents reference: https://platform.claude.com/docs/en/managed-agents/reference
+```text
+agents
+  id
+  active_version ───────┐
+                       v
+agent_versions (agent_id, version)
+```
 
-## Resource Shape
+## Stored fields
 
-An Agent is a reusable, versioned configuration. The public Agent response exposes:
+Each Agent version snapshots:
 
-- `id`
-- `type: "agent"`
-- `name`
-- `model`
-- `system`
-- `description`
-- `tools`
-- `mcp_servers`
-- `skills`
-- `multiagent`
-- `metadata`
-- `version`
-- `created_at`
-- `updated_at`
-- `archived_at`
+- name and description;
+- model;
+- system prompt;
+- tools;
+- MCP server definitions;
+- Skill references;
+- multi-agent configuration;
+- runtime configuration;
+- metadata.
 
-The database stores:
+The stable `agents` row duplicates the active name, description, and metadata
+for efficient listing, and points to the current version number.
 
-- `agents`: mutable resource pointer and active version.
-- `agent_versions`: immutable version snapshots.
-
-Sessions must pin `agent_id` and `agent_version` at creation time.
+The active runtime currently consumes the model, system prompt, tools, and
+Skill references. MCP server definitions, the stored multi-agent roster, and
+the generic runtime object are persisted for contract evolution but are not
+consumed yet. Deep Agents' built-in general-purpose `task` delegation is
+separate from that stored roster and remains available.
 
 ## Create
 
-Creating an Agent creates version `1`.
+`POST /v1/agents` creates the stable row and version `1` in one transaction.
+A bare model string is normalized to:
+
+```json
+{"id": "claude-opus-5"}
+```
+
+The same shape is stored when the caller supplies the object explicitly.
 
 ## Update
 
-The update request must include the current `version`. This is an optimistic concurrency guard.
+`POST` or `PATCH /v1/agents/{agent_id}` takes only the fields that change.
 
-If the supplied version does not match the Agent's current active version, return `409`.
+There is no `version` in the request. Numbering versions is the service's job,
+and a caller that had to name one first would have to read the Agent before
+every write to supply a number it has no opinion about. The edit lands on
+whatever is active when it arrives, and the response's `version` says which
+version it became.
 
-Update semantics:
+Update behavior:
 
-- Omitted fields are preserved.
-- `name` and `model` are replaced when provided and cannot be `null`.
-- `system` and `description` are replaced when provided and can be cleared with `null`.
-- `tools`, `mcp_servers`, and `skills` are full replacements. `null` and `[]` both clear the field.
-- `multiagent` is replaced as a whole and can be cleared with `null`.
-- `metadata` is merged by key. Provided keys are added or updated. Setting a key to an empty string deletes that key.
-- If the resulting config is identical to the current version, no new version is created and the existing version is returned.
-- `multiagent.agents` entries that reference another Agent without an explicit `version` are resolved to that Agent's current active version when the coordinator is created or updated. The stored roster is pinned and does not drift when referenced Agents are updated later.
+- omitted fields keep the active version's value;
+- provided list and object fields replace the complete previous value;
+- metadata is replaced as a whole; it is not merged by key;
+- the next version number is `active_version + 1`;
+- an edit whose resulting snapshot is identical returns the existing active
+  version and does not create a duplicate.
 
-## Archive
+Two edits racing therefore both apply, and the later one wins on any field they
+both set. Nothing is lost that was not overwritten deliberately: the merge base
+is the live active version, so a field one caller never mentioned keeps the
+other's change.
 
-Archiving makes the Agent read-only.
+The comparison covers every versioned field, including runtime configuration
+and metadata.
 
-New sessions cannot reference an archived Agent. Existing sessions pinned to older versions continue to run.
+## Session pinning
 
-## YAML / JSON Files
+Session creation accepts an optional `agent_version`.
 
-Claude Managed Agents does not require uploading a YAML manifest to publish a new Agent version. The API accepts JSON resource fields for create/update. CLI examples pass JSON-like values for nested fields such as `model` and `tools`.
+- When omitted, the service reads the Agent's current active version.
+- When supplied, that exact Organization-scoped version must exist.
+- The Session stores both `agent_id` and the resolved version number.
 
-Skills are separate resources referenced by Agents. Skills may contain markdown, YAML, JSON schemas, scripts, templates, and assets, but that is not the Agent version publish mechanism itself.
+Every turn reloads that pinned snapshot. Updating the Agent later does not
+change the model, prompt, tools, or Skills of an existing Session.
+
+## Archive behavior
+
+Archiving records `archived_at` on the stable Agent row. Archived Agents are
+hidden from ordinary list responses and cannot be updated.
+
+The rewrite does not yet reject an archived Agent during Session creation. That
+is a current gap, not a promise that archived Agents are intentionally reusable.
+Existing Sessions remain pinned to their version either way.
+
+## Version listing
+
+`GET /v1/agents/{agent_id}/versions` orders versions by their numeric version,
+using the shared `before_id` and `after_id` cursor envelope. Version responses
+include the stored `runtime` object in addition to the public Agent fields.

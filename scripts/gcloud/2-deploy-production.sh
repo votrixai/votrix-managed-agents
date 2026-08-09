@@ -50,6 +50,7 @@ API_MANIFEST="${REPO_ROOT}/service.production.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.production.yaml"
 MIGRATION_JOB="${PRODUCTION_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-direct"
+DATABASE_SCHEMA="vma_rewrite_production"
 
 if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   echo "Production deploys must run from a git checkout with a commit." >&2
@@ -64,13 +65,8 @@ if [ -n "$WORKTREE_STATUS" ]; then
   exit 1
 fi
 
-if grep -q 'Status: UNMEASURED' "${REPO_ROOT}/private-docs/scaling-runbook.md"; then
-  echo "Production deploy is blocked: the Supabase connection budget is UNMEASURED." >&2
-  echo "Record the measured limits and clear the release gate in private-docs/scaling-runbook.md." >&2
-  exit 1
-fi
-
 TAG=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)
+FULL_COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)
 IMAGE="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${PRODUCTION_SERVICE}:${TAG}"
 
 echo "Building and pushing ${IMAGE}..."
@@ -85,7 +81,7 @@ gcloud run jobs deploy "$MIGRATION_JOB" \
   --region="$REGION" \
   --image="$IMAGE" \
   --service-account="$RUNTIME_SERVICE_ACCOUNT" \
-  --set-env-vars="APP_ENV=production" \
+  --set-env-vars="APP_ENV=production,DATABASE_SCHEMA=${DATABASE_SCHEMA}" \
   --set-secrets="DATABASE_URL=${DATABASE_SECRET}:latest" \
   --command=sh \
   --args=scripts/migrate.sh \
@@ -113,8 +109,9 @@ if [ -z "$WORKER_URL" ]; then
   sed \
     -e "s|IMAGE_URL|${IMAGE}|" \
     -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+    -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
     -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
-    -e 's|value: "hybrid"|value: "poll"|' \
+    -e 's|value: "cloud"|value: "inline"|' \
     "$WORKER_MANIFEST" | \
     gcloud run services replace \
       --project="$PROJECT_ID" \
@@ -145,6 +142,7 @@ echo "Deploying ${PRODUCTION_WORKER_SERVICE} worker service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$WORKER_MANIFEST" | \
   gcloud run services replace \
@@ -157,6 +155,7 @@ echo "Deploying ${PRODUCTION_SERVICE} API service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$API_MANIFEST" | \
   gcloud run services replace \

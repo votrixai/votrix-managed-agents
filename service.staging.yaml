@@ -13,7 +13,7 @@ spec:
         run.googleapis.com/cpu-throttling: "false"
     spec:
       serviceAccountName: vma-runtime@votrixai-480422.iam.gserviceaccount.com
-      containerConcurrency: 40
+      containerConcurrency: 80
       timeoutSeconds: 3600
       containers:
         - image: IMAGE_URL
@@ -38,36 +38,32 @@ spec:
           env:
             - name: APP_ENV
               value: "staging"
+            - name: DATABASE_SCHEMA
+              value: "vma_rewrite_staging"
             - name: VMA_PUBLIC_BUILD_ID
               value: "__VMA_PUBLIC_BUILD_ID__"
+            - name: VMA_GIT_COMMIT_SHA
+              value: "__VMA_GIT_COMMIT_SHA__"
             - name: LOG_LEVEL
               value: "INFO"
             - name: WEB_CONCURRENCY
               value: "1"
-            - name: VMA_SERVICE_ROLE
-              value: "api"
-            - name: VMA_PREVIEW_BROKER
-              value: "pg_notify"
-            - name: VMA_EMBEDDED_WORKER_ENABLED
-              value: "false"
-            - name: VMA_WORK_DISPATCH_MODE
-              value: "hybrid"
-            - name: VMA_TASKS_QUEUE
+            - name: TURN_DISPATCH
+              value: "cloud"
+            - name: TASKS_PROJECT
+              value: "votrixai-480422"
+            - name: TASKS_QUEUE
               value: "vma-turns-staging"
-            - name: VMA_TASKS_LOCATION
+            - name: TASKS_LOCATION
               value: "us-central1"
-            - name: VMA_TASKS_SERVICE_ACCOUNT
+            - name: TASKS_SERVICE_ACCOUNT
               value: "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
-            - name: VMA_WORKER_URL
+            - name: WORKER_URL
               value: "__VMA_WORKER_URL__"
-            - name: VMA_EVENT_POLL_INTERVAL_SECONDS
-              value: "1.0"
-            - name: VMA_MAX_SESSION_INPUT_BYTES
-              value: "67108864"
             - name: VMA_DB_POOL_SIZE
-              value: "4"
+              value: "16"
             - name: VMA_DB_MAX_OVERFLOW
-              value: "2"
+              value: "8"
             - name: VMA_DB_POOL_TIMEOUT_SECONDS
               value: "10"
             - name: VMA_DB_POOL_RECYCLE_SECONDS
@@ -85,11 +81,7 @@ spec:
             - name: VMA_ORGANIZATION_STORAGE_BYTES
               value: "5368709120"
             - name: VMA_CORS_ORIGINS
-              value: "https://staging.vma.votrixai.com,https://docs.vma.votrixai.com"
-            - name: VMA_DEFAULT_MODEL_PROVIDER
-              value: "openrouter"
-            - name: VMA_MODEL_PROVIDERS
-              value: '{"openrouter":{"adapter":"openrouter","api_key_env":"OPENROUTER_API_KEY","base_url":"https://openrouter.ai/api/v1","default_model":"deepseek/deepseek-v4-pro","model_kwargs":{"openrouter_provider":{"order":["fireworks","together"],"only":["fireworks","together"],"allow_fallbacks":true,"require_parameters":true,"data_collection":"deny"}},"capabilities":{"streaming":true,"tool_calls":true,"multimodal_input":false,"reasoning":true,"native_structured_output":false}}}'
+              value: "https://staging-vma.votrixai.com,https://staging-docs.vma.votrixai.com"
             - name: VMA_SANDBOX_PROVIDER
               value: "e2b"
             - name: VMA_E2B_TEMPLATE
@@ -98,8 +90,8 @@ spec:
               value: "/workspace"
             - name: VMA_E2B_GUEST_USER
               value: "user"
-            - name: VMA_E2B_TIMEOUT_SECONDS
-              value: "900"
+            - name: SANDBOX_TIMEOUT_SECONDS
+              value: "300"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
             - name: VMA_E2B_KEEP_MEMORY
@@ -117,11 +109,16 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-database-url-staging
+            - name: OPENROUTER_MANAGEMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-openrouter-management-key-staging
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   key: latest
-                  name: vma-database-url-staging
+                  name: vma-database-url-direct-staging
             - name: VMA_LISTEN_DATABASE_URL
               valueFrom:
                 secretKeyRef:

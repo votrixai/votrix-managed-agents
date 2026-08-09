@@ -36,10 +36,6 @@ target, not a promise to clone every current or future Claude beta feature.
   dedicated transactional idempotency contract for Session event submission.
 - [x] Keep object storage private and hide presign/complete upload routes from
   the public GA schema.
-- [x] Publish a native async GA client plus a synchronous provisioning subset
-  with pagination, streaming, reconnecting SSE, retries, typed errors, API-key
-  administration, and native model-Credential lifecycle.
-
 This is a BYOK-first public-beta baseline with optional operator-provisioned
 Organization platform keys, not production HA or enterprise readiness.
 Exactly-once external side effects, Postgres RLS, Organization RBAC/SSO,
@@ -47,23 +43,6 @@ enterprise audit export/retention, and webhook delivery remain open. Platform
 funding does not yet constitute a commercial billing system. The maintained
 Cloud Run topology now separates API and worker services and uses PostgreSQL
 `pg_notify` for best-effort cross-instance previews.
-
-### Native Python SDK and provider BYOK
-
-- [x] Keep the server distribution/import surface unchanged and create an
-  independently buildable `votrix` project under
-  `sdks/python`, imported as `from votrix import AsyncVotrix`.
-- [x] Add an authenticated, secret-free model-provider catalog and a native
-  model-Credential create endpoint that accepts `provider` plus `api_key`
-  without exposing `api_key_env` or `secret_name`.
-- [x] Preserve the Claude-compatible low-level REST/`AsyncAnthropic` surface;
-  use the native SDK for VMA-specific provider discovery and BYOK helpers.
-- [ ] Publish `sdk-python-v0.1.0` through PyPI Trusted Publishing after the
-  isolated SDK CI, native server contract tests, and package metadata pass on
-  the release commit.
-- [ ] Migrate `votrix-backend` to `AsyncVotrix` behind its existing provider
-  enum only after the native consumer contract covers every production call;
-  never mix resource IDs between Claude and VMA.
 
 ### P0-0 — Freeze the backend consumer contract (in progress)
 
@@ -129,6 +108,16 @@ the current production caller and target SDK both pass the consumer suite.
   preview frames are best-effort and non-replayable.
 - [ ] Verify the exact custom-tool `requires_action` handshake, retry, interrupt,
   and cancellation behavior expected by `votrix-backend`.
+- [ ] Reconcile `GET /v1/sessions/{id}/events/stream` with the `pg_notify`
+  preview broker above. `services/sessions.py::stream_events` reads the
+  durable log by polling the `SessionEvent` table every `STREAM_POLL_SECONDS`
+  (0.3s) — flagged during a `votrix-backend` design review as a latency
+  concern for real-time chat (a new event can take up to ~300ms to reach a
+  watcher, and every open stream is its own poll loop against Postgres). Worth
+  checking whether this endpoint is meant to sit behind the same `pg_notify`
+  push path as `event_deltas`, or whether polling here is an intentional,
+  separate tradeoff (simplicity, no missed-notify edge cases) that should just
+  be written down as such.
 
 Hosted boundary: API instances autoscale independently. Private workers use
 OIDC-authenticated Cloud Tasks turn requests with `minScale=1`; the permanent

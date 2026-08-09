@@ -50,6 +50,7 @@ API_MANIFEST="${REPO_ROOT}/service.staging.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-direct-staging"
+DATABASE_SCHEMA="vma_rewrite_staging"
 
 if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   echo "Staging deploys must run from a git checkout with a commit." >&2
@@ -57,6 +58,7 @@ if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
 fi
 
 COMMIT_TAG=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)
+FULL_COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)
 WORKTREE_STATUS=$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)
 if [ -n "$WORKTREE_STATUS" ] && [ "$ALLOW_DIRTY" != "true" ]; then
   echo "Staging deploys require a clean git worktree by default." >&2
@@ -85,7 +87,7 @@ gcloud run jobs deploy "$MIGRATION_JOB" \
   --region="$REGION" \
   --image="$IMAGE" \
   --service-account="$RUNTIME_SERVICE_ACCOUNT" \
-  --set-env-vars="APP_ENV=staging" \
+  --set-env-vars="APP_ENV=staging,DATABASE_SCHEMA=${DATABASE_SCHEMA}" \
   --set-secrets="DATABASE_URL=${DATABASE_SECRET}:latest" \
   --command=sh \
   --args=scripts/migrate.sh \
@@ -113,8 +115,9 @@ if [ -z "$WORKER_URL" ]; then
   sed \
     -e "s|IMAGE_URL|${IMAGE}|" \
     -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+    -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
     -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
-    -e 's|value: "hybrid"|value: "poll"|' \
+    -e 's|value: "cloud"|value: "inline"|' \
     "$WORKER_MANIFEST" | \
     gcloud run services replace \
       --project="$PROJECT_ID" \
@@ -145,6 +148,7 @@ echo "Deploying ${STAGING_WORKER_SERVICE} worker service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$WORKER_MANIFEST" | \
   gcloud run services replace \
@@ -157,6 +161,7 @@ echo "Deploying ${STAGING_SERVICE} API service in hybrid mode..."
 sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$API_MANIFEST" | \
   gcloud run services replace \

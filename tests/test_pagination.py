@@ -18,11 +18,6 @@ from app.routers.deps import get_db
 
 
 @pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
-
-
-@pytest_asyncio.fixture
 async def client(db):
     app.dependency_overrides[get_db] = lambda: db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
@@ -135,9 +130,15 @@ async def test_rows_added_mid_walk_do_not_repeat_the_page(client, headers, db, o
     assert not overlap, "the second page repeated rows from the first"
 
 
-async def test_a_deleted_cursor_row_does_not_lose_the_rest(client, headers, db, org):
+async def test_a_deleted_cursor_row_does_not_lose_the_rest(
+    client, headers, db, org, monkeypatch
+):
     """A cursor naming a row that is gone yields nothing rather than silently
     restarting from the top — better an empty page than a repeated one."""
+    async def delete_object(_key):
+        return None
+
+    monkeypatch.setattr("app.services.skills.storage.delete_object", delete_object)
     await make_skills(db, org, 4)
     first = await page(client, headers, limit=2)
     await client.delete(f"/v1/skills/{first['last_id']}", headers=headers)

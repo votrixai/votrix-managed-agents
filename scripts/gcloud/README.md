@@ -44,14 +44,14 @@ is unavailable. API request autoscaling and Agent-turn capacity are independent.
 - Use managed PostgreSQL. SQLite is not durable or multi-instance safe on Cloud
   Run.
 - Keep development, staging, and production in three separate Supabase projects;
-  these environments must never share a database. Runtime SQLAlchemy and
-  LangGraph checkpoint traffic use the Supavisor transaction pooler on port
-  `6543`. The preview listener and janitor advisory lock use a separate
-  session-mode URL on port `5432`, while the migration Job receives its own
-  session/direct secret. A transaction-mode pooler cannot hold a lifetime
-  `LISTEN` connection or a session-scoped advisory lock. The local `.env` uses
-  the development project; the two Secret Manager files below use staging and
-  production.
+  these environments must never share a database. Runtime SQLAlchemy traffic
+  uses the Supavisor transaction pooler on port `6543`. LangGraph checkpoints,
+  the preview listener, and the janitor advisory lock use session-affine URLs
+  on port `5432`; the migration Job receives the same environment's direct
+  secret. A transaction-mode pooler cannot preserve the checkpoint schema's
+  session setting, a lifetime `LISTEN` connection, or a session-scoped
+  advisory lock. The local `.env` uses the development project; the two Secret
+  Manager files below use staging and production.
 - Build the operator-owned `vma-hardened` template in the E2B account before
   creating an E2B-backed session.
 
@@ -101,6 +101,7 @@ DATABASE_URL_DIRECT=
 VMA_SUPABASE_URL=
 VMA_SUPABASE_PUBLISHABLE_KEY=
 VMA_ENCRYPTION_KEY=
+OPENROUTER_MANAGEMENT_KEY=
 E2B_API_KEY=
 S3_ENDPOINT_URL=
 S3_ACCESS_KEY_ID=
@@ -126,20 +127,29 @@ only these names:
 | `VMA_SUPABASE_URL` | `vma-supabase-url` | `vma-supabase-url-staging` |
 | `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
+| `OPENROUTER_MANAGEMENT_KEY` | `vma-openrouter-management-key` | `vma-openrouter-management-key-staging` |
 | `E2B_API_KEY` | `vma-e2b-api-key` | `vma-e2b-api-key-staging` |
 | `S3_ENDPOINT_URL` | `vma-s3-endpoint-url` | `vma-s3-endpoint-url-staging` |
 | `S3_ACCESS_KEY_ID` | `vma-s3-access-key-id` | `vma-s3-access-key-id-staging` |
 | `S3_SECRET_ACCESS_KEY` | `vma-s3-secret-access-key` | `vma-s3-secret-access-key-staging` |
 | `S3_BUCKET_NAME` | `vma-s3-bucket-name` | `vma-s3-bucket-name-staging` |
 
-The API and worker manifests set `VMA_CHECKPOINT_DATABASE_URL` explicitly from
-the same transaction-pooler secret as `DATABASE_URL`. They set
-`VMA_LISTEN_DATABASE_URL` from the session-mode secret. The migration Job alone
-maps `vma-database-url-direct[-staging]` to its `DATABASE_URL`.
+The API and worker manifests set `VMA_CHECKPOINT_DATABASE_URL` from the
+port-5432 session/direct secret. LangGraph uses its own session-affine psycopg
+connection and explicitly sets `search_path` after connecting; Supabase's
+pooler discards the equivalent startup option. `VMA_LISTEN_DATABASE_URL` also
+uses the session-mode secret, while ordinary application SQL continues to use
+the transaction-pooler `DATABASE_URL`. The migration Job maps
+`vma-database-url-direct[-staging]` to `DATABASE_URL` and initializes both the
+Alembic schema and LangGraph checkpoint schema before traffic changes.
 
 The Supabase URL and publishable key enable hosted owner and superadmin JWT
 authentication. They must match the Votrix web application in each environment;
 never substitute the Supabase service-role key.
+
+The OpenRouter management credential creates and administers each Account's
+inference key. It cannot perform inference itself and is separate from the
+encrypted Account credentials used for model requests.
 
 Do not quote values in these files, and do not commit them.
 
@@ -206,11 +216,11 @@ VMA_CORS_ORIGINS=https://<matching-vma-developer-app>,https://docs.vma.votrixai.
 
 The 64 MiB aggregate Session-input cap bounds create-time materialization and
 one-time E2B injection. E2B turns resume from the sealed filesystem and do not
-rehydrate all inputs from R2. Runtime and checkpoint pools use transaction mode,
-so their client connections do not each pin a scarce Postgres backend. Every API
-process keeps one session-mode `LISTEN` connection, and a janitor leader holds a
-transient session-mode advisory-lock connection. Worker publishers use their
-existing SQLAlchemy pool and do not add a dedicated listener connection.
+rehydrate all inputs from R2. Runtime SQLAlchemy uses transaction mode.
+Each in-flight Agent turn holds one session-mode checkpoint connection, every
+API process keeps one session-mode `LISTEN` connection, and a janitor leader
+holds a transient session-mode advisory-lock connection. Worker publishers use
+their existing SQLAlchemy pool and do not add a dedicated listener connection.
 PostgreSQL preview delivery is best-effort; SSE
 clients reconcile dropped or missed frames against durable Session events. The
 hosted Organization defaults admit bursts of up to 20 queued/running turns.
@@ -312,8 +322,8 @@ code; there is deliberately no queue-level deadline setting.
 Before raising `maxScale` or the per-instance turn limit, recalculate PostgreSQL,
 model-provider, E2B, CPU, memory, and spend budgets. A manual Cloud Run scaling
 change is temporary because the next manifest replacement restores the
-checked-in bounds. Validate changes with `scripts/performance_smoke.py` in
-staging and update the manifest, static tests, and runbook together.
+checked-in bounds. Validate changes in staging and update the manifest, static
+tests, and runbook together.
 
 ## Staging acceptance gates
 
@@ -331,37 +341,6 @@ model Credential selected by the smoke Agent. The hosted service intentionally
 has no platform model API key, so the acceptance would otherwise fail closed
 with `model_credential_required` before exercising E2B or R2.
 
-Then use an existing staging Vault containing the selected model Credential to
-run the ten-Session burst:
-
-```bash
-VMA_PERF_BASE_URL=https://YOUR-STAGING-CLOUD-RUN-URL \
-VMA_PERF_API_KEY=... \
-VMA_PERF_VAULT_IDS=vault_... \
-uv run python scripts/performance_smoke.py
-```
-
-The performance smoke creates disposable Sessions and, unless existing IDs are
-provided, a disposable Agent and Environment. It never modifies a supplied
-Vault, Agent, or Environment; cleanup deletes Sessions and the Environment and
-archives the Agent. It reports provision, trigger, queue, first-event, and
-total latency with p50/p95/max summaries. The run makes real model and E2B calls
-and therefore consumes the corresponding provider quotas.
-
-For the first controlled rollout, the GCP wrapper can migrate an existing
-operator-owned model-key Secret Manager value into an encrypted VMA Vault and
-run the one-Session smoke without exposing either credential:
-
-```bash
-VMA_SMOKE_MODEL_API_KEY_SECRET=YOUR_OPERATOR_MODEL_KEY_SECRET \
-  ./scripts/gcloud/7-run-acceptance.sh staging
-```
-
-The named source is never mounted into Cloud Run and is used only by the
-trusted operator command. After the Vault-backed smoke passes, retire any
-transitional model-key secret; the active encrypted Credential belongs to the
-staging Organization Vault.
-
 ## Bootstrap the first tenant API key
 
 Authentication is database-backed in every environment. After the first
@@ -377,6 +356,12 @@ These create `vma-operator-api-key-staging` and `vma-operator-api-key`. Neither
 secret is mounted into Cloud Run; they are operator/client credentials, not a
 shared runtime authentication bypass. The script never prints the plaintext
 key and can be retried safely with the same pre-provisioned value.
+If an environment already has a legacy `vma_*` operator secret, the trusted
+bootstrap imports it only when that Organization has no API-key rows; later
+runs must match the existing active management key. The bootstrap uses the
+same environment-specific database schema as the deploy scripts; override it
+only during a coordinated schema rename with
+`VMA_BOOTSTRAP_DATABASE_SCHEMA`.
 
 For a non-GCP secret sink, run the lower-level bootstrap CLI once from a trusted
 operator machine using the matching untracked environment file:
@@ -494,7 +479,6 @@ and concurrent-dispatch bound.
 | `scripts/gcloud/4-setup-triggers.sh` | GitHub Cloud Build triggers |
 | `scripts/gcloud/5-allow-public.sh` | Repair the public Invoker IAM-check setting |
 | `scripts/gcloud/6-bootstrap-operator.sh` | Securely bootstrap an operator API key to Secret Manager and Postgres |
-| `scripts/gcloud/7-run-acceptance.sh` | Provision the BYOK smoke Vault and run real R2/E2B/model acceptance |
 | `scripts/gcloud/8-setup-cloud-tasks.sh` | Idempotently configure queues and OIDC dispatch IAM |
 | `scripts/gcloud/preflight.sh` | Read-only GCP, IAM, secret metadata, manifest, and git readiness |
 | `scripts/gcloud/status.sh` | Deployed service and job status |

@@ -3,11 +3,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
-from app.db.models import Session, SessionEvent, SessionFile, SessionSandbox
+from app.config import get_settings
+from app.db.models import (
+    MemoryStore,
+    Session,
+    SessionEvent,
+    SessionFile,
+    SessionMemoryStore,
+    SessionSandbox,
+)
 from app.db.models.sessions import IDLE, RUNNING, SANDBOX_PROVISIONING
 from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
 from app.utils.id_generator import new_id
@@ -27,6 +35,8 @@ async def create_session(
     agent_id: str,
     agent_version: int,
     environment_id: str,
+    model: dict[str, Any] | None = None,
+    account_id: str | None = None,
     title: str | None = None,
 ) -> Session:
     session = Session(
@@ -35,6 +45,8 @@ async def create_session(
         agent_id=agent_id,
         agent_version=agent_version,
         environment_id=environment_id,
+        model=model,
+        account_id=account_id,
         title=title,
         status=IDLE,
     )
@@ -143,12 +155,26 @@ async def append_event(
     matter: the ordering these numbers carry is "not the same as each other",
     not "in the order I would have guessed".
     """
+    # The wake-up rides along in the statement that was going out anyway. It
+    # reads as though it fires too early — the event row is not inserted until
+    # below — and it does not: Postgres holds a notification until the
+    # transaction commits, so a reader cannot be woken before the row it is
+    # being woken for is visible. What the fold saves is a round trip on every
+    # event a turn emits, and against the hosted pooler a round trip is ~150ms.
+    #
+    # Only the session id travels. What the event says is read back from the
+    # table, so a notification lost, doubled or late costs a reader nothing but
+    # the wait it would have had anyway.
+    returning: list[Any] = [Session.last_event_seq]
+    if _wakes_readers(db):
+        returning.append(func.pg_notify(event_channel(), session.id))
+
     seq = (
         await db.execute(
             update(Session)
             .where(Session.id == session.id)
             .values(last_event_seq=Session.last_event_seq + 1)
-            .returning(Session.last_event_seq)
+            .returning(*returning)
         )
     ).scalar_one()
 
@@ -172,6 +198,30 @@ async def append_event(
     db.add(event)
     await db.flush()
     return event
+
+
+def event_channel() -> str:
+    """The `NOTIFY` channel streams are woken on.
+
+    One channel for the whole deployment rather than one per session: a listener
+    holds a single shared connection, and issuing `LISTEN`/`UNLISTEN` on it as
+    every stream opens and closes is a race that buys nothing — a process with
+    no reader for a session drops the notification on a dictionary lookup.
+
+    The schema is in the name because staging and production can sit in one
+    Postgres, and notifications are not scoped by `search_path`.
+    """
+    return f"vma_session_events_{get_settings().database_schema or 'public'}"
+
+
+def _wakes_readers(db: AsyncSession) -> bool:
+    """Whether this database can carry a wake-up at all.
+
+    SQLite has no `pg_notify`, and a fresh checkout runs on SQLite. There is
+    nothing to fall back to and nothing to warn about: with no listener there is
+    no reader waiting to be told, and the stream polls as it always did.
+    """
+    return db.get_bind().dialect.name == "postgresql"
 
 
 async def list_events(
@@ -436,4 +486,44 @@ async def list_session_files(
 ) -> list[SessionFile]:
     stmt = select(SessionFile).where(SessionFile.session_id == session_id)
     result = await db.execute(stmt.order_by(SessionFile.path))
+    return list(result.scalars().all())
+
+
+# --- Memory Stores mounted into a Session -----------------------------------
+
+
+async def attach_memory_store(
+    db: AsyncSession,
+    session: Session,
+    store: MemoryStore,
+    *,
+    access: str,
+    instructions: str | None,
+    mount_path: str,
+) -> SessionMemoryStore:
+    attached = SessionMemoryStore(
+        id=new_id("sesrsc"),
+        organization_id=session.organization_id,
+        session_id=session.id,
+        memory_store_id=store.id,
+        access=access,
+        instructions=instructions,
+        mount_path=mount_path,
+        name=store.name,
+        description=store.description,
+    )
+    db.add(attached)
+    await db.flush()
+    return attached
+
+
+async def list_session_memory_stores(
+    db: AsyncSession,
+    *,
+    session_id: str,
+) -> list[SessionMemoryStore]:
+    stmt = select(SessionMemoryStore).where(
+        SessionMemoryStore.session_id == session_id
+    )
+    result = await db.execute(stmt.order_by(SessionMemoryStore.mount_path))
     return list(result.scalars().all())

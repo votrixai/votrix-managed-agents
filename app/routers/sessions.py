@@ -3,18 +3,26 @@ from typing import Annotated, AsyncIterator
 
 from fastapi import APIRouter, Header, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import session_scope
-from app.db.models import Session as SessionRow, SessionEvent
+from app.db.models import Session as SessionRow, SessionEvent, SessionFile
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
 from app.models.events import EventResponse, SendEventsRequest, SendEventsResponse
-from app.models.files import FileResponse, LiveFileRequest
-from app.models.sessions import SessionCreateRequest, SessionResponse, SessionUpdateRequest
+from app.models.files import FileResponse, LiveFileRequest, LiveUploadRequest
+from app.models.sessions import (
+    SessionCreateRequest,
+    SessionFileResourceResponse,
+    SessionMemoryStoreResourceResponse,
+    SessionResponse,
+    SessionUpdateRequest,
+)
 from app.routers.deps import Db, OrganizationId
 from app.routers.files import to_file
 from app.services import sessions as service
+from app.utils.sandbox import UPLOADS_DIR
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 
@@ -27,10 +35,12 @@ async def create_session(body: SessionCreateRequest, db: Db, organization_id: Or
         agent_id=body.agent_id,
         environment_id=body.environment_id,
         agent_version=body.agent_version,
+        model=body.model,
+        account_id=body.account_id,
         title=body.title,
         resources=[resource.model_dump() for resource in body.resources],
     )
-    return to_session(session)
+    return await to_session(db, session)
 
 
 @router.get("", response_model=ListResponse[SessionResponse])
@@ -52,13 +62,18 @@ async def list_sessions(
         before_id=before_id,
         after_id=after_id,
     )
-    return page_of(sessions, to_session)
+    return ListResponse(
+        data=[await to_session(db, session) for session in sessions.items],
+        has_more=sessions.has_more,
+        first_id=sessions.first_id,
+        last_id=sessions.last_id,
+    )
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
 async def retrieve_session(session_id: str, db: Db, organization_id: OrganizationId):
     session = await service.get_session(db, session_id=session_id, organization_id=organization_id)
-    return to_session(session)
+    return await to_session(db, session)
 
 
 @router.post("/{session_id}", response_model=SessionResponse)
@@ -74,7 +89,7 @@ async def update_session(
         organization_id=organization_id,
         title=body.title,
     )
-    return to_session(session)
+    return await to_session(db, session)
 
 
 @router.delete("/{session_id}", response_model=DeletedResponse)
@@ -94,7 +109,7 @@ async def archive_session(session_id: str, db: Db, organization_id: Organization
         session_id=session_id,
         organization_id=organization_id,
     )
-    return to_session(session)
+    return await to_session(db, session)
 
 
 @router.post("/{session_id}/events", response_model=SendEventsResponse)
@@ -276,22 +291,89 @@ async def capture_live_file(
     return to_file(file)
 
 
-def to_session(session: SessionRow) -> SessionResponse:
+@router.post(
+    "/{session_id}/live/uploads",
+    response_model=SessionFileResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_live_upload(
+    session_id: str,
+    body: LiveUploadRequest,
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """Put an already uploaded File into an existing Session sandbox.
+
+    Upload the durable object through ``POST /v1/files`` first, then pass its
+    id here. The Session must be idle and its E2B sandbox must still exist;
+    this endpoint may wake a paused sandbox, but it never rebuilds one that has
+    gone away. ``path`` is relative to ``uploads/`` and defaults to the File's
+    filename. The mounted bytes are read-only to the agent.
+
+    Retrying the same File at the same path is idempotent. A different File at
+    an occupied path, a busy Session, or a Session without a usable sandbox is
+    refused with 409.
+    """
+    attached = await service.attach_live_file(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+        file_id=body.file_id,
+        path=body.path,
+    )
+    return to_session_file_resource(attached)
+
+
+def to_session_file_resource(row: SessionFile) -> SessionFileResourceResponse:
+    return SessionFileResourceResponse(
+        id=row.id,
+        file_id=row.file_id,
+        mount_path=f"{UPLOADS_DIR}/{row.path}",
+        created_at=row.created_at,
+        updated_at=row.created_at,
+    )
+
+
+async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
     """Written out by hand rather than via `from_attributes`.
 
     A column has to be named here to be published, which is what keeps
     `organization_id`, `lock_version` and the rest from leaking into responses
     the moment someone adds one.
     """
+    files = await service.list_session_files(db, session_id=session.id)
+    memory_stores = await service.list_session_memory_stores(
+        db, session_id=session.id
+    )
+    resources = [to_session_file_resource(row) for row in files]
+    resources.extend(
+        SessionMemoryStoreResourceResponse(
+            id=row.id,
+            memory_store_id=row.memory_store_id,
+            access=row.access,
+            instructions=row.instructions,
+            mount_path=row.mount_path,
+            name=row.name,
+            description=row.description,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in memory_stores
+    )
+    resources.sort(key=lambda resource: (resource.created_at, resource.id))
+
     return SessionResponse(
         id=session.id,
         agent_id=session.agent_id,
         agent_version=session.agent_version,
         environment_id=session.environment_id,
+        model=session.model,
+        account_id=session.account_id,
         title=session.title,
         status=session.status,
         stop_reason=session.stop_reason,
         last_event_seq=session.last_event_seq,
+        resources=resources,
         created_at=session.created_at,
         updated_at=session.updated_at,
         archived_at=session.archived_at,

@@ -149,6 +149,6 @@ Rules:
 - Capacity, connections, and operational fallback:
   `private-docs/scaling-runbook.md`.
 - Launch gates: `private-docs/pre-launch-checklist.md`.
-- Durable work and public execution semantics: `docs/work-queue.md`.
+- Current implementation status and execution gaps: `docs/rewrite-status.md`.
 - Contract-level public topology: `docs/votrix-core-architecture.md`.
 - Deferred evolution: `TODO.md`.

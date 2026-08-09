@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import io
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from e2b import CommandExitException
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
@@ -69,11 +71,6 @@ async def client(db, bucket):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         yield http
     app.dependency_overrides.clear()
-
-
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
 
 
 async def upload(client, headers, content=None, **form):
@@ -178,12 +175,13 @@ async def test_deleting_removes_the_object_too(client, headers, bucket):
     assert bucket == {}
 
 
-async def test_another_tenant_cannot_download_it(client, headers):
+async def test_another_tenant_cannot_download_it(client, db, headers, other_tenant):
+    other_id, other_headers = other_tenant
     skill_id = (await upload(client, headers)).json()["id"]
 
     response = await client.get(
         f"/v1/skills/{skill_id}/content",
-        headers={"x-organization-id": "org_intruder", "x-api-key": "anything"},
+        headers=other_headers,
     )
     assert response.status_code == 404
 
@@ -194,6 +192,105 @@ async def test_the_same_name_cannot_be_used_twice(client, headers):
     response = await upload(client, headers)
 
     assert response.status_code == 409
+
+
+# --- replacing what is in a skill --------------------------------------------
+
+
+def read_member(package: bytes, path: str) -> bytes:
+    """One file out of a downloaded package. The zip is deflated, so its
+    contents are not findable in the raw bytes."""
+    with zipfile.ZipFile(io.BytesIO(package)) as archive:
+        return archive.read(path)
+
+
+async def replace(client, headers, skill_id, content=None, **form):
+    return await client.post(
+        f"/v1/skills/{skill_id}",
+        headers=headers,
+        files=(
+            {"file": ("pptx.zip", content, "application/zip")}
+            if content is not None
+            else None
+        ),
+        data=form,
+    )
+
+
+async def test_replacing_the_package_keeps_the_id(client, headers):
+    """The reason this exists. An Agent names a skill by id, so changing what
+    the skill contains must not mean re-pointing every Agent that uses it."""
+
+    skill_id = (await upload(client, headers)).json()["id"]
+    revised = make_zip({"SKILL.md": SKILL_MD, "scripts/run.py": b"print(2)\n"})
+
+    response = await replace(client, headers, skill_id, revised)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == skill_id
+
+    downloaded = await client.get(f"/v1/skills/{skill_id}/content", headers=headers)
+    assert read_member(downloaded.content, "pptx/scripts/run.py") == b"print(2)\n"
+
+
+async def test_a_replacement_restates_the_size_and_digest(client, headers, bucket):
+    skill_id = (await upload(client, headers)).json()["id"]
+    revised = make_zip({"SKILL.md": SKILL_MD, "notes.md": b"much longer content here\n"})
+
+    body = (await replace(client, headers, skill_id, revised)).json()
+
+    stored = bucket[
+        next(k for k in bucket if body["sha256"] == service.sha256(bucket[k]))
+    ]
+    assert body["size_bytes"] == len(stored)
+
+
+async def test_a_replacement_package_renames_the_skill(client, headers):
+    """The package names it on the way in, the same as on create — a name
+    stored beside a package that disagrees would not load in the sandbox."""
+
+    skill_id = (await upload(client, headers)).json()["id"]
+    renamed = make_zip(
+        {"SKILL.md": SKILL_MD.replace(b"name: pptx", b"name: decks")}
+    )
+
+    body = (await replace(client, headers, skill_id, renamed)).json()
+
+    assert body["id"] == skill_id
+    assert body["name"] == "decks"
+
+
+async def test_a_replacement_cannot_take_another_skills_name(client, headers):
+    skill_id = (await upload(client, headers)).json()["id"]
+    other = make_zip({"SKILL.md": SKILL_MD.replace(b"name: pptx", b"name: decks")})
+    await client.post(
+        "/v1/skills",
+        headers=headers,
+        files={"file": ("decks.zip", other, "application/zip")},
+    )
+
+    response = await replace(client, headers, skill_id, other)
+
+    assert response.status_code == 409
+
+
+async def test_a_replacement_that_is_not_a_package_leaves_the_old_one(client, headers):
+    skill_id = (await upload(client, headers)).json()["id"]
+
+    response = await replace(client, headers, skill_id, b"this is not a zip")
+
+    assert response.status_code == 422
+    downloaded = await client.get(f"/v1/skills/{skill_id}/content", headers=headers)
+    assert read_member(downloaded.content, "pptx/scripts/run.py") == b"print(1)\n"
+
+
+async def test_metadata_can_still_be_edited_without_a_package(client, headers):
+    skill_id = (await upload(client, headers)).json()["id"]
+
+    body = (await replace(client, headers, skill_id, description="Decks, faster")).json()
+
+    assert body["description"] == "Decks, faster"
+    assert body["name"] == "pptx"
 
 
 # --- what gets rejected ------------------------------------------------------
@@ -251,7 +348,7 @@ async def test_the_sandbox_fetches_a_skill_with_a_url_not_the_bytes(db, org, cli
 
     async def _run(self, command, **kwargs):
         commands.append(command)
-        return None
+        return SimpleNamespace(exit_code=0, stdout="skills_installed=1 retries=0")
 
     async def _presigned(key, *, expires_in=300):
         return f"https://r2.example/{key}?expires={expires_in}"
@@ -261,11 +358,14 @@ async def test_the_sandbox_fetches_a_skill_with_a_url_not_the_bytes(db, org, cli
 
     await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(db, [skill_id])
 
-    curl = next(c for c in commands if "curl" in c)
-    assert "https://r2.example/organizations/" in curl
-    assert f"expires={get_settings().transfer_url_ttl_seconds}" in curl
-    # Unpacked beside the others, which is the layout DeepAgents scans.
-    assert f"-d {sandbox_utils.SKILLS_DIR}" in next(c for c in commands if "unzip" in c)
+    assert len(commands) == 1, "one Skill set must use one E2B command"
+    installer = commands[0]
+    assert "https://r2.example/organizations/" in installer
+    assert f"expires={get_settings().transfer_url_ttl_seconds}" in installer
+    assert "download_one" in installer
+    assert "wait_batch" in installer
+    assert f"skills_dir={sandbox_utils.SKILLS_DIR}" in installer
+    assert 'mv "$expanded" "$skills_dir"' in installer
 
 
 async def test_a_reference_to_a_missing_skill_fails_loudly(db, org, monkeypatch):
@@ -279,6 +379,62 @@ async def test_a_reference_to_a_missing_skill_fails_loudly(db, org, monkeypatch)
 
     with pytest.raises(ValueError):
         await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(db, ["skill_gone"])
+
+
+async def test_a_failed_installer_command_fails_the_session_create_path(
+    db, org, client, headers, monkeypatch
+):
+    """E2B raises on a nonzero shell exit; provider details stay internal."""
+    from app.utils.sandbox import Sandbox
+
+    skill_id = (await upload(client, headers)).json()["id"]
+
+    async def _run(self, command, **kwargs):
+        raise CommandExitException(
+            stderr="download failed: secret=must-not-enter-errors",
+            stdout="",
+            exit_code=31,
+            error=None,
+        )
+
+    async def _presigned(key, *, expires_in=300):
+        return "https://r2.example/object?secret=must-not-enter-errors"
+
+    monkeypatch.setattr(Sandbox, "run", _run)
+    monkeypatch.setattr("app.utils.storage.presigned_download_url", _presigned)
+
+    with pytest.raises(RuntimeError, match="complete Skill set") as raised:
+        await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(db, [skill_id])
+
+    assert "secret" not in str(raised.value)
+
+
+async def test_duplicate_skill_references_download_only_once(
+    db, org, client, headers, monkeypatch
+):
+    from app.utils.sandbox import Sandbox
+
+    skill_id = (await upload(client, headers)).json()["id"]
+    signed: list[str] = []
+    commands: list[str] = []
+
+    async def _presigned(key, *, expires_in=300):
+        signed.append(key)
+        return "https://r2.example/object"
+
+    async def _run(self, command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=0)
+
+    monkeypatch.setattr(Sandbox, "run", _run)
+    monkeypatch.setattr("app.utils.storage.presigned_download_url", _presigned)
+
+    await Sandbox.from_id("sbx_1", "ses_1", org).install_skills(
+        db, [skill_id, skill_id]
+    )
+
+    assert len(signed) == 1
+    assert commands[0].count("download_one 0 ") == 1
 
 
 @pytest.mark.parametrize(

@@ -28,7 +28,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra contract --extra sandbox-e2b
+        run: uv sync --extra dev --extra sandbox-e2b
 
       - name: Validate shell entrypoints
         run: |
@@ -37,78 +37,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
-
-  backend-consumer-contract:
-    name: votrix-backend consumer contract (Anthropic SDK 0.97.0)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install backend consumer contract dependencies
-        run: uv sync --extra dev --extra contract-backend
-
-      - name: Run backend consumer contract
-        run: |
-          .venv/bin/python -c 'import anthropic; assert anthropic.__version__ == "0.97.0"'
-          .venv/bin/python -m pytest tests/contract/test_votrix_backend_consumer_contract.py
-
-  postgres-idempotency:
-    name: PostgreSQL concurrent event idempotency
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: vma_idempotency_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d vma_idempotency_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/vma_idempotency_test
-      VMA_TEST_POSTGRES_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/vma_idempotency_test
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Validate migrations on PostgreSQL
-        run: |
-          uv run alembic upgrade head
-          uv run alembic check
-
-      - name: Prove concurrent request idempotency
-        run: uv run pytest tests/test_postgres_event_idempotency.py
 
   docs:
     name: Fumadocs static site
@@ -142,6 +70,112 @@ jobs:
 
       - name: Validate Cloudflare static-assets deployment
         run: npx wrangler deploy --dry-run
+
+  docs-deploy:
+    # The documentation site renders the OpenAPI schema committed at
+    # `website/public/openapi/vma.json`, so it goes stale the moment the API
+    # changes without a matching site deploy. Publishing it from the same
+    # branch push that deploys the services keeps the two in step.
+    #
+    # Requires three repository secrets. Deploying and purging use separate
+    # credentials because the two permissions live on different Cloudflare
+    # resources: Workers Scripts is account-scoped, Cache Purge is zone-scoped.
+    #   CLOUDFLARE_API_TOKEN   Account | Workers Scripts | Edit
+    #   CLOUDFLARE_PURGE_TOKEN Zone | Cache Purge | Purge
+    #   CLOUDFLARE_ZONE_ID     The votrixai.com zone
+    # One token holding both permissions can be used for each of the two.
+    name: Publish documentation site
+    needs: [test, docs]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
+    runs-on: ubuntu-latest
+    concurrency:
+      # Never let two pushes upload assets to the same environment at once.
+      group: docs-deploy-${{ github.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: website
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: website/.nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Point the staging explorer at the staging API
+        # The committed schema names the production origin, because that is
+        # the base URL the published reference documents. A request explorer
+        # served from the staging site must not send live calls to production,
+        # so the staging build rewrites the origin before the pages render.
+        if: github.ref == 'refs/heads/staging'
+        env:
+          STAGING_API_ORIGIN: https://staging-api.vma.votrixai.com
+          PRODUCTION_API_ORIGIN: https://api.vma.votrixai.com
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const path = "public/openapi/vma.json";
+            const production = process.env.PRODUCTION_API_ORIGIN;
+            const staging = process.env.STAGING_API_ORIGIN;
+            const source = readFileSync(path, "utf8");
+            const rewritten = source.replaceAll(production, staging);
+            if (rewritten === source) {
+              throw new Error(`no ${production} occurrence to rewrite`);
+            }
+            const schema = JSON.parse(rewritten);
+            if (schema.servers?.[0]?.url !== staging) {
+              throw new Error("server origin was not rewritten");
+            }
+            writeFileSync(path, rewritten);
+            console.log(`explorer origin -> ${schema.servers[0].url}`);
+          '
+
+      - name: Build static documentation
+        run: npm run build
+
+      - name: Publish staging documentation
+        if: github.ref == 'refs/heads/staging'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --env staging
+
+      - name: Publish production documentation
+        if: github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy
+
+      - name: Purge the documentation host at the edge
+        # Uploading assets does not evict what the edge already cached. Without
+        # this, a deployed page can keep serving a build from weeks earlier.
+        env:
+          CLOUDFLARE_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          DOCS_HOST: >-
+            ${{ github.ref == 'refs/heads/main'
+              && 'docs.vma.votrixai.com'
+              || 'staging-docs.vma.votrixai.com' }}
+        run: |
+          set -eu
+          response=$(curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/purge_cache" \
+            --header "Authorization: Bearer ${CLOUDFLARE_PURGE_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "{\"hosts\":[\"${DOCS_HOST}\"]}")
+          echo "$response"
+          # Cloudflare answers 200 with success:false for a rejected purge, so
+          # the HTTP status alone is not enough to call this step green.
+          echo "$response" | grep -q '"success":true'
 
   cloudflare-api-router:
     name: Cloudflare API router

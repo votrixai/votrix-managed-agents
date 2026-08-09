@@ -7,19 +7,16 @@ handlers — with only the database and E2B swapped out.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.routers import health as health_router
 from app.routers.deps import get_db
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
-
-
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
 
 
 @pytest_asyncio.fixture
@@ -42,22 +39,122 @@ async def created(client, headers, agent, environment):
     return response.json()
 
 
-async def test_the_organization_header_is_required(client):
-    response = await client.get("/v1/sessions", headers={"x-api-key": "anything"})
-    assert response.status_code == 422
-    assert response.json()["detail"][0]["loc"] == ["header", "x-organization-id"]
+async def test_process_health_does_not_require_tenant_auth(client, monkeypatch):
+    commit = "952e7d141ad3c8548af497d99a0e43ffc8d06486"
+    monkeypatch.setattr(
+        health_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            app_env="production",
+            vma_public_build_id="952e7d1",
+            vma_git_commit_sha=commit,
+        ),
+    )
+    monkeypatch.setattr(health_router, "_PROCESS_STARTED_AT", 100.0)
+    monkeypatch.setattr(health_router, "monotonic", lambda: 112.3456)
 
+    response = await client.get("/health")
 
-async def test_the_api_key_is_accepted_but_not_checked(client, org):
-    """Not yet verified — the shape is in place so adding the lookup changes no client."""
-    response = await client.get("/v1/sessions", headers={"x-organization-id": org})
     assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "environment": "production",
+        "build": "952e7d1",
+        "git_commit": commit,
+        "git_commit_url": (
+            "https://github.com/votrixai/votrix-managed-agents/commit/"
+            "952e7d141ad3c8548af497d99a0e43ffc8d06486"
+        ),
+        "uptime_seconds": 12.346,
+    }
+
+
+async def test_database_health_runs_a_round_trip(client):
+    response = await client.get("/health/db")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["database"] == "ok"
+    assert body["database_latency_ms"] >= 0
+    assert body["uptime_seconds"] >= 0
+
+
+async def test_a_request_without_a_key_is_refused(client):
+    response = await client.get("/v1/sessions")
+    assert response.status_code == 401
+
+
+async def test_an_unknown_key_is_refused(client, org):
+    response = await client.get("/v1/sessions", headers={"x-api-key": "sk-nope"})
+    assert response.status_code == 401
+
+
+async def test_naming_a_tenant_does_not_reach_it(client, org):
+    """The header is gone, and sending it anyway changes nothing.
+
+    Which tenant a request reaches comes off the key. A caller that could
+    state its own tenant could state anyone's, and checking the key afterwards
+    only turns that into a comparison — the same answer with one more way to
+    get it wrong.
+    """
+    response = await client.get(
+        "/v1/sessions", headers={"x-organization-id": org}
+    )
+    assert response.status_code == 401
+
+
+async def test_a_revoked_key_stops_working(client, db, org):
+    from app.db.queries import vma_api_keys as keys_q
+
+    api_key, token = await keys_q.create_vma_api_key(
+        db, organization_id=org, name="doomed"
+    )
+    await db.commit()
+    assert (
+        await client.get("/v1/sessions", headers={"x-api-key": token})
+    ).status_code == 200
+
+    await keys_q.revoke_vma_api_key(db, api_key)
+    await db.commit()
+
+    assert (
+        await client.get("/v1/sessions", headers={"x-api-key": token})
+    ).status_code == 401
 
 
 async def test_creating_a_session_returns_it(created):
     assert created["type"] == "session"
     assert created["status"] == "idle"
     assert created["id"].startswith("sess_")
+
+
+async def test_session_pins_the_model_it_was_given(
+    client, headers, agent, environment
+):
+    response = await client.post(
+        "/v1/sessions",
+        headers=headers,
+        json={
+            "agent_id": agent.id,
+            "environment_id": environment.id,
+            "model": "claude-opus-5",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    # Normalised on the way in: a bare string is shorthand for {"id": ...}, the
+    # same as on an Agent, so every reader sees one shape.
+    assert response.json()["model"] == {"id": "claude-opus-5"}
+
+
+async def test_a_session_without_a_model_follows_the_agent(created):
+    """Null, not a copy of the Agent's model.
+
+    Copying it at creation would freeze the choice: editing the Agent later
+    would stop reaching a conversation that never asked to opt out of it.
+    """
+    assert created["model"] is None
 
 
 async def test_a_session_never_exposes_its_internals(created):
@@ -136,10 +233,14 @@ async def test_events_can_be_read_back_incrementally(client, headers, created):
     assert response.json()["data"] == []
 
 
-async def test_another_tenant_gets_a_404_not_someone_elses_session(client, headers, created):
+async def test_another_tenant_gets_a_404_not_someone_elses_session(
+    client, db, headers, created, other_tenant):
+    other_id, other_headers = other_tenant
+    """Not a 403: telling them it exists is telling them something."""
+
     response = await client.get(
         f"/v1/sessions/{created['id']}",
-        headers={"x-organization-id": "org_intruder", "x-api-key": "anything"},
+        headers=other_headers,
     )
     assert response.status_code == 404
 

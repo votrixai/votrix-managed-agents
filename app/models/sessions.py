@@ -37,18 +37,71 @@ class FileResource(ApiModel):
     path: str | None = Field(default=None, max_length=512)
 
 
+class MemoryStoreResource(ApiModel):
+    """A persistent Store mounted once, when the Session Sandbox is created."""
+
+    type: Literal["memory_store"] = "memory_store"
+    memory_store_id: str
+    access: Literal["read_write", "read_only"] = "read_write"
+    instructions: str | None = Field(default=None, max_length=4096)
+
+
 class SessionCreateRequest(ApiModel):
     agent_id: str
     environment_id: str
     agent_version: int | None = None
+    model: str | dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional model for this Session, pinned for its lifetime. When "
+            "omitted or null the pinned Agent version's own model applies, "
+            "resolved at run time — so a Session that expresses no preference "
+            "keeps following the Agent instead of freezing a copy of it. A bare "
+            "string is shorthand for `{\"id\": ...}`, as on an Agent."
+        ),
+        examples=["claude-opus-5"],
+    )
+    account_id: str | None = Field(
+        default=None,
+        description=(
+            "Which Account pays for this Session. Omit to use the "
+            "Organization's default. Pinned when the Session opens, so its "
+            "spend stays on one Account for the whole conversation."
+        ),
+    )
     title: str | None = Field(default=None, max_length=255)
     # Attached once, when the container is built. A session cannot be given
     # more later — the sandbox is created with the session and never rebuilt.
-    resources: list[FileResource] = Field(default_factory=list, max_length=100)
+    resources: list[FileResource | MemoryStoreResource] = Field(
+        default_factory=list,
+        max_length=100,
+    )
 
 
 class SessionUpdateRequest(ApiModel):
     title: str | None = Field(default=None, max_length=255)
+
+
+class SessionFileResourceResponse(ApiModel):
+    id: str
+    type: Literal["file"] = "file"
+    file_id: str
+    mount_path: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionMemoryStoreResourceResponse(ApiModel):
+    id: str
+    type: Literal["memory_store"] = "memory_store"
+    memory_store_id: str
+    access: Literal["read_write", "read_only"]
+    instructions: str | None = None
+    mount_path: str
+    name: str
+    description: str = ""
+    created_at: datetime
+    updated_at: datetime
 
 
 class SessionResponse(ApiModel):
@@ -57,10 +110,24 @@ class SessionResponse(ApiModel):
     agent_id: str
     agent_version: int
     environment_id: str
+    model: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The model pinned to this Session, or null when it follows the "
+            "Agent version's."
+        ),
+    )
+    # Which Account this Session is billed to. Read back rather than assumed:
+    # omitting it on create resolves the Organization's default, and this says
+    # which one that turned out to be.
+    account_id: str | None = None
     title: str | None = None
     status: str
     stop_reason: dict[str, Any] | None = None
     last_event_seq: int
+    resources: list[
+        SessionFileResourceResponse | SessionMemoryStoreResourceResponse
+    ] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None

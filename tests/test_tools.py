@@ -111,20 +111,21 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
     """Replace the vision call, and keep what it was handed."""
     calls: list[dict[str, Any]] = []
 
-    async def _describe(data: bytes, mime_type: str, query: str) -> str:
-        calls.append({"data": data, "mime_type": mime_type, "query": query})
+    async def _describe(
+        data: bytes, mime_type: str, query: str, *, api_key: str
+    ) -> str:
+        calls.append(
+            {"data": data, "mime_type": mime_type, "query": query, "api_key": api_key}
+        )
         return "A cat, wearing a hat."
 
     monkeypatch.setattr(tools_module, "describe_image", _describe)
-    monkeypatch.setattr(
-        tools_module, "get_settings", lambda: type("S", (), {"gemini_api_key": "key"})()
-    )
     return calls
 
 
 async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
     sandbox = FakeSandbox({"/home/user/uploads/cat.png": PNG})
-    tool = read_image_tool(sandbox)
+    tool = read_image_tool(sandbox, api_key="sk-or-v1-test")
 
     answer = await tool.ainvoke({"path": "uploads/cat.png", "query": "What is in it?"})
 
@@ -134,7 +135,7 @@ async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
 
 async def test_an_absolute_path_is_used_as_given(looked_at):
     sandbox = FakeSandbox({"/tmp/elsewhere/cat.png": PNG})
-    tool = read_image_tool(sandbox)
+    tool = read_image_tool(sandbox, api_key="sk-or-v1-test")
 
     await tool.ainvoke({"path": "/tmp/elsewhere/cat.png", "query": "What is in it?"})
 
@@ -142,16 +143,24 @@ async def test_an_absolute_path_is_used_as_given(looked_at):
 
 
 async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
-    tool = read_image_tool(FakeSandbox({"/home/user/a.jpeg": PNG}))
+    tool = read_image_tool(FakeSandbox({"/home/user/a.jpeg": PNG}), api_key="sk-or-v1-test")
 
     await tool.ainvoke({"path": "a.jpeg", "query": "Is the logo legible?"})
 
-    assert looked_at == [{"data": PNG, "mime_type": "image/jpeg", "query": "Is the logo legible?"}]
+    assert looked_at == [
+        {
+            "data": PNG,
+            "mime_type": "image/jpeg",
+            "query": "Is the logo legible?",
+            # Billed to the turn's Account, not to anything the tool picked.
+            "api_key": "sk-or-v1-test",
+        }
+    ]
 
 
 async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
     """A tool that raises ends the turn; a sentence lets the model try again."""
-    tool = read_image_tool(FakeSandbox({}))
+    tool = read_image_tool(FakeSandbox({}), api_key="sk-or-v1-test")
 
     answer = await tool.ainvoke({"path": "gone.png", "query": "What is in it?"})
 
@@ -162,7 +171,7 @@ async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
 async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_at):
     """Nothing is transferred to find out it was a video."""
     sandbox = FakeSandbox({"/home/user/clip.mp4": PNG})
-    tool = read_image_tool(sandbox)
+    tool = read_image_tool(sandbox, api_key="sk-or-v1-test")
 
     answer = await tool.ainvoke({"path": "clip.mp4", "query": "What is in it?"})
 
@@ -172,7 +181,7 @@ async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_a
 
 
 async def test_an_oversized_image_says_so(looked_at):
-    tool = read_image_tool(FakeSandbox({"/home/user/huge.png": b"x" * (READ_IMAGE_MAX_BYTES + 1)}))
+    tool = read_image_tool(FakeSandbox({"/home/user/huge.png": b"x" * (READ_IMAGE_MAX_BYTES + 1)}), api_key="sk-or-v1-test")
 
     answer = await tool.ainvoke({"path": "huge.png", "query": "What is in it?"})
 
@@ -181,27 +190,28 @@ async def test_an_oversized_image_says_so(looked_at):
 
 
 async def test_a_vision_failure_comes_back_as_text(monkeypatch):
-    async def _explode(data: bytes, mime_type: str, query: str) -> str:
+    async def _explode(data: bytes, mime_type: str, query: str, *, api_key: str) -> str:
         raise RuntimeError("gemini said no")
 
     monkeypatch.setattr(tools_module, "describe_image", _explode)
-    monkeypatch.setattr(
-        tools_module, "get_settings", lambda: type("S", (), {"gemini_api_key": "key"})()
-    )
-    tool = read_image_tool(FakeSandbox({"/home/user/a.png": PNG}))
+    tool = read_image_tool(FakeSandbox({"/home/user/a.png": PNG}), api_key="sk-or-v1-test")
 
     answer = await tool.ainvoke({"path": "a.png", "query": "What is in it?"})
 
     assert "gemini said no" in answer
 
 
-async def test_no_vision_key_is_reported_rather_than_guessed_at(monkeypatch):
-    monkeypatch.setattr(
-        tools_module, "get_settings", lambda: type("S", (), {"gemini_api_key": ""})()
-    )
+async def test_no_vision_key_is_reported_rather_than_guessed_at():
+    """Nothing to spend through means nothing to look with.
+
+    Said as a sentence the model can act on, rather than raised — a tool that
+    raises here ends the turn over a picture.
+    """
     sandbox = FakeSandbox({"/home/user/a.png": PNG})
 
-    answer = await read_image_tool(sandbox).ainvoke({"path": "a.png", "query": "What is in it?"})
+    answer = await read_image_tool(sandbox, api_key="").ainvoke(
+        {"path": "a.png", "query": "What is in it?"}
+    )
 
     assert "no vision model is configured" in answer
     assert sandbox.asked == []

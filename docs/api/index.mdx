@@ -1,38 +1,36 @@
 ---
 title: API Reference
-description: Explore and call every Votrix Managed Agents endpoint.
+description: Current HTTP API reference generated from the active FastAPI application.
 ---
 
-The Votrix Managed Agents API is an Organization-scoped REST API for defining agents,
-creating durable sessions, managing execution environments, and operating the
-resources that long-running agents need.
+<Callout title="Development authentication boundary" type="warn">
 
-The public-beta document contains API keys, Agents, Environments, Sessions,
-Files, Skills, Vaults/native model Credentials, Model Providers, and the
-capability manifest. Experimental repository routes such as Memory Stores,
-Deployments, User Profiles, Session Threads, presigned-upload completion, and
-webhook delivery are intentionally excluded from the GA schema.
+Organization-scoped routes require `x-organization-id`. The active rewrite
+currently trusts that value and accepts, but does not validate, an optional
+`x-api-key`. Do not expose this service directly to untrusted clients until
+authentication and authorization are implemented.
 
-<Callout title="Authentication">
-  Every `/v1` request requires the current `votrix-managed-agents-beta` header plus
-  either an `x-api-key` header or the same key as a Bearer token. Authentication
-  values entered in the playground stay in your browser.
 </Callout>
 
-Every response echoes or generates `request-id` and `x-request-id`. Standard
-API error envelopes expose a stable `error.code` and include the request ID;
-quota denials also include `X-RateLimit-*` or `X-Quota-*` reset metadata.
+The endpoint pages below are generated from the same `app.server.create_app`
+application used by the service. The committed schema is available at
+`/openapi/vma.json`; a running VMA instance exposes the same route and model
+surface at `/openapi.json`.
 
-## Base URL
+To refresh the checked-in reference after changing a route or model:
 
-```text
-https://api.vma.votrixai.com
+```bash
+cd website
+npm run openapi:sync
 ```
 
-Choose an endpoint from the sidebar to inspect its request schema, copy a code
-sample, or send a real HTTP request from the interactive playground.
+Memory Store, Memory, and immutable Memory Version endpoints are grouped under
+**Memory Stores**. See [Memory Stores](../memory-stores.md) for lifecycle and
+consistency semantics and [Memory Stores on E2B Volumes](../memory-volumes.md)
+for Sandbox mounting and runtime writeback.
 
-## OpenAPI document
+For local interactive requests, start the service with:
 
-The reference is generated at build time from the same FastAPI application that
-serves production traffic. You can also [download the complete OpenAPI schema](/openapi/vma.json).
+```bash
+uv run uvicorn app.main:app --reload
+```

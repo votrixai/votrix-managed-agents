@@ -1,4 +1,5 @@
 from functools import lru_cache
+import re
 from typing import Literal
 
 from pydantic import model_validator
@@ -17,14 +18,49 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
+    app_env: str = "local"
+    vma_public_build_id: str = "dev"
+    vma_git_commit_sha: str = ""
 
-    # Platform keys, one per provider. Callers name a model; they never supply
-    # credentials, and no key is shared between providers.
-    anthropic_api_key: str = ""
-    gemini_api_key: str = ""
-    deepseek_api_key: str = ""
-    openai_api_key: str = ""
+    # Comma-separated browser origins allowed to call the API from a page.
+    #
+    # This is not an authorization boundary. CORS only governs what a browser
+    # will let one site's JavaScript read from another; every request still has
+    # to present a VMA API key, and a server-side caller is unaffected by this
+    # list entirely. Empty means no browser origin is allowed, which is the
+    # right default for an API whose credential belongs on a server.
+    vma_cors_origins: str = ""
+
+    database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
+    database_schema: str = ""
+    # LangGraph uses a dedicated, session-affine psycopg connection outside
+    # SQLAlchemy's transaction pool. The runtime also sets search_path
+    # explicitly after connecting because Supabase's pooler drops the startup
+    # `options=-csearch_path=...` parameter.
+    vma_checkpoint_database_url: str = ""
+    # A session-mode DSN (`:5432`) for the `LISTEN` that wakes open streams. A
+    # transaction pooler cannot carry notifications — it connects, and then
+    # silently delivers nothing, which is why the listener self-tests before it
+    # reports itself ready. Empty disables the wake-up entirely and every stream
+    # polls instead, which is what local runs and the worker service both do.
+    vma_listen_database_url: str = ""
+
+    # Mints the per-Account keys, and the only provider credential this
+    # deployment holds — every key that can actually be spent belongs to an
+    # Account and is stored encrypted. The provider refuses inference on a
+    # provisioning key, so a leak of this one cannot be spent, only used to
+    # enumerate and revoke.
+    openrouter_management_key: str = ""
+    # Which provider workspace new keys are created in. Empty means the
+    # management key's own default.
+    openrouter_workspace_id: str = ""
+
+    # Base64url AES-256 key wrapping provider secrets at rest. Without it no
+    # Account credential can be written or read, which is why provisioning
+    # fails loudly rather than storing a key in the clear.
+    vma_encryption_key: str = ""
+
+    # Server-side credential used by the web_search and web_fetch tools.
     firecrawl_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
@@ -70,6 +106,13 @@ class Settings(BaseSettings):
     # is work that has to happen either way.
     vma_db_pool_pre_ping: bool = True
 
+    # LangGraph's checkpoint traffic, pooled the same way and for the same
+    # reasons. Sized small on purpose: a turn borrows a connection per
+    # checkpoint call and gives it straight back, so this caps concurrent
+    # checkpoint statements, not concurrent turns.
+    vma_checkpoint_pool_max_size: int = 3
+    vma_checkpoint_pool_max_lifetime_seconds: float = 300.0
+
     e2b_api_key: str = ""
     # How long a container may sit idle before E2B pauses it. Long enough to
     # cover a model thinking between tool calls; short enough that an abandoned
@@ -98,6 +141,16 @@ class Settings(BaseSettings):
     tasks_service_account: str = ""
     worker_url: str = ""
 
+    @property
+    def cors_origins(self) -> tuple[str, ...]:
+        """The configured origins, in order, without blanks or duplicates."""
+        seen: dict[str, None] = {}
+        for origin in self.vma_cors_origins.split(","):
+            trimmed = origin.strip()
+            if trimmed:
+                seen.setdefault(trimmed, None)
+        return tuple(seen)
+
     @model_validator(mode="after")
     def _cloud_dispatch_is_fully_configured(self) -> "Settings":
         """Refuse to start half-configured.
@@ -105,6 +158,10 @@ class Settings(BaseSettings):
         A missing queue name would otherwise surface as a message that was
         accepted, committed, and then never run by anyone.
         """
+        if self.database_schema and not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", self.database_schema
+        ):
+            raise ValueError("DATABASE_SCHEMA must be a valid PostgreSQL identifier")
         if self.turn_dispatch != "cloud":
             return self
         missing = [

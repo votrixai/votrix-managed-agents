@@ -7,6 +7,9 @@ asked about, and what a session is allowed to do while it is still going.
 from __future__ import annotations
 
 import pytest
+
+from app.db.queries import organizations
+from app.db.queries import vma_api_keys as api_keys_q
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -22,11 +25,6 @@ async def client(db, builds):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         yield http
     app.dependency_overrides.clear()
-
-
-@pytest_asyncio.fixture
-def headers(org):
-    return {"x-organization-id": org, "x-api-key": "anything"}
 
 
 async def create(client, headers, **body):
@@ -177,24 +175,32 @@ async def test_changing_packages_rebuilds(client, headers, builds):
 # --- names, archiving, deleting ----------------------------------------------
 
 
-async def test_names_are_unique_within_an_organization(client, headers):
+async def test_one_name_may_cover_a_whole_history_of_environments(client, headers):
+    """An environment is never edited, so moving a recipe forward means
+    registering a new one beside the old — under the same label, because it is
+    the same logical environment. The first must survive untouched: sessions
+    are still running on it."""
+
+    first = await create(client, headers, name="shared")
+    second = await create(client, headers, name="shared")
+
+    assert second.status_code == 201
+    assert second.json()["id"] != first.json()["id"]
+
+    still_there = await client.get(
+        f"/v1/environments/{first.json()['id']}", headers=headers
+    )
+    assert still_there.status_code == 200
+    assert still_there.json()["name"] == "shared"
+
+
+async def test_two_organizations_may_use_the_same_name(client, headers, db, other_tenant):
+    other_id, other_headers = other_tenant
     await create(client, headers, name="shared")
-
-    response = await create(client, headers, name="shared")
-
-    assert response.status_code == 409
-
-
-async def test_two_organizations_may_use_the_same_name(client, headers, db):
-    from app.db.queries import accounts
-
-    await create(client, headers, name="shared")
-    other = await accounts.create_organization(db, slug="other", name="Other")
-    await db.commit()
 
     response = await create(
         client,
-        {"x-organization-id": other.id, "x-api-key": "anything"},
+        other_headers,
         name="shared",
     )
 

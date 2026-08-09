@@ -14,13 +14,17 @@ that paused while the model was thinking heals itself instead of failing.
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
+import re
 import shlex
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Any
 
+import structlog
 from deepagents.backends.protocol import (
     EditResult,
     ExecuteResponse,
@@ -31,13 +35,13 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
-from e2b import AsyncSandbox, AsyncTemplate
+from e2b import AsyncSandbox, AsyncTemplate, CommandExitException
 from httpcore import LocalProtocolError
 from langchain_e2b import AsyncE2BSandbox
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import Environment, File, Session
+from app.db.models import Environment, File, Session, Skill
 from app.db.models.environments import BUILDING, FAILED, READY
 from app.db.queries import environments as environments_q
 from app.db.queries import files as files_q
@@ -45,6 +49,7 @@ from app.db.queries import sessions as sessions_q
 from app.db.queries import skills as skills_q
 from app.utils import storage
 from app.utils.timing import timed
+from app.utils.volume import SandboxVolumeMount
 
 # The base image, and the two facts that come with it: where work happens and
 # which unprivileged user the agent runs as. Swapping the image means revisiting
@@ -66,9 +71,39 @@ UPLOADS_DIR = f"{WORKDIR}/uploads"
 OUTPUTS_DIR = f"{WORKDIR}/outputs"
 WEB_CACHE_DIR = f"{WORKDIR}/.web_cache" # store long,intermediate results returned by web_fetch
 
+# How long a connection just proven live is taken at its word before being
+# checked again. Long enough to cover a burst — copying one file in is two
+# calls back to back — and short enough that `set_timeout`, which is both the
+# liveness check and what stops an active container pausing, still runs often
+# against anything doing real work.
+_CONNECTION_FRESH_SECONDS = 15.0
+
+# Compatibility layout consumed by the shared CMA/VMA Agent prompts and
+# Skills.  VMA keeps its canonical E2B paths under /home/user; these aliases
+# let one checked-in Agent contract address both providers without copying or
+# rewriting skill content.
+COMPAT_WORKDIR = "/workspace"
+COMPAT_SKILLS_DIR = "/mnt/skills"
+COMPAT_UPLOADS_DIR = "/mnt/session/uploads"
+COMPAT_OUTPUTS_DIR = "/mnt/session/outputs"
+
 # Order matters only in that apt comes first, so a later manager can rely on the
 # toolchain it brings in.
 PACKAGE_MANAGERS = ("apt", "cargo", "gem", "go", "npm", "pip")
+
+# Skill bytes travel straight from object storage to the sandbox.  Parallelism
+# therefore belongs inside one sandbox command, not in concurrent calls through
+# one mutable E2B client.  Agent versions currently allow at most twenty Skills,
+# so ten means one wave for Website Builder and at most two for any Agent.
+SKILL_DOWNLOAD_CONCURRENCY = 10
+SKILL_DOWNLOAD_ATTEMPTS = 3
+SKILL_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 5
+SKILL_DOWNLOAD_TIMEOUT_SECONDS = 30
+FAILED_SANDBOX_CLEANUP_TIMEOUT_SECONDS = 10
+
+_SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,6 +119,195 @@ class OutputFile:
     path: str  # relative to OUTPUTS_DIR
     size_bytes: int
     sha256: str
+
+
+def _skill_install_command(
+    skills: list[tuple[Skill, str]],
+    *,
+    skills_dir: str = SKILLS_DIR,
+    workdir: str = WORKDIR,
+) -> str:
+    """Build one fail-closed command for a whole Skill set.
+
+    The command is intentionally a single E2B RPC.  Its bounded batches perform
+    independent object downloads, while extraction remains serial and lands in
+    a private staging tree.  No signed URL is printed on any failure path.
+    """
+    jobs: list[str] = []
+    extracts: list[str] = []
+    for index, (skill, url) in enumerate(skills):
+        args = " ".join(
+            shlex.quote(str(value))
+            for value in (
+                index,
+                skill.name,
+                skill.size_bytes,
+                skill.sha256 or "",
+                url,
+            )
+        )
+        jobs.append(
+            f"download_one {args} &\n"
+            "pids+=(\"$!\")\n"
+            f"if (( ${{#pids[@]}} == {SKILL_DOWNLOAD_CONCURRENCY} )); then\n"
+            "  if ! wait_batch \"${pids[@]}\"; then download_failed=1; fi\n"
+            "  pids=()\n"
+            "fi"
+        )
+        extracts.append(
+            "if ! extract_one "
+            f"{shlex.quote(str(index))} {shlex.quote(skill.name)}; then exit 33; fi"
+        )
+
+    return f"""set -euo pipefail
+skills_dir={shlex.quote(skills_dir)}
+work="$(mktemp -d {shlex.quote(f'{workdir}/.skills-install.XXXXXX')})"
+archives="$work/archives"
+expanded="$work/expanded"
+mkdir -p "$archives" "$expanded" "$work/headers" "$work/retries"
+trap 'rm -rf "$work"' EXIT
+
+download_one() {{
+  local index="$1" name="$2" expected_size="$3" expected_sha="$4" url="$5"
+  local archive part
+  archive="$archives/$index.zip"
+  part="$archive.part"
+  local headers="$work/headers/$index" attempt=1 status=0 http_code=000
+  local actual_size actual_sha retry_after delay
+
+  while (( attempt <= {SKILL_DOWNLOAD_ATTEMPTS} )); do
+    rm -f "$part" "$headers"
+    if http_code="$(curl --silent --show-error --location \
+      --connect-timeout {SKILL_DOWNLOAD_CONNECT_TIMEOUT_SECONDS} \
+      --max-time {SKILL_DOWNLOAD_TIMEOUT_SECONDS} \
+      --output "$part" --dump-header "$headers" \
+      --write-out '%{{http_code}}' "$url" 2>/dev/null)"; then
+      status=0
+    else
+      status=$?
+    fi
+    http_code="${{http_code:-000}}"
+
+    if (( status == 0 )) && [[ "$http_code" == 2* ]]; then
+      actual_size="$(wc -c < "$part" | tr -d '[:space:]')"
+      if (( expected_size > 0 )) && [[ "$actual_size" != "$expected_size" ]]; then
+        status=90
+      elif [[ -n "$expected_sha" ]]; then
+        if ! actual_sha="$(sha256sum "$part" | awk '{{print $1}}')"; then
+          echo "Skill $name could not be checksummed" >&2
+          return 1
+        fi
+        if [[ "$actual_sha" != "$expected_sha" ]]; then
+          status=91
+        fi
+      fi
+      if (( status == 0 )); then
+        if ! mv "$part" "$archive"; then
+          echo "Skill $name archive could not be staged" >&2
+          return 1
+        fi
+        return 0
+      fi
+    elif (( status == 0 )); then
+      case "$http_code" in
+        408|425|429|5??) status=92 ;;
+        *)
+          echo "Skill $name download failed permanently (HTTP $http_code)" >&2
+          return 1
+          ;;
+      esac
+    fi
+
+    if (( attempt == {SKILL_DOWNLOAD_ATTEMPTS} )); then
+      echo "Skill $name download failed after $attempt attempts (HTTP $http_code, code $status)" >&2
+      return 1
+    fi
+
+    touch "$work/retries/$index.$attempt"
+    retry_after="$(awk 'BEGIN {{IGNORECASE=1}} /^Retry-After:/ {{gsub("\\r", "", $2); value=$2}} END {{print value}}' "$headers" 2>/dev/null || true)"
+    if [[ "$retry_after" =~ ^[0-9]+$ ]]; then
+      if (( retry_after > 10 )); then delay=10; else delay="$retry_after"; fi
+    else
+      delay="$attempt.$((RANDOM % 1000))"
+    fi
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+  return 1
+}}
+
+wait_batch() {{
+  local failed=0 pid
+  for pid in "$@"; do
+    if ! wait "$pid"; then failed=1; fi
+  done
+  return "$failed"
+}}
+
+extract_one() {{
+  local index="$1" name="$2" archive="$archives/$1.zip"
+  if ! unzip -tq "$archive" >/dev/null 2>&1; then
+    echo "Skill $name archive is invalid" >&2
+    return 1
+  fi
+  if ! unzip -oq "$archive" -d "$expanded"; then
+    echo "Skill $name could not be extracted" >&2
+    return 1
+  fi
+  if [[ ! -f "$expanded/$name/SKILL.md" ]]; then
+    echo "Skill $name has no matching SKILL.md" >&2
+    return 1
+  fi
+  chmod -R a+rX "$expanded/$name"
+}}
+
+pids=()
+download_failed=0
+{chr(10).join(jobs)}
+if (( ${{#pids[@]}} > 0 )); then
+  if ! wait_batch "${{pids[@]}}"; then download_failed=1; fi
+fi
+if (( download_failed != 0 )); then exit 31; fi
+
+{chr(10).join(extracts)}
+
+# prepare_directories created this path and nothing can use the Session until
+# provisioning returns.  Replacing that empty directory from the same parent
+# publishes the complete set together; any earlier failure only removes work.
+if ! rmdir "$skills_dir" || ! mv "$expanded" "$skills_dir"; then
+  echo "The complete Skill set could not be published" >&2
+  exit 32
+fi
+retry_count="$(find "$work/retries" -type f | wc -l | tr -d '[:space:]')"
+echo "skills_installed={len(skills)} retries=$retry_count"
+"""
+
+
+async def _resolve_skills(
+    db: AsyncSession,
+    *,
+    skill_ids: list[str],
+    organization_id: str,
+) -> list[Skill]:
+    requested_ids = list(dict.fromkeys(skill_ids))
+    skills = await skills_q.get_skills_by_ids(
+        db,
+        skill_ids=requested_ids,
+        organization_id=organization_id,
+    )
+    found = {skill.id for skill in skills}
+    missing = [skill_id for skill_id in requested_ids if skill_id not in found]
+    if missing:
+        raise ValueError(f"Skill {missing[0]} does not exist")
+
+    names: set[str] = set()
+    for skill in skills:
+        if _SKILL_NAME_PATTERN.fullmatch(skill.name) is None or len(skill.name) > 64:
+            raise ValueError(f"Skill {skill.id} has an invalid name")
+        if skill.name in names:
+            raise ValueError(f"More than one Skill is named {skill.name}")
+        names.add(skill.name)
+    return skills
 
 
 class Image:
@@ -236,6 +460,9 @@ class Sandbox:
         self._session_id = session_id
         self._organization_id = organization_id
         self._native = native
+        # When this handle was last proven live. None for a handle handed in
+        # rather than opened here — it gets checked once like any other.
+        self._verified_at: float | None = None
 
     @property
     def sandbox_id(self) -> str:
@@ -265,10 +492,13 @@ class Sandbox:
         image: Image,
         skill_ids: list[str],
         files: list[tuple[str, str]],
+        memory_mounts: list[SandboxVolumeMount] | None = None,
     ) -> Sandbox:
         """Start the container a session will live in, and fill it.
 
         `files` is `(file_id, path)` pairs, each path relative to `uploads/`.
+        Memory Stores are different: E2B mounts their provider Volumes while
+        creating the container, before anything inside it can run.
         Whatever the environment declared is already in the image, so nothing
         is installed here — which is what keeps this to about a second.
 
@@ -277,10 +507,24 @@ class Sandbox:
         it. Nothing ever creates a second one: if the container is gone by the
         time a turn runs, the session is finished, not repaired.
         """
+        skills = (
+            await _resolve_skills(
+                db,
+                skill_ids=skill_ids,
+                organization_id=session.organization_id,
+            )
+            if skill_ids
+            else []
+        )
         native = await AsyncSandbox.create(
             template=image.image_id,
             timeout=get_settings().sandbox_timeout_seconds,
             api_key=get_settings().e2b_api_key,
+            volume_mounts={
+                mount.mount_path: mount.volume_name
+                for mount in (memory_mounts or [])
+            }
+            or None,
             # An idle container pauses instead of dying, keeping its filesystem
             # and nothing else. Commands run one at a time here, so there is no
             # process worth the price of a memory snapshot. Waking it is
@@ -288,25 +532,45 @@ class Sandbox:
             lifecycle={"on_timeout": {"action": "pause", "keep_memory": False}},
         )
         sandbox = cls(native.sandbox_id, session.id, session.organization_id, native=native)
-        await sandbox.prepare_directories()
-        if skill_ids:
-            await sandbox.install_skills(db, skill_ids)
-        for file_id, path in files:
-            await sandbox.upload_file(db, f"{UPLOADS_DIR}/{path}", file_id)
+        try:
+            await sandbox.prepare_directories()
+            if skills:
+                await sandbox._install_skills(skills)
+            for file_id, path in files:
+                await sandbox.upload_file(db, f"{UPLOADS_DIR}/{path}", file_id)
 
-        row = await sessions_q.create_sandbox(
-            db,
-            session,
-            provider="e2b",
-            external_sandbox_id=native.sandbox_id,
-            # Recorded for the janitor, not consulted before a turn: this is
-            # when E2B would pause an idle container, which is not when the
-            # container dies.
-            expires_at=datetime.now(timezone.utc)
-            + timedelta(seconds=get_settings().sandbox_timeout_seconds),
-        )
-        await sessions_q.update_sandbox_state(db, row, state="running")
-        return sandbox
+            row = await sessions_q.create_sandbox(
+                db,
+                session,
+                provider="e2b",
+                external_sandbox_id=native.sandbox_id,
+                # Recorded for the janitor, not consulted before a turn: this is
+                # when E2B would pause an idle container, which is not when the
+                # container dies.
+                expires_at=datetime.now(timezone.utc)
+                + timedelta(seconds=get_settings().sandbox_timeout_seconds),
+            )
+            await sessions_q.update_sandbox_state(db, row, state="running")
+            return sandbox
+        except BaseException as primary:
+            # Until create_sandbox() commits, the janitor has no row from which
+            # it could discover this external container.  A provisioning
+            # failure therefore has to destroy the native sandbox here.  The
+            # cleanup is bounded and can never hide the error the caller needs.
+            try:
+                await asyncio.wait_for(
+                    native.kill(),
+                    timeout=FAILED_SANDBOX_CLEANUP_TIMEOUT_SECONDS,
+                )
+            except BaseException as cleanup_error:
+                logger.warning(
+                    "failed_sandbox_cleanup",
+                    session_id=session.id,
+                    sandbox_id=native.sandbox_id,
+                    primary_error=type(primary).__name__,
+                    cleanup_error=type(cleanup_error).__name__,
+                )
+            raise
 
     @classmethod
     def from_id(cls, sandbox_id: str, session_id: str, organization_id: str) -> Sandbox:
@@ -331,9 +595,25 @@ class Sandbox:
 
         Both branches are timed and told apart by `reused`, because they are
         not the same expense and the cheap-looking one is not free: keeping an
-        existing connection still costs an `is_running` and a `set_timeout`,
-        two round trips to E2B, and this runs before *every* backend call.
+        existing connection still costs a `set_timeout`, a round trip to E2B,
+        and this runs before *every* backend call.
+
+        Which is why a connection just proven live is taken at its word for a
+        few seconds. Calls arrive in bursts — copying one file in is two of
+        them back to back, and mounting three attachments was six — and asking
+        E2B six times in as many seconds whether a container is still there
+        buys nothing the first answer did not. A handle that goes stale inside
+        the window is still handled: `run` drops it and reconnects.
+
+        The window also bounds how long `set_timeout` can go uncalled, which is
+        what keeps a busy container from pausing underneath a turn.
         """
+        if (
+            self._native is not None
+            and self._verified_at is not None
+            and time.monotonic() - self._verified_at < _CONNECTION_FRESH_SECONDS
+        ):
+            return
         async with timed(
             "sandbox_connected", session_id=self._session_id, sandbox_id=self._sandbox_id
         ) as span:
@@ -348,6 +628,7 @@ class Sandbox:
                         get_settings().sandbox_timeout_seconds
                     )
                     span["reused"] = True
+                    self._verified_at = time.monotonic()
                     return
                 except Exception as exc:
                     # Not swallowed: the reconnect below either succeeds or
@@ -361,6 +642,7 @@ class Sandbox:
                 timeout=get_settings().sandbox_timeout_seconds,
                 api_key=get_settings().e2b_api_key,
             )
+            self._verified_at = time.monotonic()
 
     async def run(self, command: str, **kwargs: Any) -> ExecuteResponse:
         """Run a command in the container.
@@ -397,7 +679,10 @@ class Sandbox:
                         raise
                     # Drop the handle so `ensure_connected` builds a fresh
                     # client rather than reaching into the same dead pool.
+                    # Clearing the freshness stamp with it is what stops the
+                    # retry from being waved through as recently verified.
                     self._native = None
+                    self._verified_at = None
                     span["retried"] = "stale_connection"
                     continue
                 span["exit_code"] = getattr(result, "exit_code", None)
@@ -416,7 +701,7 @@ class Sandbox:
     # ---- layout -----------------------------------------------------------
 
     async def prepare_directories(self) -> None:
-        """Lay out the three working directories, empty or not.
+        """Lay out the canonical directories and shared-contract aliases.
 
         The system prompt names all of them, so all of them have to exist — an
         agent told to write to `outputs/` should not have to create it, and an
@@ -424,15 +709,32 @@ class Sandbox:
         missing one.
 
         `outputs` belongs to the agent; the other two are filled by us and left
-        read-only, so they stay owned by root.
+        read-only, so they stay owned by root.  The aliases are created as root
+        and point only at these canonical paths. `ln -T` deliberately fails if
+        a base image ever puts a real directory at an alias path; silently
+        merging two layouts would make resource isolation ambiguous.
         """
-        await self.run(
+        result = await self.run(
             f"mkdir -p {shlex.quote(SKILLS_DIR)} {shlex.quote(UPLOADS_DIR)} "
             f"{shlex.quote(OUTPUTS_DIR)} "
             f"&& chmod 755 {shlex.quote(SKILLS_DIR)} {shlex.quote(UPLOADS_DIR)} "
-            f"&& chown {GUEST_USER}:{GUEST_USER} {shlex.quote(OUTPUTS_DIR)}",
+            f"&& chown {GUEST_USER}:{GUEST_USER} {shlex.quote(OUTPUTS_DIR)} "
+            "&& mkdir -p /mnt/session "
+            f"&& ln -sfnT {shlex.quote(WORKDIR)} {shlex.quote(COMPAT_WORKDIR)} "
+            f"&& ln -sfnT {shlex.quote(SKILLS_DIR)} {shlex.quote(COMPAT_SKILLS_DIR)} "
+            f"&& ln -sfnT {shlex.quote(UPLOADS_DIR)} {shlex.quote(COMPAT_UPLOADS_DIR)} "
+            f"&& ln -sfnT {shlex.quote(OUTPUTS_DIR)} {shlex.quote(COMPAT_OUTPUTS_DIR)}",
             user="root",
         )
+        exit_code = getattr(result, "exit_code", 0)
+        if exit_code != 0:
+            # E2B returns ordinary command failures instead of raising.  A
+            # half-created layout is unusable because prompts and shared
+            # skills address the compatibility paths directly.
+            raise RuntimeError(
+                "The sandbox compatibility layout could not be prepared "
+                f"(exit code {exit_code})"
+            )
 
     # ---- files ------------------------------------------------------------
     # Bytes move between the container and the bucket directly, in both
@@ -456,12 +758,20 @@ class Sandbox:
             file.storage_key, expires_in=get_settings().transfer_url_ttl_seconds
         )
         parent = str(PurePosixPath(path).parent)
-        await self.run(
+        result = await self.run(
             f"mkdir -p {shlex.quote(parent)} "
             f"&& curl -fsSL -o {shlex.quote(path)} {shlex.quote(url)} "
             f"&& chmod 444 {shlex.quote(path)}",
             user="root",
         )
+        exit_code = getattr(result, "exit_code", 0)
+        if exit_code != 0:
+            # E2B reports ordinary command failures in the result rather than
+            # raising them. Treating a failed curl as success would let the API
+            # commit a Session resource whose bytes never reached the sandbox.
+            raise RuntimeError(
+                f"The sandbox could not fetch File {file_id} (exit code {exit_code})"
+            )
 
     async def download_file(
         self,
@@ -569,8 +879,14 @@ class Sandbox:
         await self.run(f"mkdir -p {shlex.quote(parent)}")
         await self.ensure_connected()
         await self._native.files.write(path, data, user=GUEST_USER)
-    
-    async def list_files(self, path: str) -> list[OutputFile]:
+
+    async def list_files(
+        self,
+        path: str,
+        *,
+        max_files: int | None = None,
+        include_oversized: bool = False,
+    ) -> list[OutputFile]:
         """Everything under `path`, with a hash, as the container sees it.
 
         The hash is what makes collection repeatable: it says whether a file is
@@ -584,9 +900,10 @@ class Sandbox:
         # the hashes and then a `stat` per file, which is one round trip per
         # deliverable on top of the one that found them. Over this network a
         # round trip is most of a second.
+        file_limit = max_files or get_settings().max_output_files
         result = await self.run(
             f"cd {shlex.quote(path)} 2>/dev/null "
-            f"&& find . -type f 2>/dev/null | head -n {get_settings().max_output_files} "
+            f"&& find . -type f 2>/dev/null | head -n {file_limit} "
             "| while IFS= read -r f; do "
             'printf "%s " "$(stat -c %s "$f" 2>/dev/null || echo -1)"; '
             'sha256sum "$f" 2>/dev/null; done'
@@ -602,7 +919,9 @@ class Sandbox:
             if not digest or not relative or not raw_size.lstrip("-").isdigit():
                 continue
             size = int(raw_size)
-            if size < 0 or size > get_settings().max_output_bytes:
+            if size < 0:
+                continue
+            if not include_oversized and size > get_settings().max_output_bytes:
                 continue
             found.append(OutputFile(path=relative, size_bytes=size, sha256=digest))
         return found
@@ -646,38 +965,62 @@ class Sandbox:
     # ---- skills -----------------------------------------------------------
 
     async def install_skills(self, db: AsyncSession, skill_ids: list[str]) -> None:
-        """Unpack each skill under `skills/`.
+        """Fetch a complete Skill set concurrently and publish it together.
 
         Every stored package already carries its own `<name>/` directory, so
-        this unzips into the root and lets each land beside the others — the
-        layout DeepAgents scans, `<source>/<name>/SKILL.md`. Names are checked
-        against the Agent Skills rules at upload, so one cannot contain a path
-        separator by the time it gets here.
+        serial extraction into one staging root gives DeepAgents the layout it
+        scans, `<source>/<name>/SKILL.md`. Downloads run in bounded batches
+        inside one E2B command: concurrent `self.run()` calls would race
+        on this Sandbox's shared connection and would keep all of the command
+        round trips this change is meant to remove.
         """
-        for skill_id in skill_ids:
-            skill = await skills_q.get_skill(
-                db, skill_id=skill_id, organization_id=self._organization_id
-            )
-            if skill is None:
-                raise ValueError(f"Skill {skill_id} does not exist")
+        skills = await _resolve_skills(
+            db,
+            skill_ids=skill_ids,
+            organization_id=self._organization_id,
+        )
+        await self._install_skills(skills)
 
+    async def _install_skills(self, skills: list[Skill]) -> None:
+        signed: list[tuple[Skill, str]] = []
+        for skill in skills:
             url = await storage.presigned_download_url(
-                skill.storage_key, expires_in=get_settings().transfer_url_ttl_seconds
+                skill.storage_key,
+                expires_in=get_settings().transfer_url_ttl_seconds,
             )
-            archive = f"/tmp/{skill.name}.zip"
-            await self.run(
-                f"curl -fsSL -o {shlex.quote(archive)} {shlex.quote(url)}",
-                user="root",
+            signed.append((skill, url))
+
+        async with timed(
+            "skills_installed",
+            session_id=self._session_id,
+            skill_count=len(skills),
+            download_concurrency=min(SKILL_DOWNLOAD_CONCURRENCY, len(skills)),
+        ) as span:
+            try:
+                result = await self.run(_skill_install_command(signed), user="root")
+            except CommandExitException as exc:
+                span["exit_code"] = exc.exit_code
+                # The SDK exception includes command stderr. Keep provider
+                # details (and any future curl formatting) out of the API.
+                raise RuntimeError(
+                    "The sandbox could not install its complete Skill set "
+                    f"(exit code {exc.exit_code})"
+                ) from None
+            exit_code = getattr(result, "exit_code", None)
+            span["exit_code"] = exit_code
+            summary = re.search(
+                r"\bskills_installed=(\d+) retries=(\d+)\b",
+                getattr(result, "stdout", ""),
             )
-            # unzip runs as root, and archives written by Python's zipfile carry
-            # no Unix mode, so they land as 600 root:root. Without the chmod the
-            # guest user the agent runs as could not read a single file.
-            await self.run(
-                f"unzip -oq {shlex.quote(archive)} -d {shlex.quote(SKILLS_DIR)} "
-                f"&& chmod -R a+rX {shlex.quote(SKILLS_DIR)}/{shlex.quote(skill.name)} "
-                f"&& rm -f {shlex.quote(archive)}",
-                user="root",
-            )
+            if summary is not None:
+                span["download_retries"] = int(summary.group(2))
+            if exit_code != 0:
+                # E2B returns ordinary command failures instead of raising.
+                # Never commit a Session whose sandbox only has some Skills.
+                raise RuntimeError(
+                    "The sandbox could not install its complete Skill set "
+                    f"(exit code {exit_code})"
+                )
 
 
 def _install(builder: Any, manager: str, entries: list[str]) -> Any:

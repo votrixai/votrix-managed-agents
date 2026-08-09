@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base, TimestampMixin
@@ -24,13 +24,14 @@ class Environment(TimestampMixin, Base):
     """
 
     __tablename__ = "environments"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "name", name="uq_environments_organization_name"),
-    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    # The caller's own label for this environment. Nothing downstream reads it.
+    # The caller's own label for this environment. Nothing downstream reads it,
+    # and it is deliberately not unique: an environment is never edited, so
+    # changing a recipe means registering a new one beside the old, which the
+    # sessions already running still point at. Two under one label is the
+    # normal shape of that history — the id is what identifies them apart.
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     # {"packages": {"pip": [...], "apt": [...], ...}}

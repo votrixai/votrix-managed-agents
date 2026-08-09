@@ -41,6 +41,34 @@ async def get_skill(db: AsyncSession, *, skill_id: str, organization_id: str) ->
     return result.scalar_one_or_none()
 
 
+async def get_skills_by_ids(
+    db: AsyncSession,
+    *,
+    skill_ids: list[str],
+    organization_id: str,
+) -> list[Skill]:
+    """Resolve a tenant-scoped set of Skills with one database round trip.
+
+    Agent versions may accidentally repeat a reference.  Installing the same
+    archive twice only creates competing writes to the same directory, so the
+    first occurrence wins while the caller's order is otherwise preserved.
+    Missing ids are intentionally omitted: the provisioning layer compares
+    the result with its requested ids and fails before starting a sandbox.
+    """
+    ordered_ids = list(dict.fromkeys(skill_ids))
+    if not ordered_ids:
+        return []
+
+    result = await db.execute(
+        select(Skill).where(
+            Skill.id.in_(ordered_ids),
+            Skill.organization_id == organization_id,
+        )
+    )
+    by_id = {skill.id: skill for skill in result.scalars().all()}
+    return [by_id[skill_id] for skill_id in ordered_ids if skill_id in by_id]
+
+
 async def get_skill_by_name(db: AsyncSession, *, name: str, organization_id: str) -> Skill | None:
     result = await db.execute(
         select(Skill).where(Skill.name == name, Skill.organization_id == organization_id)

@@ -7,7 +7,7 @@ Internal only. Do not copy this runbook into the public documentation tree.
 - The VMA database is migrated to the latest Alembic revision.
 - VMA has `VMA_SUPABASE_URL` and `VMA_SUPABASE_PUBLISHABLE_KEY` configured.
 - The operator signs in through Supabase with `app_metadata.super_admin = true`.
-- The future owner has signed in at least once so their Supabase user UUID is known.
+- The future member has signed in at least once so their Supabase user UUID is known.
 
 Use the superadmin's Supabase access token in the examples below. Never paste it into tickets, logs, or committed files.
 
@@ -34,24 +34,27 @@ curl -sS -X POST "$VMA_BASE_URL/internal/organizations" \
 
 A `409` means the ID or slug already exists. Inspect the existing record rather than retrying with altered identifiers blindly.
 
-## 2. Grant one or more owners
+## 2. Grant one or more memberships
 
-Repeat this request for every owner. Multiple owners are supported. Only a superadmin can add or remove owners in the first release.
+Repeat this request for every member. The supported roles are `owner`, `admin`,
+and `member`. Only a superadmin can add, change, or remove memberships in the
+first release.
 
 ```bash
-curl -sS -X POST "$VMA_BASE_URL/internal/organizations/org_acme/owners" \
+curl -sS -X POST "$VMA_BASE_URL/internal/organizations/org_acme/members" \
   -H "Authorization: Bearer $VMA_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "<Supabase user UUID>",
-    "email": "owner@acme.example"
+    "email": "owner@acme.example",
+    "role": "owner"
   }'
 ```
 
-Confirm the complete owner list:
+Confirm the complete membership list:
 
 ```bash
-curl -sS "$VMA_BASE_URL/internal/organizations/org_acme/owners" \
+curl -sS "$VMA_BASE_URL/internal/organizations/org_acme/members" \
   -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
 ```
 
@@ -59,7 +62,9 @@ The email is an operator-facing snapshot; authorization is based exclusively on 
 
 ## 3. Create an Organization API key when required
 
-Builder owners use Supabase identity and do not receive this key. Create an API key only for server-to-server workloads or an approved API consumer integration.
+Builder members use Supabase identity and do not receive this key. Create an
+API key only for server-to-server workloads or an approved API consumer
+integration.
 
 ```bash
 curl -sS -X POST "$VMA_BASE_URL/internal/organizations/org_acme/api-keys" \
@@ -71,7 +76,10 @@ curl -sS -X POST "$VMA_BASE_URL/internal/organizations/org_acme/api-keys" \
   }'
 ```
 
-The plaintext `secret` is returned exactly once. Transfer it directly into the approved secret manager and remove it from shell history/output. Do not give `api_keys:manage` or `worker` unless the integration explicitly requires it.
+The plaintext `secret` is returned exactly once. Capture it directly at the
+caller and remove it from shell history/output; VMA stores only its hash and
+does not require a Secret Manager integration. Do not give `api_keys:manage`
+or `worker` unless the integration explicitly requires it.
 
 List keys (only safe metadata is returned):
 
@@ -87,6 +95,10 @@ curl -sS -X POST \
   "$VMA_BASE_URL/internal/organizations/org_acme/api-keys/<key_id>/rotate" \
   -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
 ```
+
+Rotation creates a successor and deliberately leaves the previous key active
+for a no-downtime cutover. Update every consumer, verify the new key, and then
+revoke the previous key explicitly.
 
 Revoke a key that is no longer required:
 
@@ -118,19 +130,21 @@ curl -sS "$VMA_BASE_URL/v1/agents" \
   -H "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
 ```
 
-## 5. Remove owner access
+## 5. Remove member access
 
 ```bash
 curl -sS -X DELETE \
-  "$VMA_BASE_URL/internal/organizations/org_acme/owners/<Supabase user UUID>" \
+  "$VMA_BASE_URL/internal/organizations/org_acme/members/<Supabase user UUID>" \
   -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
 ```
 
-An Organization may have zero owners while being provisioned or suspended. Removing an owner does not revoke separate Organization API keys; review those independently.
+An Organization may have zero owners while being provisioned or suspended.
+Removing a membership does not revoke separate Organization API keys; review
+those independently.
 
 ## Incident and offboarding checklist
 
-1. Remove affected owner records.
+1. Remove affected membership records.
 2. Revoke or rotate any Organization API keys that may have been exposed through the authenticated `/v1/api_keys` lifecycle API or the trusted bootstrap procedure.
 3. Review the Organization audit ledger for the affected window.
 4. Archive the Organization only after confirming active work and retained data requirements.

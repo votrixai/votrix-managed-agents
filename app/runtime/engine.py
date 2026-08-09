@@ -12,6 +12,7 @@ return, because every reader downstream goes to the event log instead.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -23,7 +24,7 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import ANTHROPIC, DEEPSEEK, GOOGLE, MODEL_CATALOG, OPENAI
+from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
 from app.runtime.tools import (
     AGENT_TOOLSET,
@@ -38,6 +39,8 @@ from app.utils.sandbox import OUTPUTS_DIR, SKILLS_DIR, UPLOADS_DIR, WORKDIR, San
 from app.utils.timing import timed
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
+ToolCompleted = Callable[[str], Awaitable[None]]
+_FILESYSTEM_MUTATORS = {"write_file", "edit_file", "execute"}
 
 
 class UnsupportedEventError(RuntimeError):
@@ -63,7 +66,10 @@ async def execute_agent(
     events: list[dict[str, Any]],
     sandbox: Sandbox,
     emit: Emit,
+    inference_key: str,
     attached_files: list[str] | None = None,
+    attached_memory_stores: list[dict[str, Any]] | None = None,
+    tool_completed: ToolCompleted | None = None,
 ) -> None:
     """Run one turn to completion, or to the next point it needs the user.
 
@@ -94,7 +100,7 @@ async def execute_agent(
     # the same container `read_file` reads from, and it is here because
     # `read_file` hands an image back as a content block — which is an answer
     # only if the agent's own model has eyes.
-    tools.append(read_image_tool(sandbox))
+    tools.append(read_image_tool(sandbox, api_key=inference_key))
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         tools.append(web_search_tool())
         tools.append(web_fetch_tool(sandbox))
@@ -124,9 +130,24 @@ async def execute_agent(
             "graph_built", session_id=session.id, tools=len(tools), skills=bool(skill_sources)
         ):
             graph = create_deep_agent(
-                model=_build_chat_model(version.model or {}),
+                # The session's own model wins when it named one; otherwise the
+                # agent version's applies. Resolved here on every turn rather
+                # than copied onto the session at creation, so a session that
+                # expressed no preference keeps following the agent instead of
+                # a frozen snapshot of it.
+                #
+                # Which model to run and whose credential pays for it are
+                # separate questions: the model comes off the session or the
+                # agent, the key off the session's Account.
+                model=_build_chat_model(
+                    session.model or version.model or {}, api_key=inference_key
+                ),
                 tools=tools,
-                system_prompt=_system_prompt(version.system, attached_files or []),
+                system_prompt=_system_prompt(
+                    version.system,
+                    attached_files or [],
+                    attached_memory_stores or [],
+                ),
                 backend=sandbox.to_deep_agent_backend,
                 skills=skill_sources,
                 # Whether a call stops for a human is decided by tool name, and
@@ -166,7 +187,14 @@ async def execute_agent(
                 steps += 1
                 messages = values.get("messages", [])
                 for msg in messages[last_index:]:
-                    await _translate(msg, emit, tool_kind, interrupt_on, announced)
+                    await _translate(
+                        msg,
+                        emit,
+                        tool_kind,
+                        interrupt_on,
+                        announced,
+                        tool_completed,
+                    )
                 last_index = len(messages)
             span["steps"] = steps
             span["messages"] = last_index
@@ -280,6 +308,7 @@ async def _translate(
     tool_kind: dict[str, str],
     interrupt_on: dict[str, Any],
     announced: set[str],
+    tool_completed: ToolCompleted | None = None,
 ) -> None:
     if isinstance(message, AIMessage):
         # `content_blocks` is LangChain's normalised view: every provider's own
@@ -331,6 +360,13 @@ async def _translate(
                 "is_error": message.status == "error",
             },
         )
+        tool_name = str(message.name or "")
+        if (
+            tool_completed is not None
+            and message.status != "error"
+            and tool_name in _FILESYSTEM_MUTATORS
+        ):
+            await tool_completed(tool_name)
         return
 
     # System/Human messages coming back off the checkpoint are the input we just
@@ -368,6 +404,117 @@ async def _setup_once(saver: Any, key: str) -> None:
         _setup_done.add(key)
 
 
+# One checkpoint pool for the process, keyed by DSN so a changed setting cannot
+# hand back a pool pointing somewhere else. A turn used to open its own
+# connection and close it after — a full TCP, TLS and SCRAM handshake against
+# the hosted pooler, measured at 2–3 seconds, paid before the agent could read
+# a single message back.
+_checkpoint_pools: dict[str, Any] = {}
+_checkpoint_pool_lock = asyncio.Lock()
+
+
+async def _checkpoint_pool(dsn: str) -> Any:
+    """The pool LangGraph's saver borrows from, opened once per process.
+
+    `prepare_threshold=None` is the load-bearing argument, and the reason this
+    does not use `AsyncPostgresSaver.from_conn_string`: that helper hardcodes
+    `prepare_threshold=0`, meaning "prepare every statement immediately".
+    Server-side prepared statements belong to one backend connection, so an
+    agent that prepares on one and executes on another — which is what a
+    transaction pooler does between transactions — fails with "prepared
+    statement does not exist". Disabling them is what lets checkpoint traffic
+    share Postgres backends instead of pinning one per running turn.
+
+    `autocommit` and `dict_row` match what the helper sets; only the threshold
+    deliberately differs.
+    """
+
+    if (pool := _checkpoint_pools.get(dsn)) is not None:
+        return pool
+
+    async with _checkpoint_pool_lock:
+        if (pool := _checkpoint_pools.get(dsn)) is not None:
+            return pool
+
+        from psycopg.rows import dict_row
+        from psycopg_pool import AsyncConnectionPool
+
+        settings = get_settings()
+        pool = AsyncConnectionPool(
+            dsn,
+            min_size=0,
+            max_size=settings.vma_checkpoint_pool_max_size,
+            max_lifetime=settings.vma_checkpoint_pool_max_lifetime_seconds,
+            # Checked on checkout, like the SQLAlchemy engine's pre-ping and for
+            # the reason recorded there: the pooler in front of this database
+            # drops idle connections well inside any recycle window, and age
+            # alone was tried and produced thirty `connection is closed`
+            # failures in one live run. A connection handed out dead is a failed
+            # turn; a connection tested first is a slower one.
+            check=AsyncConnectionPool.check_connection,
+            open=False,
+            configure=_configure_checkpoint_connection,
+            kwargs={
+                "autocommit": True,
+                "prepare_threshold": None,
+                "row_factory": dict_row,
+            },
+        )
+        await pool.open()
+        _checkpoint_pools[dsn] = pool
+        return pool
+
+
+async def aclose_checkpoint_pools() -> None:
+    """Close every checkpoint pool. Called from the application lifespan."""
+
+    async with _checkpoint_pool_lock:
+        pools = list(_checkpoint_pools.values())
+        _checkpoint_pools.clear()
+    for pool in pools:
+        await pool.close()
+
+
+async def _configure_checkpoint_connection(conn: Any) -> None:
+    """Point a freshly-opened checkpoint connection at the configured schema.
+
+    Runs per connection, from the pool's `configure` hook, because Supabase's
+    pooler drops PostgreSQL startup ``options`` — the schema cannot ride in on
+    the DSN.
+
+    **This is durable only on a session-mode DSN.** Through the transaction
+    pooler the setting lands on whichever backend served this statement and is
+    gone by the next one, so a hosted deployment that puts checkpoints on
+    ``:6543`` must set the search path on the role instead:
+
+        ALTER ROLE <db user> SET search_path = <schema>, public;
+
+    A role default is applied by PostgreSQL to every backend at connect time,
+    which is the only place a pooled client cannot lose it.
+    """
+
+    schema = get_settings().database_schema
+    if not schema:
+        return
+    await conn.execute("SELECT set_config('search_path', %s, false)", (schema,))
+    # Verified, and the pool raises out of `configure` if it did not take. The
+    # silent failure is the dangerous one: LangGraph would go on to create and
+    # read its tables in `public`, and a turn would resume from a checkpoint
+    # history that simply is not there.
+    cursor = await conn.execute("SELECT current_schema() AS current_schema")
+    row = await cursor.fetchone()
+    current_schema = (
+        row.get("current_schema")
+        if isinstance(row, Mapping)
+        else row[0] if row else None
+    )
+    if current_schema != schema:
+        raise RuntimeError(
+            "Checkpoint connection did not select the configured database schema: "
+            f"expected {schema!r}, got {current_schema!r}"
+        )
+
+
 def _instrument_saver(saver: Any, session_id: str) -> Any:
     """Time the checkpointer's calls by shadowing them on the instance.
 
@@ -403,20 +550,31 @@ async def _checkpoint_saver(session_id: str) -> AsyncIterator[Any]:
     is a migration check that runs on every turn and almost never has anything
     to do.
     """
-    url = str(get_settings().database_url)
+    settings = get_settings()
+    url = (
+        settings.vma_checkpoint_database_url.strip()
+        or str(settings.database_url)
+    )
+    schema = settings.database_schema
 
     if url.startswith(("postgres://", "postgresql://", "postgresql+")):
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
         async with timed("checkpoint_connected", session_id=session_id, backend="postgres"):
-            connection = AsyncPostgresSaver.from_conn_string(_postgres_dsn(url))
-            saver = await connection.__aenter__()
-        try:
-            async with timed("checkpoint_setup", session_id=session_id, backend="postgres"):
-                await _setup_once(saver, url)
-            yield _instrument_saver(saver, session_id)
-        finally:
-            await connection.__aexit__(None, None, None)
+            pool = await _checkpoint_pool(_postgres_dsn(url, schema))
+        saver = AsyncPostgresSaver(conn=pool)
+        # Force the explicit-transaction path. LangGraph batches a checkpoint's
+        # writes into a psycopg pipeline, which is a substitute for a
+        # transaction, not a transaction: through a transaction pooler the
+        # statements in one batch can land on different backends, and a
+        # checkpoint whose blobs were written but whose row was not reads back
+        # as a complete state that is missing half of itself. The library's own
+        # fallback for "no pipeline support" is `conn.transaction()`, which is
+        # exactly what keeps a pooled client on one backend.
+        saver.supports_pipeline = False
+        async with timed("checkpoint_setup", session_id=session_id, backend="postgres"):
+            await _setup_once(saver, f"{url}#{schema}")
+        yield _instrument_saver(saver, session_id)
         return
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -432,7 +590,11 @@ async def _checkpoint_saver(session_id: str) -> AsyncIterator[Any]:
         yield _instrument_saver(saver, session_id)
 
 
-def _system_prompt(configured: str | None, attached_files: list[str]) -> str | None:
+def _system_prompt(
+    configured: str | None,
+    attached_files: list[str],
+    attached_memory_stores: list[dict[str, Any]] | None = None,
+) -> str | None:
     """Add the bit about the workspace that only we know.
 
     The agent is told where its inputs are and where to put its results,
@@ -462,16 +624,43 @@ def _system_prompt(configured: str | None, attached_files: list[str]) -> str | N
     else:
         lines.append(f"- `{UPLOADS_DIR}` — empty; the user attached no files.")
 
+    if attached_memory_stores:
+        lines.extend(
+            [
+                "",
+                "## Memory Stores",
+                "",
+                "These directories persist across Sessions. Only writes below an exact "
+                "mount path update that Memory Store.",
+            ]
+        )
+        for store in attached_memory_stores:
+            lines.extend(
+                [
+                    "",
+                    f"- **{store['name']}**",
+                    f"  - Path: `{store['mount_path']}`",
+                    f"  - Access: `{store['access']}`",
+                    f"  - Description: {store.get('description') or '(none)'}",
+                ]
+            )
+            if store.get("instructions"):
+                lines.append(f"  - Instructions: {store['instructions']}")
+
     workspace = "\n".join(lines)
     return f"{configured}\n\n{workspace}" if configured else workspace
 
 
-def _build_chat_model(spec: dict[str, Any] | str) -> Any:
-    """Keys come from configuration — a caller names a model, never a credential.
+def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
+    """A caller names a model; the credential is handed in, never looked up.
 
-    One key per provider, and nothing falls back to another: a request for a
-    model whose key is missing fails here rather than quietly running on
-    something the caller did not ask for.
+    Every model is reached through one gateway. The catalog's `provider`
+    survives only as a label for a picker: it no longer selects a client, so
+    adding a model is a catalog entry and its slug, never a new dependency.
+
+    The key belongs to the Account paying for this turn, so it arrives as an
+    argument. Reading it from configuration here would mean this function
+    decides who pays, which is a question about the Session it cannot see.
     """
     model_id = spec if isinstance(spec, str) else str(spec.get("id") or "")
     entry = next((m for m in MODEL_CATALOG if m.id == model_id), None)
@@ -479,42 +668,37 @@ def _build_chat_model(spec: dict[str, Any] | str) -> Any:
         known = ", ".join(m.id for m in MODEL_CATALOG)
         raise UnknownModelError(f"Unknown model {model_id!r}. Known models: {known}")
 
-    settings = get_settings()
-    if entry.provider == ANTHROPIC:
-        from langchain_anthropic import ChatAnthropic
+    slug = OPENROUTER_SLUGS.get(entry.id)
+    if slug is None:
+        # A catalog entry with no slug is a packaging mistake, not a bad
+        # request: the caller named a model this build claims to serve.
+        raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
 
-        return ChatAnthropic(model=model_id, api_key=_require_key(settings.anthropic_api_key, entry))
-    if entry.provider == GOOGLE:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openrouter import ChatOpenRouter
 
-        return ChatGoogleGenerativeAI(
-            model=model_id,
-            google_api_key=_require_key(settings.gemini_api_key, entry),
-        )
-    if entry.provider == DEEPSEEK:
-        from langchain_deepseek import ChatDeepSeek
-
-        return ChatDeepSeek(model=model_id, api_key=_require_key(settings.deepseek_api_key, entry))
-    if entry.provider == OPENAI:
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(model=model_id, api_key=_require_key(settings.openai_api_key, entry))
-    raise UnknownModelError(f"No client wired up for provider {entry.provider!r}")
+    return ChatOpenRouter(model=slug, api_key=_require_key(api_key))
 
 
-def _require_key(key: str, entry: Any) -> str:
+def _require_key(key: str) -> str:
     if not key:
         raise MissingProviderKeyError(
-            f"{entry.id} needs a {entry.provider} API key, which is not configured"
+            "no gateway credential was resolved for this turn, so no model can be reached"
         )
     return key
 
 
-def _postgres_dsn(value: str) -> str:
+def _postgres_dsn(value: str, schema: str = "") -> str:
     if value.startswith("postgres://"):
         value = "postgresql://" + value[len("postgres://") :]
     for driver in ("+asyncpg", "+psycopg", "+psycopg_async"):
         value = value.replace(driver, "")
+    if schema:
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        parts = urlsplit(value)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["options"] = f"-csearch_path={schema}"
+        value = urlunsplit(parts._replace(query=urlencode(query)))
     return value
 
 

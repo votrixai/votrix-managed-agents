@@ -1,4 +1,4 @@
 #!/bin/sh
 set -e
 
-exec alembic upgrade "${ALEMBIC_TARGET:-head}"
+alembic upgrade "${ALEMBIC_TARGET:-head}"

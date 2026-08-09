@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 
 from app.config import get_settings
+from app.models.llm import OPENROUTER_SLUGS
 from app.utils.sandbox import WEB_CACHE_DIR, WORKDIR
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v2"
 WEB_SEARCH_MAX_RESULTS = 10
 WEB_FETCH_INLINE_MAX_CHARS = 8000
 
+
 def resolve_tool_interrupts(tools: list[dict[str, Any]]) -> dict[str, Any]:
     """Which of DeepAgents' always-on native tools need a decision first.
 
@@ -125,16 +127,22 @@ def custom_tool(spec: dict[str, Any]) -> StructuredTool:
     )
 
 
-async def describe_image(data: bytes, mime_type: str, query: str) -> str:
+async def describe_image(
+    data: bytes, mime_type: str, query: str, *, api_key: str
+) -> str:
     """Ask the vision model one question about one image.
+
+    Billed to the same Account as the turn that called the tool, so looking at
+    a picture is not quietly charged somewhere else.
 
     Separate from the tool so a test can replace the network call and still
     exercise everything around it.
     """
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openrouter import ChatOpenRouter
 
-    vision = ChatGoogleGenerativeAI(
-        model=READ_IMAGE_MODEL, google_api_key=get_settings().gemini_api_key
+    vision = ChatOpenRouter(
+        model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
+        api_key=api_key,
     )
     encoded = base64.b64encode(data).decode("ascii")
     answer = await vision.ainvoke(
@@ -142,7 +150,12 @@ async def describe_image(data: bytes, mime_type: str, query: str) -> str:
             HumanMessage(
                 content=[
                     {"type": "text", "text": f"{READ_IMAGE_INSTRUCTION}\n\nQuestion: {query}"},
-                    {"type": "image_url", "image_url": f"data:{mime_type};base64,{encoded}"},
+                    # Nested rather than a bare string: the gateway speaks the
+                    # OpenAI shape, where `image_url` is an object.
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+                    },
                 ]
             )
         ]
@@ -158,7 +171,7 @@ async def describe_image(data: bytes, mime_type: str, query: str) -> str:
     ).strip()
 
 
-def read_image_tool(sandbox: Sandbox) -> StructuredTool:
+def read_image_tool(sandbox: Sandbox, *, api_key: str) -> StructuredTool:
     """Looking at an image, for a model that cannot.
 
     `read_file` already returns an image as a content block, which is the right
@@ -179,7 +192,7 @@ def read_image_tool(sandbox: Sandbox) -> StructuredTool:
                 f"read_image cannot open {target}: it reads "
                 f"{', '.join(sorted(READ_IMAGE_TYPES))} and this is {suffix or 'extensionless'}."
             )
-        if not get_settings().gemini_api_key:
+        if not api_key:
             return "read_image is unavailable: no vision model is configured on this server."
 
         try:
@@ -192,7 +205,7 @@ def read_image_tool(sandbox: Sandbox) -> StructuredTool:
             return f"read_image could not read {target}: {type(exc).__name__}: {exc}"
 
         try:
-            return await describe_image(data, mime_type, query)
+            return await describe_image(data, mime_type, query, api_key=api_key)
         except Exception as exc:
             return f"read_image could not look at {target}: {type(exc).__name__}: {exc}"
 

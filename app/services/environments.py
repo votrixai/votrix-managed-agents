@@ -33,12 +33,6 @@ async def create_environment(
     config: dict[str, Any] | None = None,
 ) -> Environment:
     """Register an environment and, if it declares packages, start its build."""
-    existing = await environments_q.get_environment_by_name(
-        db, name=name, organization_id=organization_id
-    )
-    if existing is not None:
-        raise Conflict(f"An environment named {name!r} already exists")
-
     config = config or {}
     packages = _packages(config)
     environment = await environments_q.create_environment(
@@ -115,13 +109,6 @@ async def update_environment(
     )
     if environment.archived_at is not None:
         raise Conflict("Archived environments are read-only")
-
-    if name is not None and name != environment.name:
-        clash = await environments_q.get_environment_by_name(
-            db, name=name, organization_id=organization_id
-        )
-        if clash is not None:
-            raise Conflict(f"An environment named {name!r} already exists")
 
     # The recipe is the packages and the machine they run on — change either and
     # the image no longer matches what was asked for.

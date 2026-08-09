@@ -135,22 +135,25 @@ def get_engine():
         url = settings.database_url
         _engine = create_async_engine(
             url,
-            connect_args=_connect_args(url),
+            connect_args=_connect_args(url, settings),
             **_pool_options(url, settings),
         )
         _install_statement_timing(_engine)
     return _engine
 
 
-def _connect_args(url: str) -> dict:
+def _connect_args(url: str, settings) -> dict:
     if not url.startswith("postgresql+asyncpg"):
         return {}
-    return {
+    args = {
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
         "command_timeout": 30,
         "timeout": 10,
     }
+    if settings.database_schema:
+        args["server_settings"] = {"search_path": settings.database_schema}
+    return args
 
 
 def _pool_options(url: str, settings) -> dict:

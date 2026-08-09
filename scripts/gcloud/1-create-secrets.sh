@@ -111,6 +111,7 @@ S3_ENDPOINT_URL|vma-s3-endpoint-url
 S3_ACCESS_KEY_ID|vma-s3-access-key-id
 S3_SECRET_ACCESS_KEY|vma-s3-secret-access-key
 S3_BUCKET_NAME|vma-s3-bucket-name
+OPENROUTER_MANAGEMENT_KEY|vma-openrouter-management-key
 SECRETS
 
 echo "Done. Only the allowlisted VMA secrets were imported."
