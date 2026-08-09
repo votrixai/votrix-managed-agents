@@ -110,18 +110,12 @@ class OpenRouterManagementClient:
     a second remote key whose plaintext can never be recovered.
     """
 
-    def __init__(
-        self,
-        management_key: str,
-        *,
-        workspace_id: str = "",
-    ) -> None:
+    def __init__(self, management_key: str) -> None:
         key = management_key.strip()
         if not key:
             raise MissingOpenRouterManagementKeyError(
                 "OPENROUTER_MANAGEMENT_KEY is required to provision Organization keys"
             )
-        self._workspace_id = workspace_id.strip()
         self._sdk = OpenRouter(
             api_key=key,
             http_referer=OPENROUTER_APP_URL,
@@ -154,8 +148,6 @@ class OpenRouterManagementClient:
         if limit_usd is not None:
             kwargs["limit"] = float(limit_usd)
             kwargs["limit_reset"] = limit_reset
-        if self._workspace_id:
-            kwargs["workspace_id"] = self._workspace_id
         provision_error: OpenRouterKeyProvisionError | None = None
         try:
             response = await self._sdk.api_keys.create_async(**kwargs)
@@ -223,8 +215,6 @@ class OpenRouterManagementClient:
                 "include_disabled": include_disabled,
                 "offset": offset,
             }
-            if self._workspace_id:
-                kwargs["workspace_id"] = self._workspace_id
             response = await self._sdk.api_keys.list_async(**kwargs)
             page = list(response.data)
             result.extend(
@@ -349,10 +339,7 @@ def get_openrouter_management_client() -> OpenRouterManagementClient:
     with _client_lock:
         if _client is None:
             settings = get_settings()
-            _client = OpenRouterManagementClient(
-                settings.openrouter_management_key,
-                workspace_id=settings.openrouter_workspace_id,
-            )
+            _client = OpenRouterManagementClient(settings.openrouter_management_key)
         return _client
 
 

@@ -51,9 +51,6 @@ class Settings(BaseSettings):
     # provisioning key, so a leak of this one cannot be spent, only used to
     # enumerate and revoke.
     openrouter_management_key: str = ""
-    # Which provider workspace new keys are created in. Empty means the
-    # management key's own default.
-    openrouter_workspace_id: str = ""
 
     # Base64url AES-256 key wrapping provider secrets at rest. Without it no
     # Account credential can be written or read, which is why provisioning
