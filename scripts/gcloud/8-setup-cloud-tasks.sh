@@ -68,24 +68,25 @@ gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SERVICE_ACCOUNT" \
 
 ensure_queue() {
   QUEUE=$1
+  QUEUE_LOCATION=$2
 
   if gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" >/dev/null 2>&1; then
-    echo "Updating Cloud Tasks queue: ${TASKS_LOCATION}/${QUEUE}"
+    --location="$QUEUE_LOCATION" >/dev/null 2>&1; then
+    echo "Updating Cloud Tasks queue: ${QUEUE_LOCATION}/${QUEUE}"
     gcloud tasks queues update "$QUEUE" \
       --project="$PROJECT_ID" \
-      --location="$TASKS_LOCATION" \
+      --location="$QUEUE_LOCATION" \
       --max-attempts=8 \
       --min-backoff=5s \
       --max-backoff=300s \
       --max-concurrent-dispatches=25 \
       --quiet
   else
-    echo "Creating Cloud Tasks queue: ${TASKS_LOCATION}/${QUEUE}"
+    echo "Creating Cloud Tasks queue: ${QUEUE_LOCATION}/${QUEUE}"
     gcloud tasks queues create "$QUEUE" \
       --project="$PROJECT_ID" \
-      --location="$TASKS_LOCATION" \
+      --location="$QUEUE_LOCATION" \
       --max-attempts=8 \
       --min-backoff=5s \
       --max-backoff=300s \
@@ -95,23 +96,24 @@ ensure_queue() {
 
   QUEUE_STATE=$(gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" \
+    --location="$QUEUE_LOCATION" \
     --format='value(state)')
   if [ "$QUEUE_STATE" = "PAUSED" ]; then
-    echo "Resuming Cloud Tasks queue: ${TASKS_LOCATION}/${QUEUE}"
+    echo "Resuming Cloud Tasks queue: ${QUEUE_LOCATION}/${QUEUE}"
     gcloud tasks queues resume "$QUEUE" \
       --project="$PROJECT_ID" \
-      --location="$TASKS_LOCATION" \
+      --location="$QUEUE_LOCATION" \
       --quiet
   fi
 }
 
 grant_worker_invoker() {
   WORKER_SERVICE=$1
+  WORKER_REGION=$2
 
   if ! gcloud run services describe "$WORKER_SERVICE" \
     --project="$PROJECT_ID" \
-    --region="$REGION" >/dev/null 2>&1; then
+    --region="$WORKER_REGION" >/dev/null 2>&1; then
     echo "Worker service is not deployed yet: ${WORKER_SERVICE}" >&2
     echo "The deploy flow grants Invoker after bootstrap; rerun this setup only to repair drift." >&2
     return 0
@@ -120,7 +122,7 @@ grant_worker_invoker() {
   echo "Allowing OIDC task delivery to private worker: ${WORKER_SERVICE}"
   gcloud run services add-iam-policy-binding "$WORKER_SERVICE" \
     --project="$PROJECT_ID" \
-    --region="$REGION" \
+    --region="$WORKER_REGION" \
     --member="serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
     --role="roles/run.invoker" \
     --quiet
@@ -129,20 +131,33 @@ grant_worker_invoker() {
 setup_environment() {
   QUEUE=$1
   WORKER_SERVICE=$2
-  ensure_queue "$QUEUE"
-  grant_worker_invoker "$WORKER_SERVICE"
+  ENVIRONMENT_REGION=$3
+  ensure_queue "$QUEUE" "$ENVIRONMENT_REGION"
+  grant_worker_invoker "$WORKER_SERVICE" "$ENVIRONMENT_REGION"
 }
 
 case "$TARGET" in
   production)
-    setup_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
+    setup_environment \
+      "$PRODUCTION_TASKS_QUEUE" \
+      "$PRODUCTION_WORKER_SERVICE" \
+      "$PRODUCTION_REGION"
     ;;
   staging)
-    setup_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
+    setup_environment \
+      "$STAGING_TASKS_QUEUE" \
+      "$STAGING_WORKER_SERVICE" \
+      "$STAGING_REGION"
     ;;
   all)
-    setup_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
-    setup_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
+    setup_environment \
+      "$PRODUCTION_TASKS_QUEUE" \
+      "$PRODUCTION_WORKER_SERVICE" \
+      "$PRODUCTION_REGION"
+    setup_environment \
+      "$STAGING_TASKS_QUEUE" \
+      "$STAGING_WORKER_SERVICE" \
+      "$STAGING_REGION"
     ;;
 esac
 

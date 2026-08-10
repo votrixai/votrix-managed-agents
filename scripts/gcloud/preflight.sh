@@ -68,17 +68,36 @@ EOF
 
 check_manifest() {
   MANIFEST=$1
-  PLACEHOLDER_IMAGE="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/vma-preflight:configuration-only"
-  if sed "s|IMAGE_URL|${PLACEHOLDER_IMAGE}|" "${REPO_ROOT}/${MANIFEST}" | \
+  MANIFEST_REGION=$2
+  PLACEHOLDER_IMAGE="${MANIFEST_REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/vma-preflight:configuration-only"
+  if sed \
+    -e "s|IMAGE_URL|${PLACEHOLDER_IMAGE}|" \
+    -e "s|__VMA_TASKS_LOCATION__|${MANIFEST_REGION}|" \
+    "${REPO_ROOT}/${MANIFEST}" | \
     gcloud run services replace \
       --project="$PROJECT_ID" \
-      --region="$REGION" \
+      --region="$MANIFEST_REGION" \
       --dry-run \
       /dev/stdin \
       --quiet >/dev/null 2>&1; then
     ok "Cloud Run manifest validates: ${MANIFEST}"
   else
     fail "Cloud Run manifest validation failed: ${MANIFEST}"
+  fi
+}
+
+check_registry() {
+  REGISTRY_REGION=$1
+  REGISTRY_FORMAT=$(gcloud artifacts repositories describe "$REPOSITORY" \
+    --project="$PROJECT_ID" \
+    --location="$REGISTRY_REGION" \
+    --format='value(format)' 2>/dev/null || true)
+  if [ "$REGISTRY_FORMAT" = DOCKER ]; then
+    ok "Docker Artifact Registry exists: ${REGISTRY_REGION}/${REPOSITORY}"
+  elif [ -n "$REGISTRY_FORMAT" ]; then
+    fail "Artifact Registry is not Docker format: ${REGISTRY_REGION}/${REPOSITORY} (${REGISTRY_FORMAT})"
+  else
+    fail "Artifact Registry is missing: ${REGISTRY_REGION}/${REPOSITORY}"
   fi
 }
 
@@ -129,18 +148,6 @@ do
     fail "API not enabled: ${api}"
   fi
 done
-
-REGISTRY_FORMAT=$(gcloud artifacts repositories describe "$REPOSITORY" \
-  --project="$PROJECT_ID" \
-  --location="$REGION" \
-  --format='value(format)' 2>/dev/null || true)
-if [ "$REGISTRY_FORMAT" = DOCKER ]; then
-  ok "Docker Artifact Registry exists: ${REGION}/${REPOSITORY}"
-elif [ -n "$REGISTRY_FORMAT" ]; then
-  fail "Artifact Registry is not Docker format: ${REGION}/${REPOSITORY} (${REGISTRY_FORMAT})"
-else
-  fail "Artifact Registry is missing: ${REGION}/${REPOSITORY}"
-fi
 
 if gcloud iam service-accounts describe "$RUNTIME_SERVICE_ACCOUNT" \
   --project="$PROJECT_ID" >/dev/null 2>&1; then
@@ -244,33 +251,34 @@ fi
 check_tasks_environment() {
   QUEUE=$1
   WORKER_SERVICE=$2
+  ENVIRONMENT_REGION=$3
 
   if ! gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" >/dev/null 2>&1; then
-    fail "Cloud Tasks queue is missing: ${TASKS_LOCATION}/${QUEUE}"
+    --location="$ENVIRONMENT_REGION" >/dev/null 2>&1; then
+    fail "Cloud Tasks queue is missing: ${ENVIRONMENT_REGION}/${QUEUE}"
     return
   fi
 
   QUEUE_STATE=$(gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" \
+    --location="$ENVIRONMENT_REGION" \
     --format='value(state)' 2>/dev/null || true)
   QUEUE_MAX_ATTEMPTS=$(gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" \
+    --location="$ENVIRONMENT_REGION" \
     --format='value(retryConfig.maxAttempts)' 2>/dev/null || true)
   QUEUE_MIN_BACKOFF=$(gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" \
+    --location="$ENVIRONMENT_REGION" \
     --format='value(retryConfig.minBackoff)' 2>/dev/null || true)
   QUEUE_MAX_BACKOFF=$(gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" \
+    --location="$ENVIRONMENT_REGION" \
     --format='value(retryConfig.maxBackoff)' 2>/dev/null || true)
   QUEUE_MAX_CONCURRENT=$(gcloud tasks queues describe "$QUEUE" \
     --project="$PROJECT_ID" \
-    --location="$TASKS_LOCATION" \
+    --location="$ENVIRONMENT_REGION" \
     --format='value(rateLimits.maxConcurrentDispatches)' 2>/dev/null || true)
 
   if [ "$QUEUE_STATE" = RUNNING ] && \
@@ -278,21 +286,21 @@ check_tasks_environment() {
     [ "$QUEUE_MIN_BACKOFF" = 5s ] && \
     [ "$QUEUE_MAX_BACKOFF" = 300s ] && \
     [ "$QUEUE_MAX_CONCURRENT" = 25 ]; then
-    ok "Cloud Tasks queue policy is pinned: ${TASKS_LOCATION}/${QUEUE}"
+    ok "Cloud Tasks queue policy is pinned: ${ENVIRONMENT_REGION}/${QUEUE}"
   else
-    fail "Cloud Tasks queue policy drifted: ${TASKS_LOCATION}/${QUEUE}"
+    fail "Cloud Tasks queue policy drifted: ${ENVIRONMENT_REGION}/${QUEUE}"
   fi
 
   if ! gcloud run services describe "$WORKER_SERVICE" \
     --project="$PROJECT_ID" \
-    --region="$REGION" >/dev/null 2>&1; then
+    --region="$ENVIRONMENT_REGION" >/dev/null 2>&1; then
     warn "worker is not deployed yet; rerun 8-setup-cloud-tasks.sh after bootstrap: ${WORKER_SERVICE}"
     return
   fi
 
   WORKER_INVOKER=$(gcloud run services get-iam-policy "$WORKER_SERVICE" \
     --project="$PROJECT_ID" \
-    --region="$REGION" \
+    --region="$ENVIRONMENT_REGION" \
     --flatten='bindings[].members' \
     --filter="bindings.role=roles/run.invoker AND bindings.members=serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
     --format='value(bindings.members)' 2>/dev/null || true)
@@ -356,28 +364,46 @@ check_environment_secrets() {
 
 case "$TARGET" in
   production)
-    check_tasks_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
+    check_registry "$PRODUCTION_REGION"
+    check_tasks_environment \
+      "$PRODUCTION_TASKS_QUEUE" \
+      "$PRODUCTION_WORKER_SERVICE" \
+      "$PRODUCTION_REGION"
     check_environment_secrets ""
-    check_manifest service.production.yaml
-    check_manifest service.worker.production.yaml
+    check_manifest service.production.yaml "$PRODUCTION_REGION"
+    check_manifest service.worker.production.yaml "$PRODUCTION_REGION"
     check_worker_manifest_is_private service.worker.production.yaml
     ;;
   staging)
-    check_tasks_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
+    check_registry "$STAGING_REGION"
+    check_tasks_environment \
+      "$STAGING_TASKS_QUEUE" \
+      "$STAGING_WORKER_SERVICE" \
+      "$STAGING_REGION"
     check_environment_secrets "-staging"
-    check_manifest service.staging.yaml
-    check_manifest service.worker.staging.yaml
+    check_manifest service.staging.yaml "$STAGING_REGION"
+    check_manifest service.worker.staging.yaml "$STAGING_REGION"
     check_worker_manifest_is_private service.worker.staging.yaml
     ;;
   all)
-    check_tasks_environment "$PRODUCTION_TASKS_QUEUE" "$PRODUCTION_WORKER_SERVICE"
-    check_tasks_environment "$STAGING_TASKS_QUEUE" "$STAGING_WORKER_SERVICE"
+    check_registry "$PRODUCTION_REGION"
+    if [ "$STAGING_REGION" != "$PRODUCTION_REGION" ]; then
+      check_registry "$STAGING_REGION"
+    fi
+    check_tasks_environment \
+      "$PRODUCTION_TASKS_QUEUE" \
+      "$PRODUCTION_WORKER_SERVICE" \
+      "$PRODUCTION_REGION"
+    check_tasks_environment \
+      "$STAGING_TASKS_QUEUE" \
+      "$STAGING_WORKER_SERVICE" \
+      "$STAGING_REGION"
     check_environment_secrets ""
     check_environment_secrets "-staging"
-    check_manifest service.production.yaml
-    check_manifest service.worker.production.yaml
-    check_manifest service.staging.yaml
-    check_manifest service.worker.staging.yaml
+    check_manifest service.production.yaml "$PRODUCTION_REGION"
+    check_manifest service.worker.production.yaml "$PRODUCTION_REGION"
+    check_manifest service.staging.yaml "$STAGING_REGION"
+    check_manifest service.worker.staging.yaml "$STAGING_REGION"
     check_worker_manifest_is_private service.worker.production.yaml
     check_worker_manifest_is_private service.worker.staging.yaml
     ;;

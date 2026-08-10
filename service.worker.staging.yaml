@@ -53,7 +53,7 @@ spec:
             - name: TASKS_QUEUE
               value: "vma-turns-staging"
             - name: TASKS_LOCATION
-              value: "us-central1"
+              value: "__VMA_TASKS_LOCATION__"
             - name: TASKS_SERVICE_ACCOUNT
               value: "vma-runtime@votrixai-480422.iam.gserviceaccount.com"
             - name: WORKER_URL

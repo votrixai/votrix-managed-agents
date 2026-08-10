@@ -9,15 +9,17 @@ identity and a migration gate before every API-and-worker rollout.
 | Setting | Value |
 |---|---|
 | Project | `votrixai-480422` |
-| Region | `us-central1` |
-| Artifact Registry | `votrix` |
+| Production runtime region | `us-east4` (Northern Virginia, near Supabase AWS `us-east-1`) |
+| Staging runtime region | `us-west2` (Los Angeles, near Supabase AWS `us-west-1`) |
+| Cloud Build source region | `us-central1` |
+| Artifact Registry | `us-east4/votrix` production; `us-west2/votrix` staging |
 | Production API service | `votrix-managed-agents` |
 | Production worker service | `votrix-managed-agents-worker` |
 | Staging API service | `votrix-managed-agents-staging` |
 | Staging worker service | `votrix-managed-agents-staging-worker` |
 | Runtime service account | `vma-runtime@votrixai-480422.iam.gserviceaccount.com` |
-| Production Cloud Tasks queue | `us-central1/vma-turns` |
-| Staging Cloud Tasks queue | `us-central1/vma-turns-staging` |
+| Production Cloud Tasks queue | `us-east4/vma-turns` |
+| Staging Cloud Tasks queue | `us-west2/vma-turns-staging` |
 
 Each environment is split into an API service and a worker service. API
 instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
@@ -63,9 +65,11 @@ Run the scripts in order:
 ./scripts/gcloud/0-setup-registry.sh
 ```
 
-This enables the required APIs, creates the Artifact Registry and dedicated
-runtime service account, and grants Cloud Build permission to deploy as that
-identity. Runtime access to secrets is granted per secret by the next step.
+This enables the required APIs, creates one Artifact Registry in each runtime
+region plus the dedicated runtime service account, and grants Cloud Build
+permission to deploy as that identity. Runtime access to secrets is granted per
+secret by the next step. Pass `staging` or `production` to repair only one
+regional registry.
 
 Create the Cloud Tasks queues and grant the runtime identity permission to
 enqueue OIDC tasks:
@@ -201,7 +205,7 @@ VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
 VMA_PREVIEW_BROKER=pg_notify
 VMA_WORK_DISPATCH_MODE=hybrid
 VMA_TASKS_QUEUE=vma-turns[-staging]
-VMA_TASKS_LOCATION=us-central1
+VMA_TASKS_LOCATION=us-east4 (production) / us-west2 (staging)
 VMA_TASKS_SERVICE_ACCOUNT=vma-runtime@votrixai-480422.iam.gserviceaccount.com
 VMA_WORKER_URL=<discovered private Cloud Run worker URL>
 VMA_MAX_SESSION_INPUT_BYTES=67108864
@@ -261,8 +265,11 @@ staging-only experiment, use:
 
 That opt-in image receives a unique
 `<commit>-dirty-<UTC timestamp>-<process>` tag; it cannot be mistaken for the
-clean commit image. Either script also accepts a legacy positional region or
-`--region=REGION`.
+clean commit image. The production script defaults to `us-east4`; staging
+defaults to `us-west2`. Either script also accepts a legacy positional region
+or `--region=REGION` for an intentional temporary comparison. The rendered
+Cloud Tasks location always tracks that override, so create the matching
+regional queue first.
 
 Both scripts enforce the same sequence:
 
@@ -445,6 +452,8 @@ After both API services exist:
 ./scripts/gcloud/5-allow-public.sh
 ```
 
+Pass `staging` or `production` to repair only that environment's regional API.
+
 The API manifests already disable the Cloud Run Invoker IAM check. This command
 is an idempotent repair/verification step using the same recommended Cloud Run
 setting; it does not create an `allUsers` IAM binding. The helper rejects any
@@ -460,7 +469,8 @@ ingress does not add an anonymous application path.
 
 The command prints each API and worker service URL, ready revision, immutable
 image tag, migration-job image, and each Cloud Tasks queue's state, retry cap,
-and concurrent-dispatch bound.
+and concurrent-dispatch bound from its configured region. Pass `staging` or
+`production` to inspect one environment.
 
 ## Files
 
