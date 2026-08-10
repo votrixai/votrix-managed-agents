@@ -70,9 +70,9 @@ class Settings(BaseSettings):
     #
     # Zero means `NullPool`: a fresh connection per database session, which
     # against a hosted Postgres is a TCP handshake, a TLS handshake and an
-    # authentication round trip every time — 1.9 seconds against the Supabase
-    # pooler in us-east-2, versus 0.9 for the same work on a connection that
-    # already exists.
+    # authentication round trip every time. The gap grows when developers are
+    # far from the shared Supabase region, so local Postgres runs should keep a
+    # bounded pool instead of reconnecting for every session.
     #
     # The ceiling is not ours. That pooler, in session mode, refuses the
     # sixteenth client outright:
