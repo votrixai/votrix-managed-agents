@@ -10,7 +10,12 @@ from app.db.models import Session as SessionRow, SessionEvent, SessionFile
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
-from app.models.events import EventResponse, SendEventsRequest, SendEventsResponse
+from app.models.events import (
+    EventResponse,
+    ListEventsResponse,
+    SendEventsRequest,
+    SendEventsResponse,
+)
 from app.models.files import FileResponse, LiveFileRequest, LiveUploadRequest
 from app.models.sessions import (
     SessionCreateRequest,
@@ -135,7 +140,7 @@ async def send_events(
     return SendEventsResponse(data=[to_event(e) for e in events])
 
 
-@router.get("/{session_id}/events", response_model=ListResponse[EventResponse])
+@router.get("/{session_id}/events", response_model=ListEventsResponse)
 async def list_events(
     session_id: str,
     db: Db,
@@ -151,7 +156,7 @@ async def list_events(
     `last_event_seq` can ask for what it has not seen without having seen the
     last event. `after_id`/`before_id` page like everything else.
     """
-    events = await service.list_events(
+    session, events = await service.list_events(
         db,
         session_id=session_id,
         organization_id=organization_id,
@@ -160,7 +165,14 @@ async def list_events(
         before_id=before_id,
         after_id=after_id,
     )
-    return page_of(events, to_event)
+    page = page_of(events, to_event)
+    return ListEventsResponse(
+        data=page.data,
+        has_more=page.has_more,
+        first_id=page.first_id,
+        last_id=page.last_id,
+        last_event_seq=session.last_event_seq,
+    )
 
 
 @router.get("/{session_id}/events/stream")
