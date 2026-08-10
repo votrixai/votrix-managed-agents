@@ -179,31 +179,47 @@ async def test_a_short_page_is_returned_inline(monkeypatch):
     assert sandbox.writes == []
 
 
-async def test_a_long_page_is_saved_and_its_summary_is_bounded(monkeypatch):
+async def test_a_long_page_is_saved_whole_and_returned_truncated(monkeypatch):
+    """The overflow path hands back the page's own text, not a summary of it.
+
+    A summary rides along in the fake response to catch the obvious
+    regression: nothing may reach the model that Firecrawl wrote *about* the
+    page rather than took *from* it.
+    """
+
     url = "https://example.com/long"
     markdown = "m" * (WEB_FETCH_INLINE_MAX_CHARS + 1)
-    summary = "s" * (WEB_FETCH_INLINE_MAX_CHARS + 500)
-    _use_transport(
-        monkeypatch,
-        lambda request: _success({"markdown": markdown, "summary": summary}),
-    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _success({"markdown": markdown, "summary": "s" * 500})
+
+    _use_transport(monkeypatch, handler)
     sandbox = FakeSandbox()
 
     result = await web_fetch_tool(sandbox).ainvoke({"url": url})
 
+    # Whole page on disk, truncated page in the result.
     digest = hashlib.sha256(url.encode()).hexdigest()[:16]
     assert sandbox.writes == [
         (f"/home/user/.web_cache/{digest}.md", markdown.encode())
     ]
-    assert result.rsplit("\n\n---\n\n", 1)[1] == "s" * WEB_FETCH_INLINE_MAX_CHARS
+    assert result.rsplit("\n\n---\n\n", 1)[1] == "m" * WEB_FETCH_INLINE_MAX_CHARS
+    assert "s" * 500 not in result
+
+    # The summary is not even asked for, so it costs nothing to ignore it.
+    assert json.loads(requests[0].content) == {"url": url, "formats": ["markdown"]}
+
+    # The path is only useful with a way to use it, and on a page this size
+    # that way is `grep` — reading from the top is what truncation already did.
+    assert f"/home/user/.web_cache/{digest}.md" in result
+    assert "grep" in result
 
 
 async def test_a_sandbox_write_failure_is_a_tool_result(monkeypatch):
     markdown = "m" * (WEB_FETCH_INLINE_MAX_CHARS + 1)
-    _use_transport(
-        monkeypatch,
-        lambda request: _success({"markdown": markdown, "summary": "summary"}),
-    )
+    _use_transport(monkeypatch, lambda request: _success({"markdown": markdown}))
 
     result = await web_fetch_tool(
         FakeSandbox(error=RuntimeError("sandbox unavailable"))

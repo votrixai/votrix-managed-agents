@@ -179,10 +179,33 @@ async def organization(server) -> str:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def api(server, organization) -> AsyncIterator[httpx.AsyncClient]:
+async def api_key(organization) -> str:
+    """A real key for the run's own organization.
+
+    Written straight to the database for the same reason the organization is:
+    there is no endpoint to mint one, and if there were it would need a key to
+    call it. The plaintext is returned once at creation and only the hash is
+    stored, so this is also the only moment it can be captured.
+    """
+    from app.db.engine import session_scope
+    from app.db.queries import vma_api_keys
+
+    async with session_scope() as db:
+        _, token = await vma_api_keys.create_vma_api_key(
+            db, organization_id=organization, name="live tests"
+        )
+        await db.commit()
+        return token
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def api(server, api_key) -> AsyncIterator[httpx.AsyncClient]:
+    # The key carries the tenant: `authenticate` reads the organization off it
+    # rather than off a header, so there is no `x-organization-id` to send. A
+    # caller that could state its own tenant could state someone else's.
     async with httpx.AsyncClient(
         base_url=server,
-        headers={"x-organization-id": organization},
+        headers={"x-api-key": api_key},
         timeout=httpx.Timeout(TURN_TIMEOUT_SECONDS, connect=10.0),
     ) as client:
         yield client

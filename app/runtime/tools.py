@@ -77,7 +77,13 @@ READ_IMAGE_INSTRUCTION = (
 FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v2"
 FIRECRAWL_RESPONSE_MAX_BYTES = 5 * 1024 * 1024
 WEB_SEARCH_MAX_RESULTS = 10
-WEB_FETCH_INLINE_MAX_CHARS = 8000
+# How much of a page comes back in the tool result. Roughly 5k tokens, which is
+# an affordable slice of a turn's context and enough that most pages arrive
+# whole. It is deliberately not a "short enough to always be safe" number: at
+# 8000 every real page measured — a news post, a docs index, a product page —
+# came back truncated, so the threshold was doing nothing except deciding which
+# pages got a summary instead of their own text.
+WEB_FETCH_INLINE_MAX_CHARS = 20000
 
 
 class _FirecrawlResponseError(RuntimeError):
@@ -339,7 +345,7 @@ def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
             data = await _firecrawl_data(
                 "scrape",
                 api_key=settings.firecrawl_api_key,
-                request_body={"url": url, "formats": ["markdown", "summary"]},
+                request_body={"url": url, "formats": ["markdown"]},
                 timeout_seconds=60.0,
             )
             markdown = data.get("markdown") or ""
@@ -351,19 +357,24 @@ def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
             if len(markdown) <= WEB_FETCH_INLINE_MAX_CHARS:
                 return markdown
 
+            # The page itself, truncated — not a summary of it. Firecrawl can
+            # produce one, and it reads well, but a summariser that cannot see
+            # the question drops whatever it judged unimportant, and that is
+            # exactly as likely to be the answer as anything else it kept.
+            # Truncation is lossy too, but transparently so: what comes back is
+            # the page's own words, and the rest is a `grep` away rather than
+            # gone.
             digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
             cache_path = f"{WEB_CACHE_DIR}/{digest}.md"
             await sandbox.write_bytes(cache_path, markdown.encode("utf-8"))
-            raw_summary = data.get("summary")
-            summary = (
-                raw_summary
-                if isinstance(raw_summary, str) and raw_summary
-                else markdown
-            )[:WEB_FETCH_INLINE_MAX_CHARS]
             return (
-                f"{url} is {len(markdown)} characters, too long to return directly. "
-                f"The full page was saved to `{cache_path}` — use read_file to read more of it "
-                f"if this summary is not enough.\n\n---\n\n{summary}"
+                f"{url} is {len(markdown)} characters. The first "
+                f"{WEB_FETCH_INLINE_MAX_CHARS} are below, and the whole page was saved "
+                f"to `{cache_path}`. If what you need is not below, grep that path for "
+                f"it rather than reading from the top — on a page this size searching "
+                f"finds the answer in one call where paging through it takes many. "
+                f"read_file with an offset also works when you want to keep "
+                f"reading in order.\n\n---\n\n{markdown[:WEB_FETCH_INLINE_MAX_CHARS]}"
             )
         except httpx.HTTPStatusError as exc:
             return f"web_fetch failed: Firecrawl returned {exc.response.status_code} for {url!r}."
@@ -381,9 +392,11 @@ def web_fetch_tool(sandbox: Sandbox) -> StructuredTool:
         name="web_fetch",
         description=(
             "Fetch a public HTTP(S) URL and get back its content as clean markdown. "
-            f"Pages up to {WEB_FETCH_INLINE_MAX_CHARS} characters come back directly; "
-            "longer pages are saved to a file in the sandbox and a summary plus that "
-            "file's path come back instead — use read_file on that path for the rest."
+            f"Pages up to {WEB_FETCH_INLINE_MAX_CHARS} characters come back whole; "
+            "longer ones are saved to a file in the sandbox and come back truncated "
+            "to that length, with the file's path. The text is always the page's "
+            "own — nothing here summarises it. Use grep on that path to find what "
+            "the truncated part cut off, or read_file with an offset to keep reading."
         ),
     )
 
