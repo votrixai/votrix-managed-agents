@@ -36,6 +36,59 @@ def test_cloud_run_manifests_have_unique_environment_variable_names():
             )
 
 
+def test_hosted_runtime_regions_follow_the_supabase_region_matrix():
+    config = (ROOT / "scripts/gcloud/config.sh").read_text(encoding="utf-8")
+    assert 'PRODUCTION_REGION="${VMA_PRODUCTION_REGION:-us-east4}"' in config
+    assert 'STAGING_REGION="${VMA_STAGING_REGION:-us-west2}"' in config
+    assert (
+        'CLOUD_BUILD_REGION="${VMA_CLOUD_BUILD_REGION:-us-central1}"'
+        in config
+    )
+
+    for manifest_name in (
+        "service.production.yaml",
+        "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
+    ):
+        manifest = yaml.safe_load(
+            (ROOT / manifest_name).read_text(encoding="utf-8")
+        )
+        env = manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        tasks_location = next(
+            entry["value"] for entry in env if entry["name"] == "TASKS_LOCATION"
+        )
+        assert tasks_location == "__VMA_TASKS_LOCATION__"
+
+    production_deploy = (ROOT / "scripts/gcloud/2-deploy-production.sh").read_text(
+        encoding="utf-8"
+    )
+    staging_deploy = (ROOT / "scripts/gcloud/3-deploy-staging.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'REGION="${REGION_OVERRIDE:-$PRODUCTION_REGION}"'
+        in production_deploy
+    )
+    assert 'REGION="${REGION_OVERRIDE:-$STAGING_REGION}"' in staging_deploy
+    for deploy_script in (production_deploy, staging_deploy):
+        assert deploy_script.count(
+            "s|__VMA_TASKS_LOCATION__|${REGION}|"
+        ) == 3
+
+    cloudbuild = (ROOT / "cloudbuild.yaml").read_text(encoding="utf-8")
+    assert "_REGION: us-east4" in cloudbuild
+    assert cloudbuild.count(
+        "s|__VMA_TASKS_LOCATION__|${_REGION}|"
+    ) == 3
+
+    triggers = (ROOT / "scripts/gcloud/4-setup-triggers.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"$PRODUCTION_REGION"' in triggers
+    assert '"$STAGING_REGION"' in triggers
+
+
 def test_firecrawl_secret_is_imported_and_injected_into_every_runtime():
     expected = {
         "service.production.yaml": "vma-firecrawl-api-key",

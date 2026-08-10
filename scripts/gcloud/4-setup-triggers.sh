@@ -9,7 +9,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 
 OWNER="${1:?Usage: $0 <github-owner> <repo-name>}"
 REPO="${2:?Usage: $0 <github-owner> <repo-name>}"
-TRIGGER_REGION="${VMA_TRIGGER_REGION:-$REGION}"
+TRIGGER_REGION="${VMA_TRIGGER_REGION:-$CLOUD_BUILD_REGION}"
 CONNECTION_NAME="${VMA_CLOUD_BUILD_CONNECTION:-votrix-github}"
 LINKED_REPOSITORY="${VMA_CLOUD_BUILD_REPOSITORY:-$REPO}"
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
@@ -72,6 +72,7 @@ import_trigger() {
   APP_ENV=$5
   SECRET_SUFFIX=$6
   APPROVAL_REQUIRED=$7
+  DEPLOY_REGION=$8
 
   if gcloud builds triggers describe "$TRIGGER_NAME" \
     --project="$PROJECT_ID" \
@@ -92,7 +93,7 @@ import_trigger() {
     -e "s|__APPROVAL_REQUIRED__|${APPROVAL_REQUIRED}|g" \
     -e "s|__SOURCE_REPOSITORY__|${SOURCE_REPOSITORY}|g" \
     -e "s|__SERVICE_ACCOUNT__|${TRIGGER_SERVICE_ACCOUNT_RESOURCE}|g" \
-    -e "s|__REGION__|${REGION}|g" \
+    -e "s|__REGION__|${DEPLOY_REGION}|g" \
     -e "s|__ARTIFACT_REPOSITORY__|${REPOSITORY}|g" \
     "$TRIGGER_TEMPLATE" >"$TEMP_TRIGGER"
 
@@ -111,7 +112,8 @@ import_trigger \
   service.production.yaml \
   production \
   "" \
-  "$PRODUCTION_APPROVAL_REQUIRED"
+  "$PRODUCTION_APPROVAL_REQUIRED" \
+  "$PRODUCTION_REGION"
 
 import_trigger \
   vma-deploy-staging \
@@ -120,7 +122,8 @@ import_trigger \
   service.staging.yaml \
   staging \
   "-staging" \
-  false
+  false \
+  "$STAGING_REGION"
 
 if [ "$PRODUCTION_REQUIRE_APPROVAL" = "true" ]; then
   echo "Done. main queues an approval-gated production build; staging deploys staging automatically."

@@ -20,7 +20,8 @@ the correctness fallback.
 | `votrix-managed-agents-staging` | Staging API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.staging.yaml` |
 | `votrix-managed-agents-staging-worker` | Staging turn execution | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.staging.yaml` |
 
-Project `votrixai-480422`, region `us-central1` (see `scripts/gcloud/config.sh`).
+Project `votrixai-480422`. Production runs in `us-east4`; staging runs in
+`us-west2` (see `scripts/gcloud/config.sh`).
 
 ## Capacity model
 
@@ -78,7 +79,7 @@ never carries correctness.
 
 ```bash
 gcloud run services update votrix-managed-agents-worker \
-  --project=votrixai-480422 --region=us-central1 \
+  --project=votrixai-480422 --region=us-east4 \
   --min-instances=2 --max-instances=2
 ```
 

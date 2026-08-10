@@ -51,12 +51,14 @@ work queue, vault). Nothing in the repo or scripts currently mentions backups.
       forever.
 
 ### 5. Region / data residency  (owner: operator; record the decision)
-- [ ] Confirm the stack's regions (Cloud Run `us-central1`, Supabase AWS
-      region, R2, E2B) against target-account requirements, or explicitly
-      record "no residency commitment at launch": ______
+- [ ] Confirm the stack's paired regions (production Cloud Run `us-east4` with
+      Supabase AWS `us-east-1`; staging Cloud Run `us-west2` with Supabase AWS
+      `us-west-1`; plus R2 and E2B) against target-account requirements, or
+      explicitly record "no residency commitment at launch": ______
 
-Why pre-launch: moving regions later is a full data migration with downtime —
-a one-way door in practice.
+Why pre-launch: moving the database region later is a data migration. Moving
+the stateless Cloud Run services is a separate regional rollout and origin
+cutover, so keep the deployment matrix explicit.
 
 ## Tier 2 — decide now, implement incrementally
 
