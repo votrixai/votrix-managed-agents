@@ -78,6 +78,10 @@ operator-provisioned Organization platform funding.
 
 ### Changed
 
+- Hosted runtimes now follow their Supabase data plane: production Cloud Run,
+  Cloud Tasks, and Artifact Registry use `us-east4`, while staging uses
+  `us-west2`. The regional Cloud Build source connection remains in
+  `us-central1`.
 - The external product contract is now explicitly Votrix Managed Agents (VMA):
   the TypeScript package is `@votrix/managed-agents`, client credentials use
   `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use

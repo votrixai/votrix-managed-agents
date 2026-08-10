@@ -45,7 +45,8 @@ for arg in "$@"; do
   esac
 done
 
-REGION="${REGION_OVERRIDE:-$REGION}"
+REGION="${REGION_OVERRIDE:-$STAGING_REGION}"
+REGISTRY="${REGION}-docker.pkg.dev"
 API_MANIFEST="${REPO_ROOT}/service.staging.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
@@ -116,6 +117,7 @@ if [ -z "$WORKER_URL" ]; then
     -e "s|IMAGE_URL|${IMAGE}|" \
     -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
     -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
+    -e "s|__VMA_TASKS_LOCATION__|${REGION}|" \
     -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
     -e 's|value: "cloud"|value: "inline"|' \
     "$WORKER_MANIFEST" | \
@@ -149,6 +151,7 @@ sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
   -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
+  -e "s|__VMA_TASKS_LOCATION__|${REGION}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$WORKER_MANIFEST" | \
   gcloud run services replace \
@@ -162,6 +165,7 @@ sed \
   -e "s|IMAGE_URL|${IMAGE}|" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
   -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
+  -e "s|__VMA_TASKS_LOCATION__|${REGION}|" \
   -e "s|__VMA_WORKER_URL__|${WORKER_URL}|" \
   "$API_MANIFEST" | \
   gcloud run services replace \

@@ -30,7 +30,7 @@
       "vars": {
         "ENVIRONMENT": "staging",
         "PUBLIC_HOSTNAME": "staging-api.vma.votrixai.com",
-        "ORIGIN_URL": "https://votrix-managed-agents-staging-eqp3ofm5eq-uc.a.run.app"
+        "ORIGIN_URL": "https://votrix-managed-agents-staging-570075464278.us-west2.run.app"
       }
     },
     "production": {
@@ -44,7 +44,7 @@
       "vars": {
         "ENVIRONMENT": "production",
         "PUBLIC_HOSTNAME": "api.vma.votrixai.com",
-        "ORIGIN_URL": "https://votrix-managed-agents-eqp3ofm5eq-uc.a.run.app"
+        "ORIGIN_URL": "https://votrix-managed-agents-570075464278.us-east4.run.app"
       }
     }
   }

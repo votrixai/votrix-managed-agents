@@ -8,7 +8,7 @@ import {
 } from "../src/router.ts";
 
 const STAGING_ORIGIN =
-  "https://votrix-managed-agents-staging-eqp3ofm5eq-uc.a.run.app";
+  "https://votrix-managed-agents-staging-570075464278.us-west2.run.app";
 const STAGING_HOSTNAME = "staging-api.vma.votrixai.com";
 const STAGING_BASE_URL = `https://${STAGING_HOSTNAME}`;
 

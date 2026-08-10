@@ -77,6 +77,7 @@ steps:
             -e "s|IMAGE_URL|$$IMAGE|" \
             -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
             -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
+            -e "s|__VMA_TASKS_LOCATION__|${_REGION}|" \
             -e 's|value: "__VMA_WORKER_URL__"|value: ""|' \
             -e 's|value: "cloud"|value: "inline"|' \
             "$$WORKER_SERVICE_CONFIG" | \
@@ -110,6 +111,7 @@ steps:
           -e "s|IMAGE_URL|$$IMAGE|" \
           -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
           -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
+          -e "s|__VMA_TASKS_LOCATION__|${_REGION}|" \
           -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
           "$$WORKER_SERVICE_CONFIG" | \
           gcloud run services replace \
@@ -123,6 +125,7 @@ steps:
           -e "s|IMAGE_URL|$$IMAGE|" \
           -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
           -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
+          -e "s|__VMA_TASKS_LOCATION__|${_REGION}|" \
           -e "s|__VMA_WORKER_URL__|$$WORKER_URL|" \
           "${_SERVICE_CONFIG}" | \
           gcloud run services replace \
@@ -135,7 +138,7 @@ substitutions:
   _SERVICE_NAME: votrix-managed-agents
   _SERVICE_CONFIG: service.production.yaml
   _REPO: votrix
-  _REGION: us-central1
+  _REGION: us-east4
   _APP_ENV: production
   _SECRET_SUFFIX: ""
 
