@@ -38,10 +38,10 @@ def test_cloud_run_manifests_have_unique_environment_variable_names():
 
 def test_cloud_run_minimum_instances_match_runtime_roles():
     expected = {
-        "service.production.yaml": "1",
-        "service.worker.production.yaml": "1",
+        "service.production.yaml": "0",
+        "service.worker.production.yaml": "0",
         "service.staging.yaml": "0",
-        "service.worker.staging.yaml": "1",
+        "service.worker.staging.yaml": "0",
     }
 
     for manifest_name, minimum in expected.items():

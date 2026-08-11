@@ -141,11 +141,11 @@ class Settings(BaseSettings):
     # Run the janitor (app/worker.py) inside this process, as a background loop.
     #
     # Off by default because most processes must not: it is one sweep of the
-    # whole tenant's stranded sessions per minute, and it belongs to whichever
-    # deployment is guaranteed to have an instance awake to run it. Ours is the
-    # worker service — `minScale: 1` keeps one alive and `cpu-throttling: false`
-    # lets it think between requests, which is exactly what a background loop
-    # needs and what a scale-to-zero API service cannot promise.
+    # whole tenant's stranded sessions per minute. Hosted workers enable it so
+    # each Cloud Tasks cold start also starts the loop. With `minScale: 0` it is
+    # intentionally best-effort between requests: the Session lease remains
+    # authoritative, and the next message can reclaim an expired lease even if
+    # no sweep ran while the worker was scaled to zero.
     #
     # Safe on more than one instance, but only because the sweep selects its
     # batch `FOR UPDATE SKIP LOCKED` (see `list_stuck_sessions`). Without that

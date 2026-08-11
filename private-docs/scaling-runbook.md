@@ -7,18 +7,18 @@ Cloud Run. It assumes the P1 hardening, P2 API/worker split, and mandatory P2.5
 cross-instance preview transport from `PLAN-horizontal-scaling.md` have shipped.
 Autoscaling (P3, Cloud Tasks) ships pre-launch as part of the first release
 (spec: `PLAN-p3-autoscale.md`).
-The checked-in hosted profile uses `VMA_WORK_DISPATCH_MODE=hybrid`: Cloud Tasks
-push drives Cloud Run autoscaling, while the permanent PostgreSQL reconciler is
-the correctness fallback.
+Cloud Tasks push drives Cloud Run autoscaling. Hosted services scale to zero;
+the expired-Session sweeper runs best-effort whenever a worker instance is
+active, while Session leases remain authoritative during idle periods.
 
 ## First-release topology after P3
 
 | Service | Role | Scaling | Manifest |
 |---|---|---|---|
-| `votrix-managed-agents` | Public API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.production.yaml` |
-| `votrix-managed-agents-worker` | Private OIDC turn execution + slow PostgreSQL reconciler + E2B janitor | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.production.yaml` |
+| `votrix-managed-agents` | Public API + SSE | `minScale=0 / maxScale=2`, request-driven | `service.production.yaml` |
+| `votrix-managed-agents-worker` | Private OIDC turn execution + expired-Session sweeper | Cloud Tasks request-driven, `minScale=0 / maxScale=4` | `service.worker.production.yaml` |
 | `votrix-managed-agents-staging` | Staging API + SSE | `minScale=0 / maxScale=2`, request-driven | `service.staging.yaml` |
-| `votrix-managed-agents-staging-worker` | Staging turn execution | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.staging.yaml` |
+| `votrix-managed-agents-staging-worker` | Staging turn execution + expired-Session sweeper | Cloud Tasks request-driven, `minScale=0 / maxScale=4` | `service.worker.staging.yaml` |
 
 Project `votrixai-480422`. Production runs in `us-east4`; staging runs in
 `us-west2` (see `scripts/gcloud/config.sh`).
@@ -35,17 +35,19 @@ that setting exists nowhere in the code, the manifests, or the deploy scripts,
 and never did.
 
 - Worker `containerConcurrency` is `20`, `maxScale` is `4`.
-- Production starts with 1 warm instance → **20 guaranteed concurrent turns**
-  and may autoscale to 4 instances → **80 concurrent turns**. Staging matches.
+- Production and staging start at zero and may autoscale to 4 worker instances
+  → **80 concurrent turns**. The first turn after an idle period includes a
+  worker cold start; there is no guaranteed warm turn capacity.
 - Turns are IO-bound coordinators (model streaming, E2B, Postgres); heavy
   compute happens inside E2B sandboxes, not on the worker. What a worker
   instance holds per turn is the graph's state, one model stream and one
   sandbox handle, so **memory is the binding constraint, not CPU** — which is
   why capacity is added in instances rather than by raising concurrency on a
   1 vCPU / 4 GiB box.
-- Admitted overflow waits in the Postgres queue (`environment_work`, status
-  `queued`) until a slot frees. The hosted Organization active-work limit is 20,
-  so requests beyond that queued/running cap can be rejected rather than queued.
+- Cloud Tasks retains accepted deliveries until a worker is available. The
+  application itself permits only one active turn per Session; another message
+  to that Session is rejected as busy rather than stored in an application
+  work queue.
 
 ## How worker autoscaling operates
 
@@ -55,15 +57,9 @@ so the manifest remains the source of truth. **A manual
 
 Named Cloud Tasks target the private worker URL with an OIDC token. Each task is
 an in-flight HTTP request for the duration of the turn, so Cloud Run observes
-demand and scales worker instances. Nothing inside the process limits turns
-beyond that: the push handler and the reconciler share whatever
-`containerConcurrency` allows.
-
-`VMA_WORKER_CONCURRENCY=1` and
-`VMA_WORKER_POLL_INTERVAL_SECONDS=20` intentionally describe only the slow
-reconciler. They do not cap push capacity. If task creation or delivery fails,
-the reconciler eventually leases the durable PostgreSQL work row; Cloud Tasks
-never carries correctness.
+demand and scales worker instances. Nothing inside the process adds a second
+turn limiter beyond `containerConcurrency`. The expired-Session sweeper does
+not execute turns and does not recover failed task creation.
 
 ### Standard persistent capacity change
 
@@ -92,60 +88,48 @@ one instance's death from taking every turn on it.
 
 Raise `maxScale` when either holds for more than a day and every budget permits:
 
-- Work items regularly sit in `queued` for tens of seconds while all slots are
-  busy (queue wait = `started_at - queued_at` in `environment_work` rows).
+- Cloud Tasks queue depth or oldest-task age remains elevated while every
+  worker instance is at its concurrency limit.
 - Worker instance CPU or memory sustained above ~70% at normal load.
 
 Lower `maxScale` when the fleet never approaches its bound for a week and queue
 waits are zero. Change `minScale` only for cold-start or guaranteed-capacity
-requirements; Cloud Tasks already supplies the scale signal in hybrid mode.
+requirements; Cloud Tasks already supplies the scale signal in hosted `cloud`
+dispatch mode.
 
 ## What scaling does NOT change
 
 - **Turn speed.** More instances add parallel capacity, not faster turns.
-- **Token preview.** Preserved across the split by the P2.5 `pg_notify` preview
-  broker (`VMA_PREVIEW_BROKER=pg_notify`): workers publish preview frames via
-  Postgres `NOTIFY`, and API instances `LISTEN` and forward them to their local
-  SSE subscribers. This preserves `event_deltas` typewriter delivery when the
-  SSE client and executing worker land on different instances. Delivery remains
-  best-effort and non-replayable; durable Session events reconcile any missed
-  frame. The real Supabase broker smoke used separate worker-role and API-role
-  OS processes and delivered three frames, including two coalesced deltas with
-  complete text. It verifies the cross-process PostgreSQL path but is not a
-  substitute for a smoke through the complete public SSE endpoint.
-  This transport is not a scaling knob — adding worker instances neither helps
-  nor harms it. `VMA_PREVIEW_BROKER=process_local` remains the local-development
-  default; it must not replace `pg_notify` in the split hosted topology.
-- **Correctness.** Work-queue leases (`lease_id + generation` + heartbeat) and
-  the per-Session execution lease fence concurrent instances; a superseded
-  worker cannot persist events or finalize work. Retries are capped by
-  `VMA_WORK_MAX_ATTEMPTS=3`; only admission to graph execution consumes an
-  attempt. Duplicate, busy, deferred, or superseded dispatches do not consume
-  the cap. Stage A journals and deterministic events prevent a completed graph
-  from invoking the model again after a control-plane crash.
+- **Event streaming.** Durable Session events remain the replay source. A
+  PostgreSQL `NOTIFY` only wakes listeners so they can poll sooner; losing a
+  notification does not lose an event. This transport is not a scaling knob —
+  adding worker instances neither helps nor harms it.
+- **Correctness.** The per-Session `lock_version` and execution lease fence
+  writes from a superseded worker. A task redelivered after the Session has
+  returned to idle is a no-op. External tool side effects are not generally
+  exactly-once, so high-risk tools still need caller-provided idempotency.
 
 ## Cloud Tasks incident fallback
 
 If task creation or delivery is failing:
 
-1. Do not delete or rewrite PostgreSQL work rows. They are the durable ledger.
-2. Confirm workers remain at `minScale=1`; the 20-second reconciler continues
-   processing queued and expired work without Cloud Tasks.
+1. Do not delete queue tasks or rewrite Session state while diagnosing.
+2. `minScale=0` is normal: a successfully created Cloud Task wakes the worker.
+   Raising the minimum does not recreate a task that was never accepted.
 3. Inspect `scripts/gcloud/status.sh`, then rerun
    `scripts/gcloud/8-setup-cloud-tasks.sh <environment>` to repair queue policy
    and IAM drift.
-4. If hybrid dispatch itself must be disabled, deploy both API and worker with
-   `VMA_WORK_DISPATCH_MODE=poll`. Restore the normal hybrid manifests only after
-   task delivery is healthy.
+4. For a worker that died mid-turn, the Session lease expires and the next
+   message can reclaim it. Waking the worker also starts the best-effort sweeper
+   that clears the stale visible state.
 
 Cloud Tasks retry `maxAttempts=8` is an infrastructure delivery bound, not the
 model-execution attempt counter. The application maps terminal/busy outcomes to
 HTTP 200 and only transient outcomes to retryable 5xx responses.
 
-## Combined role is local/self-hosted only
+## Inline dispatch is local/self-hosted only
 
-The `combined` role remains the compatibility default for local development and
-simple self-hosting. It is not the maintained Cloud Run production topology.
-Do not turn `service.production.yaml` back into a combined service or use API
-instance scaling to add turn capacity; scale the dedicated worker manifest as
-described above.
+`TURN_DISPATCH=inline` remains the zero-infrastructure default for local
+development and simple self-hosting. Hosted manifests use `cloud` and deploy the
+same image as separate public API and private worker services. API instance
+scaling does not add hosted turn capacity; scale the worker manifest instead.

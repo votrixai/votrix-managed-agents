@@ -6,7 +6,7 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "4"
         run.googleapis.com/cpu-throttling: "false"
     spec:
@@ -48,10 +48,9 @@ spec:
               value: "1"
             - name: TURN_DISPATCH
               value: "cloud"
-            # The janitor lives here and only here: minScale 1 keeps an
-            # instance awake for it, and cpu-throttling false lets it run
-            # between requests. The API service can scale to zero and cannot
-            # promise either.
+            # The best-effort sweeper runs whenever Cloud Tasks has an instance
+            # awake. Session leases remain authoritative while the service is
+            # scaled to zero; the next message can reclaim an expired lease.
             - name: VMA_RUN_SWEEPER
               value: "true"
             - name: TASKS_PROJECT
