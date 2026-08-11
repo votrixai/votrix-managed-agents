@@ -78,9 +78,9 @@ operator-provisioned Organization platform funding.
 
 ### Changed
 
-- The staging VMA API now scales to zero when idle; its private worker remains
-  warm so the PostgreSQL reconciler and E2B janitor continue to provide the
-  hosted recovery guarantees independently of API traffic.
+- All hosted VMA API and worker services now scale to zero when idle. Cloud
+  Tasks wakes workers for normal turns, and Session leases let the next message
+  reclaim an abandoned turn.
 - Hosted runtimes now follow their Supabase data plane: production Cloud Run,
   Cloud Tasks, and Artifact Registry use `us-east4`, while staging uses
   `us-west2`. The regional Cloud Build source connection remains in
@@ -102,10 +102,11 @@ operator-provisioned Organization platform funding.
   append-only `resources.add` downloads only the new file, while legacy
   bindings perform one compatibility hydration before persisting a descriptor.
 - The Cloud Run beta profile now separates public API instances from a private,
-  Cloud Tasks-driven worker service. Production keeps one warm worker, permits
-  up to eight, and limits each instance to five concurrent turns; staging keeps
-  one warm worker and permits two. A permanent PostgreSQL reconciler recovers
-  missed dispatches and expired leases independently of API request scaling.
+  Cloud Tasks-driven worker service. Both environments scale API and worker
+  services from zero; each worker accepts up to 20 concurrent turn requests and
+  each environment permits up to four worker instances. The standalone
+  expired-Session sweep remains optional rather than a permanently hosted
+  process.
 - PostgreSQL control-plane traffic now uses a bounded, configurable SQLAlchemy
   application pool by default; SQLite keeps `NullPool`, and
   `VMA_DB_POOL_SIZE=0` is the explicit PostgreSQL opt-out.
