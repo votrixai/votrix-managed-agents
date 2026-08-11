@@ -32,8 +32,9 @@ and 4 GiB memory; API instances accept 40 concurrent HTTP requests while worker
 instances use `containerConcurrency=5`, equal to the process turn limiter.
 
 Production keeps one to three API instances and one to eight worker instances.
-Staging keeps one to two API instances and one to two worker instances. Only the
-API services disable the Cloud Run Invoker IAM check; the worker services stay
+Staging scales its API from zero to two instances and keeps one to two worker
+instances. Only the API services disable the Cloud Run Invoker IAM check; the
+worker services stay
 private. Cloud Tasks push requests drive worker autoscaling, while PostgreSQL
 remains the source of truth and the reconciler preserves progress when dispatch
 is unavailable. API request autoscaling and Agent-turn capacity are independent.

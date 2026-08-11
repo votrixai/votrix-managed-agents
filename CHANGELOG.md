@@ -78,6 +78,9 @@ operator-provisioned Organization platform funding.
 
 ### Changed
 
+- The staging VMA API now scales to zero when idle; its private worker remains
+  warm so the PostgreSQL reconciler and E2B janitor continue to provide the
+  hosted recovery guarantees independently of API traffic.
 - Hosted runtimes now follow their Supabase data plane: production Cloud Run,
   Cloud Tasks, and Artifact Registry use `us-east4`, while staging uses
   `us-west2`. The regional Cloud Build source connection remains in
