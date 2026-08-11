@@ -17,7 +17,7 @@ the correctness fallback.
 |---|---|---|---|
 | `votrix-managed-agents` | Public API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.production.yaml` |
 | `votrix-managed-agents-worker` | Private OIDC turn execution + slow PostgreSQL reconciler + E2B janitor | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.production.yaml` |
-| `votrix-managed-agents-staging` | Staging API + SSE | `minScale=1 / maxScale=2`, request-driven | `service.staging.yaml` |
+| `votrix-managed-agents-staging` | Staging API + SSE | `minScale=0 / maxScale=2`, request-driven | `service.staging.yaml` |
 | `votrix-managed-agents-staging-worker` | Staging turn execution | Cloud Tasks request-driven, `minScale=1 / maxScale=2` | `service.worker.staging.yaml` |
 
 Project `votrixai-480422`. Production runs in `us-east4`; staging runs in
