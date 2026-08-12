@@ -5,8 +5,8 @@ Turns are run by the API process — inline, or by Cloud Tasks calling
 if the process dies mid-turn, which is what this is for.
 
 Run it with `python -m app.worker`, or set `VMA_RUN_SWEEPER=true` and the app
-starts `run_forever` on its own loop — which is how it runs deployed, on the
-worker service, because that is the one with an instance guaranteed awake.
+starts `run_forever` on its own loop. Hosted worker instances enable it whenever
+Cloud Tasks wakes them; scale-to-zero makes the sweep best-effort while idle.
 
 Running it at all is optional: a stranded session already frees itself the
 moment its lease lapses, so all this adds is not having to wait for the next

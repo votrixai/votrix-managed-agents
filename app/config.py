@@ -70,9 +70,9 @@ class Settings(BaseSettings):
     #
     # Zero means `NullPool`: a fresh connection per database session, which
     # against a hosted Postgres is a TCP handshake, a TLS handshake and an
-    # authentication round trip every time — 1.9 seconds against the Supabase
-    # pooler in us-east-2, versus 0.9 for the same work on a connection that
-    # already exists.
+    # authentication round trip every time. The gap grows when developers are
+    # far from the shared Supabase region, so local Postgres runs should keep a
+    # bounded pool instead of reconnecting for every session.
     #
     # The ceiling is not ours. That pooler, in session mode, refuses the
     # sixteenth client outright:
@@ -141,11 +141,11 @@ class Settings(BaseSettings):
     # Run the janitor (app/worker.py) inside this process, as a background loop.
     #
     # Off by default because most processes must not: it is one sweep of the
-    # whole tenant's stranded sessions per minute, and it belongs to whichever
-    # deployment is guaranteed to have an instance awake to run it. Ours is the
-    # worker service — `minScale: 1` keeps one alive and `cpu-throttling: false`
-    # lets it think between requests, which is exactly what a background loop
-    # needs and what a scale-to-zero API service cannot promise.
+    # whole tenant's stranded sessions per minute. Hosted workers enable it so
+    # each Cloud Tasks cold start also starts the loop. With `minScale: 0` it is
+    # intentionally best-effort between requests: the Session lease remains
+    # authoritative, and the next message can reclaim an expired lease even if
+    # no sweep ran while the worker was scaled to zero.
     #
     # Safe on more than one instance, but only because the sweep selects its
     # batch `FOR UPDATE SKIP LOCKED` (see `list_stuck_sessions`). Without that

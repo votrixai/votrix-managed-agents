@@ -4,10 +4,9 @@ Internal only. Do not copy this document into the public documentation tree.
 `docs/votrix-core-architecture.md` is the public, contract-level view;
 deployment topology, scaling limits, and connection budgets stay here.
 
-Status as of 2026-07-19: the hosted API/worker split, PostgreSQL preview broker,
-Cloud Tasks hybrid dispatch, bounded replay, and Supavisor connection-mode
-split are deployed. Production is not the old single-process service: both the
-API and private worker currently run at `minScale=1 / maxScale=2`. The checked-in
+Status as of 2026-08-11: the hosted API/worker split, PostgreSQL event wake-up,
+Cloud Tasks dispatch, Session leases, and Supavisor connection-mode split are
+deployed. The API and private worker both scale from zero. The checked-in
 manifests are the source of truth. The W1 isolation matrix and W2 encryption-key
 rotation remain launch gates tracked in `PLAN-pre-launch-hardening.md` and
 `private-docs/pre-launch-checklist.md`; they do not change this topology.
@@ -18,39 +17,39 @@ rotation remain launch gates tracked in `PLAN-pre-launch-hardening.md` and
               Cloudflare API router (api.vma.votrixai.com)
                                   |
              +--------- public API service ---------------------+
-             | role=api · minScale 1 / maxScale 2               |
-             | containerConcurrency 40 · no embedded worker     |
+             | role=api · minScale 0 / maxScale 2               |
+             | containerConcurrency 80 · no inline turns        |
              | FastAPI public/hosted routes · durable SSE poll  |
-             | + preview replay · governance · work dispatch    |
+             | + pg_notify wake-up · governance · task dispatch |
              +--------------------+------------------------------+
                                   |
                  Supabase Postgres — source of truth
-                 | sessions · append-only events · work queue
+                 | sessions · append-only events
                  | LangGraph checkpoints · vault · usage
                  |
                  | transaction pooler :6543
-                 |   runtime CRUD, queue, event/preview publish,
+                 |   runtime CRUD, event publish,
                  |   checkpoint pool (prepare_threshold=None)
                  | session mode :5432
-                 |   preview LISTEN, janitor advisory lock
+                 |   event LISTEN
                  | direct/session migration DSN
                                   |
-   committed work row --------> Cloud Tasks named wake-up task
+   committed user event batch -> named Cloud Task
                                   |
-                   OIDC POST /internal/work/{work_id}/execute
+               OIDC POST /internal/sessions/{session_id}/process
                                   |
              +--------- private worker service -----------------+
-             | role=worker · minScale 1 / maxScale 2            |
-             | containerConcurrency 5 · turn limit 5            |
-             | Cloud Tasks push + permanent slow reconciler     |
-             | lease/generation fencing · bounded attempt cap   |
-             | crash-safe turn journal · idempotent event append|
+             | role=worker · minScale 0 / maxScale 4            |
+             | containerConcurrency 20                          |
+             | Cloud Tasks push + best-effort Session sweeper   |
+             | Session lease + lock_version write fencing       |
+             | append-only event commits                        |
              | DeepAgents/LangGraph · E2B sandbox 1:1/session   |
-             | preview coalescing -> pg_notify -> API listeners |
+             | event append -> pg_notify -> API listeners       |
              +--------------------------------------------------+
 ```
 
-Staging mirrors the same split and `1..2` scaling envelope with separate
+Staging mirrors the same split and scale-to-zero envelope with separate
 Cloud Run services, queue, secrets, and database. Local development retains the
 `combined` compatibility role and does not define the production topology.
 
@@ -58,46 +57,44 @@ Cloud Run services, queue, secrets, and database. Local development retains the
 
 Violating any of these is an incident.
 
-1. **Postgres is the only source of truth.** Cloud Tasks, preview frames, and
-   process-local state are reconstructible or losable. The reconciler alone
-   must be able to recover and run durable work.
-2. **Lease fencing applies to execution and writes.**
-   `(worker_id, lease_id, generation)` gates execution, event persistence,
-   usage recording, journal writes, and finalization. A superseded worker
-   cannot commit.
-3. **Lock session rows before work rows.** Never hold a work-row `FOR UPDATE`
-   lock while acquiring a Session lock; that inversion can deadlock.
-4. **Turn execution is bounded at-least-once.** A journaled completed graph run
-   is finalized without invoking the model again. Replays deduplicate events
-   where deterministic identity exists and the execution attempt count is
-   capped by `VMA_WORK_MAX_ATTEMPTS`. External tool side effects are not
-   exactly-once; high-risk tools must accept caller-provided idempotency.
+1. **Postgres holds durable application state.** Sessions, events, and graph
+   checkpoints survive process loss. The accepted event batch is also carried
+   in the Cloud Task payload, so task creation and delivery must remain healthy
+   for a newly accepted hosted turn to start.
+2. **Session claim and generation fencing apply to writes.** The API claims an
+   idle Session atomically. A release or interrupt advances `lock_version`, and
+   a superseded worker cannot append another Agent event.
+3. **A lost worker is bounded by the Session lease.** The next message can
+   reclaim an expired lease. The worker's expired-Session sweeper only shortens
+   the stale UI state while an instance happens to be active.
+4. **The worker endpoint stays private.** Cloud Tasks calls it with a runtime
+   service-account OIDC token; public traffic must not bypass the Session gate.
 5. **Session-scoped PostgreSQL features never use the transaction pooler.**
    LISTEN/NOTIFY subscriptions and session advisory locks use the dedicated
    session DSN. Runtime and checkpoint traffic use transaction mode with
    server-side prepared statements disabled.
-6. **Preview is best-effort.** Coalesced `pg_notify` frames preserve hosted
-   typewriter feedback, but clients reconcile against durable events and no
-   correctness path depends on a preview arriving.
-7. **Dispatch is a wake-up optimization.** A failed or deleted Cloud Tasks
-   queue must not lose committed work. The PostgreSQL reconciler remains the
-   recovery path permanently.
+6. **Event wake-up is best-effort.** `pg_notify` reduces stream polling latency,
+   but clients reconcile against durable events and no correctness path depends
+   on a notification arriving.
+7. **Cloud Tasks is the hosted execution path.** Scale-to-zero workers wake on
+   task delivery. A warm worker or Session sweeper does not recreate a task
+   whose creation failed.
 
 ## Scaling model
 
 - The API plane is stateless and every instance may serve any request or SSE
   stream. Long-held SSE streams consume request concurrency.
 - Worker turns are in-flight private HTTP requests, so Cloud Run scales on
-  actual execution demand and drains normal scale-in. Lease/journal recovery
-  covers infrastructure interruption.
-- Production currently provides five warm concurrent turns and can scale to
-  ten: `2 max worker instances × 5 turns per instance`. Accepted overflow
-  waits in the durable queue.
-- Worker `maxScale`, the per-instance turn limiter, and Cloud Tasks
+  actual execution demand and drains normal scale-in. Session leases bound the
+  stale state left by infrastructure interruption.
+- Production and staging have no guaranteed warm turn capacity. Each can scale
+  to 80 concurrent turn requests: `4 max worker instances × 20 requests per
+  instance`.
+- Worker `maxScale`, `containerConcurrency`, and Cloud Tasks
   `maxConcurrentDispatches` form three independent backpressure layers. Change
   them only from the measured PostgreSQL, E2B, provider, and spend budgets in
   `private-docs/scaling-runbook.md`.
-- Production currently permits at most two API and two worker instances. A
+- Production currently permits at most two API and four worker instances. A
   larger value requires updating the manifests, their test pins, the runbook's
   connection arithmetic, and the staging load evidence together.
 
@@ -112,7 +109,7 @@ repository does not imply shared authorization.
 | Public product API | `/v1/...` on the GA allowlist in `app/public_surface.py` | SDK and API integrations | Organization API key | Filtered OpenAPI and Fumadocs; public fields, status codes, errors, IDs, and event shapes are compatibility surfaces pinned by tests |
 | First-party builder | `/v1/me/organizations` today; future first-party routes stay below `/v1/me/...` | VMA builder browser | Supabase user JWT | Excluded from OpenAPI; may evolve with `vma-developer-app` |
 | Hosted operator | `/internal/organizations/...` | VMA operators | Supabase superadmin JWT through `require_super_admin` | Private SOPs only; never an SDK surface |
-| Infrastructure M2M | `/internal/work/...` on the private worker service | Cloud Tasks and the reconciler | Cloud Run IAM/OIDC plus work lease fencing | No public schema; changes with deployment infrastructure |
+| Infrastructure M2M | `/internal/sessions/.../process` on the private worker service | Cloud Tasks | Cloud Run IAM/OIDC plus Session generation fencing | No public schema; changes with deployment infrastructure |
 
 The edge also admits exact utility paths `/`, `/openapi.json`, `/health`, and
 `/health/...`. The complete hostname-to-path table, permanent naming tree,

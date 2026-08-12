@@ -36,6 +36,22 @@ def test_cloud_run_manifests_have_unique_environment_variable_names():
             )
 
 
+def test_cloud_run_minimum_instances_match_runtime_roles():
+    expected = {
+        "service.production.yaml": "0",
+        "service.worker.production.yaml": "0",
+        "service.staging.yaml": "0",
+        "service.worker.staging.yaml": "0",
+    }
+
+    for manifest_name, minimum in expected.items():
+        manifest = yaml.safe_load(
+            (ROOT / manifest_name).read_text(encoding="utf-8")
+        )
+        annotations = manifest["spec"]["template"]["metadata"]["annotations"]
+        assert annotations["autoscaling.knative.dev/minScale"] == minimum
+
+
 def test_hosted_runtime_regions_follow_the_supabase_region_matrix():
     config = (ROOT / "scripts/gcloud/config.sh").read_text(encoding="utf-8")
     assert 'PRODUCTION_REGION="${VMA_PRODUCTION_REGION:-us-east4}"' in config

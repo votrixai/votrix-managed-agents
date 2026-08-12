@@ -24,19 +24,18 @@ identity and a migration gate before every API-and-worker rollout.
 Each environment is split into an API service and a worker service. API
 instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
 instances expose a private OIDC turn endpoint plus health endpoints. Each worker
-admits at most five in-flight turn requests and keeps one slow PostgreSQL
-reconciler for expired leases and failed task creation. Both roles keep CPU
-allocated, use one web process, and run the
+admits at most 20 in-flight turn requests and keeps one
+best-effort sweeper for expired Session leases while an instance is active.
+Both roles keep CPU allocated, use one web process, and run the
 same startup and database liveness probes. Each instance is pinned to one vCPU
-and 4 GiB memory; API instances accept 40 concurrent HTTP requests while worker
-instances use `containerConcurrency=5`, equal to the process turn limiter.
+and 4 GiB memory; API instances accept 80 concurrent HTTP requests while worker
+instances use `containerConcurrency=20`.
 
-Production keeps one to three API instances and one to eight worker instances.
-Staging keeps one to two API instances and one to two worker instances. Only the
+Production and staging both scale API and worker services from zero. Only the
 API services disable the Cloud Run Invoker IAM check; the worker services stay
 private. Cloud Tasks push requests drive worker autoscaling, while PostgreSQL
-remains the source of truth and the reconciler preserves progress when dispatch
-is unavailable. API request autoscaling and Agent-turn capacity are independent.
+Session leases remain the source of truth if a worker disappears. API request
+autoscaling and Agent-turn capacity are independent.
 
 ## Prerequisites
 
@@ -47,12 +46,11 @@ is unavailable. API request autoscaling and Agent-turn capacity are independent.
   Run.
 - Keep development, staging, and production in three separate Supabase projects;
   these environments must never share a database. Runtime SQLAlchemy traffic
-  uses the Supavisor transaction pooler on port `6543`. LangGraph checkpoints,
-  the preview listener, and the janitor advisory lock use session-affine URLs
-  on port `5432`; the migration Job receives the same environment's direct
-  secret. A transaction-mode pooler cannot preserve the checkpoint schema's
-  session setting, a lifetime `LISTEN` connection, or a session-scoped
-  advisory lock. The local `.env` uses the development project; the two Secret
+  uses the Supavisor transaction pooler on port `6543`. LangGraph checkpoints
+  and the event listener use session-affine URLs on port `5432`; the migration
+  Job receives the same environment's direct secret. A transaction-mode pooler
+  cannot preserve the checkpoint schema's session setting or a lifetime
+  `LISTEN` connection. The local `.env` uses the development project; the two Secret
   Manager files below use staging and production.
 - Build the operator-owned `vma-hardened` template in the E2B account before
   creating an E2B-backed session.
@@ -82,9 +80,9 @@ On the first run, the worker services do not exist yet, so the command configure
 the queues, Enqueuer role, the Cloud Tasks primary service-agent role, and both
 OIDC `iam.serviceAccounts.actAs` bindings, then reports that worker Invoker
 bindings are pending. This is expected. The deploy
-scripts create a missing worker once in `poll` mode, query its real Cloud Run
+scripts create a missing worker once in `inline` bootstrap mode, query its real Cloud Run
 URL, grant the runtime identity `roles/run.invoker` on that private service, and
-only then render the final `hybrid` worker and API revisions with that URL.
+only then render the final `cloud` worker and API revisions with that URL.
 Rerunning the setup command remains an idempotent IAM/queue repair path. No
 guessed URL or Secret Manager placeholder is used.
 
@@ -179,38 +177,28 @@ loading them from Secret Manager. Both roles share the governance, Session,
 model, E2B, and storage settings. API-specific settings are:
 
 ```env
-VMA_SERVICE_ROLE=api
-VMA_EMBEDDED_WORKER_ENABLED=false
-VMA_DB_POOL_SIZE=4
-VMA_DB_MAX_OVERFLOW=2
+VMA_DB_POOL_SIZE=16
+VMA_DB_MAX_OVERFLOW=8
 ```
 
 Worker-specific settings are:
 
 ```env
-VMA_SERVICE_ROLE=worker
-VMA_EMBEDDED_WORKER_ENABLED=true
-VMA_WORKER_TURN_LIMIT=5
-VMA_WORKER_CONCURRENCY=1
-VMA_WORKER_POLL_INTERVAL_SECONDS=20
-VMA_WORKER_LEASE_SECONDS=120
-VMA_WORK_MAX_ATTEMPTS=3
-VMA_CHECKPOINT_POOL_MAX_SIZE=3
-VMA_DB_POOL_SIZE=4
-VMA_DB_MAX_OVERFLOW=1
+VMA_RUN_SWEEPER=true
+VMA_CHECKPOINT_POOL_MAX_SIZE=6
+VMA_DB_POOL_SIZE=8
+VMA_DB_MAX_OVERFLOW=4
 ```
 
 Shared hosted settings include:
 
 ```env
-VMA_EVENT_POLL_INTERVAL_SECONDS=1.0
-VMA_PREVIEW_BROKER=pg_notify
-VMA_WORK_DISPATCH_MODE=hybrid
-VMA_TASKS_QUEUE=vma-turns[-staging]
-VMA_TASKS_LOCATION=us-east4 (production) / us-west2 (staging)
-VMA_TASKS_SERVICE_ACCOUNT=vma-runtime@votrixai-480422.iam.gserviceaccount.com
-VMA_WORKER_URL=<discovered private Cloud Run worker URL>
-VMA_MAX_SESSION_INPUT_BYTES=67108864
+TURN_DISPATCH=cloud
+TASKS_PROJECT=votrixai-480422
+TASKS_QUEUE=vma-turns[-staging]
+TASKS_LOCATION=us-east4 (production) / us-west2 (staging)
+TASKS_SERVICE_ACCOUNT=vma-runtime@votrixai-480422.iam.gserviceaccount.com
+WORKER_URL=<discovered private Cloud Run worker URL>
 VMA_DB_POOL_TIMEOUT_SECONDS=10
 VMA_DB_POOL_RECYCLE_SECONDS=300
 VMA_REQUESTS_PER_MINUTE=600
@@ -220,19 +208,14 @@ VMA_PUBLIC_GA_ONLY=true
 VMA_CORS_ORIGINS=https://<matching-vma-developer-app>,https://docs.vma.votrixai.com
 ```
 
-The 64 MiB aggregate Session-input cap bounds create-time materialization and
-one-time E2B injection. E2B turns resume from the sealed filesystem and do not
-rehydrate all inputs from R2. Runtime SQLAlchemy uses transaction mode.
-Each in-flight Agent turn holds one session-mode checkpoint connection, every
-API process keeps one session-mode `LISTEN` connection, and a janitor leader
-holds a transient session-mode advisory-lock connection. Worker publishers use
-their existing SQLAlchemy pool and do not add a dedicated listener connection.
-PostgreSQL preview delivery is best-effort; SSE
-clients reconcile dropped or missed frames against durable Session events. The
-hosted Organization defaults admit bursts of up to 20 queued/running turns.
-Each worker admits five turns. Production starts with five warm execution slots
-and may scale to forty only after the production Supabase connection budget is
-measured and the release gate in the scaling runbook is satisfied.
+E2B turns resume from the sealed filesystem and do not rehydrate all inputs
+from R2. Runtime SQLAlchemy uses transaction mode. Checkpoint calls borrow from
+their own bounded pool, while each API/worker process keeps one session-mode
+`LISTEN` connection for event wake-ups. PostgreSQL notifications are
+best-effort; SSE clients reconcile missed notifications against durable Session
+events. Each worker admits 20 turn requests, starts at zero instances, and may
+scale to four only within the measured Supabase, E2B, provider, and spend
+budgets in the scaling runbook.
 
 ## Manual deploys
 
@@ -278,11 +261,11 @@ Both scripts enforce the same sequence:
 1. Build and push a commit-tagged image.
 2. Deploy or update `<service>-migrate` with that exact image.
 3. execute `sh scripts/migrate.sh` as a Cloud Run Job and wait for success.
-4. If the worker does not exist, create it in `poll` mode and query the URL that
+4. If the worker does not exist, create it in `inline` mode and query the URL that
    Cloud Run actually assigned.
 5. Grant the runtime OIDC identity `roles/run.invoker` on the private worker.
-6. Render and replace the private worker in `hybrid` mode with that URL.
-7. Render and replace the API service in `hybrid` mode only after the worker is
+6. Render and replace the private worker in `cloud` mode with that URL.
+7. Render and replace the API service in `cloud` mode only after the worker is
    ready.
 
 After the first deployment of an environment, verify the final state:
@@ -307,26 +290,25 @@ summary below is sufficient only for routine worker-count adjustments.
 API capacity and Agent-turn capacity scale independently. Cloud Run scales the
 API service from HTTP/SSE request load. Named Cloud Tasks send one authenticated
 request per durable work item, so in-flight turn requests drive worker scale-out.
-The process limiter and Cloud Run concurrency use the same bound:
+Cloud Run concurrency is the process bound:
 
 ```text
-turn execution capacity = worker instances × VMA_WORKER_TURN_LIMIT
+turn execution capacity = worker instances × containerConcurrency
 ```
 
-The checked-in manifests use `VMA_WORKER_TURN_LIMIT=5`, `containerConcurrency=5`,
-and one slow reconciler coroutine per instance. Production keeps one warm worker
-and permits at most eight instances, for 5–40 turns. Staging permits one or two,
-for 5–10 turns. The production maximum is not permission to deploy blindly:
+The checked-in manifests use `containerConcurrency=20`, scale workers from zero,
+and permit at most four instances in each environment, for up to 80 concurrent
+turn requests after scale-out. The production maximum is not permission to deploy blindly:
 the first production release remains blocked until the Supabase compute tier,
 pooler client ceiling, transaction-pool backend budget, and operational
 headroom are recorded in the scaling runbook.
 
-Cloud Tasks is never the work ledger. Task creation failure is logged and the
-20-second PostgreSQL reconciler eventually claims the queued item. Pausing or
-deleting a queue therefore slows dispatch but does not lose work. Queue retry
-policy is `maxAttempts=8`, 5–300 second backoff, and at most 25 concurrent
-dispatches. Each task sets its own 1,800-second dispatch deadline in application
-code; there is deliberately no queue-level deadline setting.
+Cloud Tasks delivery wakes a worker from zero and retries failed deliveries.
+The expired-Session sweeper is not a replacement for successful task creation;
+changing `minScale` does not repair queue or IAM failures. Queue retry policy is
+`maxAttempts=8`, 5–300 second backoff, and at most 25 concurrent dispatches.
+Each task sets its own 1,800-second dispatch deadline in application code; there
+is deliberately no queue-level deadline setting.
 
 Before raising `maxScale` or the per-instance turn limit, recalculate PostgreSQL,
 model-provider, E2B, CPU, memory, and spend budgets. A manual Cloud Run scaling
