@@ -1,76 +1,18 @@
-name: Votrix Managed Agents (VMA) CI
+name: Votrix Managed Agents (VMA) Deployments
 
+# GCP deployments are owned by the regional Google Cloud Build triggers. Keep
+# GitHub-hosted runners focused on publishing the documentation site so pushes
+# do not duplicate build and test work across the two CI systems.
 on:
   push:
-  pull_request:
+    branches:
+      - main
+      - staging
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    name: Tests on Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: uv sync --extra dev --extra sandbox-e2b
-
-      - name: Validate shell entrypoints
-        run: |
-          sh -n entrypoint.sh scripts/*.sh scripts/gcloud/*.sh
-          bash -n run.sh
-
-      - name: Run tests
-        run: uv run pytest
-
-  docs:
-    name: Fumadocs static site
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: website
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: website/.nvmrc
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Type-check documentation
-        run: npm run typecheck
-
-      - name: Lint documentation
-        run: npm run lint
-
-      - name: Build static documentation
-        run: npm run build
-
-      - name: Validate Cloudflare static-assets deployment
-        run: npx wrangler deploy --dry-run
-
   docs-deploy:
     # The documentation site renders the OpenAPI schema committed at
     # `website/public/openapi/vma.json`, so it goes stale the moment the API
@@ -85,11 +27,8 @@ jobs:
     #   CLOUDFLARE_ZONE_ID     The votrixai.com zone
     # One token holding both permissions can be used for each of the two.
     name: Publish documentation site
-    needs: [test, docs]
-    if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     concurrency:
       # Never let two pushes upload assets to the same environment at once.
       group: docs-deploy-${{ github.ref }}
@@ -176,33 +115,3 @@ jobs:
           # Cloudflare answers 200 with success:false for a rejected purge, so
           # the HTTP status alone is not enough to call this step green.
           echo "$response" | grep -q '"success":true'
-
-  cloudflare-api-router:
-    name: Cloudflare API router
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra/cloudflare/vma-api-router
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: infra/cloudflare/vma-api-router/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check router and deployment configuration
-        run: npm run check
-
-      - name: Validate staging deployment bundle
-        run: npm run dry-run:staging
-
-      - name: Validate production deployment bundle
-        run: npm run dry-run:production
