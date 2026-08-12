@@ -3,323 +3,27 @@
   "info": {
     "title": "Votrix Managed Agents",
     "version": "0.1.0",
-    "description": "The HTTP API implemented by the active Votrix Managed Agents rewrite. This document is generated from the same FastAPI application that serves requests, so route and model changes are checked into the documentation with the code.\n\n> **Base URL** `https://api.vma.votrixai.com`\n\nOrganization-scoped routes require `x-organization-id`. The current rewrite trusts that header and accepts, but does not authenticate, the optional `x-api-key`; do not expose it directly to untrusted clients."
+    "description": "VMA is an API-first agent harness framework that gives every Agent a sandbox for tools, files, and ongoing work.\n\n> **Base URL** `https://api.vma.votrixai.com`\n\nSend your VMA API key in the `x-api-key` header with each request. The key automatically connects the request to the right Organization."
   },
   "paths": {
-    "/v1/organizations": {
-      "get": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "List Organizations",
-        "operationId": "list_organizations_v1_organizations_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "description": "List Organizations within the Organization selected by the `x-organization-id` header."
-      },
-      "post": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "Create Organization",
-        "operationId": "create_organization_v1_organizations_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "description": "Create Organization within the Organization selected by the `x-organization-id` header."
-      }
-    },
-    "/v1/organizations/{organization_id}": {
-      "get": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "Retrieve Organization",
-        "operationId": "retrieve_organization_v1_organizations__organization_id__get",
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the organization addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "Retrieve Organization within the Organization selected by the `x-organization-id` header."
-      },
-      "post": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "Update Organization",
-        "operationId": "update_organization_v1_organizations__organization_id__post",
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the organization addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "Update Organization within the Organization selected by the `x-organization-id` header."
-      }
-    },
-    "/v1/organizations/{organization_id}/archive": {
-      "post": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "Archive Organization",
-        "operationId": "archive_organization_v1_organizations__organization_id__archive_post",
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the organization addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "Archive Organization within the Organization selected by the `x-organization-id` header."
-      }
-    },
-    "/v1/organizations/{organization_id}/members": {
-      "get": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "List Members",
-        "operationId": "list_members_v1_organizations__organization_id__members_get",
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the organization addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "List Members within the Organization selected by the `x-organization-id` header."
-      },
-      "post": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "Add Member",
-        "operationId": "add_member_v1_organizations__organization_id__members_post",
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the organization addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "Add Member within the Organization selected by the `x-organization-id` header."
-      }
-    },
-    "/v1/organizations/{organization_id}/members/{user_id}": {
-      "delete": {
-        "tags": [
-          "organizations"
-        ],
-        "summary": "Remove Member",
-        "operationId": "remove_member_v1_organizations__organization_id__members__user_id__delete",
-        "parameters": [
-          {
-            "name": "organization_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the organization addressed by this request."
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the user addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "Remove Member within the Organization selected by the `x-organization-id` header."
-      }
-    },
     "/v1/accounts": {
       "post": {
         "tags": [
           "accounts"
         ],
         "summary": "Create Account",
-        "description": "Create an Account with its own provider credential.\n\nSpend on this Account is measured and capped separately from every other\none, because a separate credential is what the provider enforces the\nboundary with: a request either carries this Account's key or it does not.\n\nThe credential is minted during this call, so the Account comes back\n`active` and ready to be spent through.",
+        "description": "Create an Account for tracking and limiting Agent usage separately.",
         "operationId": "create_account_v1_accounts_post",
         "parameters": [
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -360,7 +64,7 @@
           "accounts"
         ],
         "summary": "List Accounts",
-        "description": "List this Organization's Accounts, oldest first.",
+        "description": "List Accounts for your Organization.",
         "operationId": "list_accounts_v1_accounts_get",
         "parameters": [
           {
@@ -409,19 +113,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -468,19 +165,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -505,7 +195,7 @@
             }
           }
         },
-        "description": "Retrieve Account within the Organization selected by the `x-organization-id` header."
+        "description": "Retrieve Account for your Organization."
       }
     },
     "/v1/accounts/{account_id}/usage": {
@@ -514,7 +204,7 @@
           "accounts"
         ],
         "summary": "Retrieve Account Usage",
-        "description": "What this Account has spent, in USD.\n\nRead live from the provider that charges it, so the answer includes every\ncall made on this Account's credential rather than only the ones this\nplatform recorded. It is current as of the request; there is no settlement\ndelay to wait out.\n\nAnswered for a suspended Account too. What one spent has to stay readable,\nwhich is most of the reason Accounts are suspended rather than removed.",
+        "description": "Return the Account's total, daily, weekly, and monthly usage in USD, together with its limit and remaining amount when a limit is set.",
         "operationId": "retrieve_account_usage_v1_accounts__account_id__usage_get",
         "parameters": [
           {
@@ -529,19 +219,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -574,7 +257,7 @@
           "accounts"
         ],
         "summary": "Suspend Account",
-        "description": "Stop this Account spending, without giving up what it spent.\n\nThe credential is disabled at the provider, not removed, so the Account\nkeeps its id, its limit, and everything recorded against it — and `resume`\nturns the same credential back on.\n\nSessions already running on this Account fail their next model call. That\nis the point: a suspension that let existing work finish would not be one.\n\nThe Organization's default Account is refused. A request naming no Account\nresolves to it, so suspending it stops the whole Organization while reading\nas one Account's business.",
+        "description": "Prevent an Account from funding further Agent work while preserving its identity, limit, and usage history. The default Account cannot be suspended.",
         "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
         "parameters": [
           {
@@ -589,19 +272,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -634,7 +310,7 @@
           "accounts"
         ],
         "summary": "Resume Account",
-        "description": "Let a suspended Account spend again, on the credential it already had.",
+        "description": "Allow a suspended Account to fund Agent work again.",
         "operationId": "resume_account_v1_accounts__account_id__resume_post",
         "parameters": [
           {
@@ -649,19 +325,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -699,19 +368,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -746,7 +408,7 @@
             }
           }
         },
-        "description": "Create Agent within the Organization selected by the `x-organization-id` header."
+        "description": "Create Agent for your Organization."
       },
       "get": {
         "tags": [
@@ -847,19 +509,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -884,7 +539,7 @@
             }
           }
         },
-        "description": "List Agents within the Organization selected by the `x-organization-id` header."
+        "description": "List Agents for your Organization."
       }
     },
     "/v1/agents/{agent_id}/versions": {
@@ -950,19 +605,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -987,7 +635,7 @@
             }
           }
         },
-        "description": "List Agent Versions within the Organization selected by the `x-organization-id` header."
+        "description": "List Agent Versions for your Organization."
       }
     },
     "/v1/agents/{agent_id}": {
@@ -996,7 +644,7 @@
           "agents"
         ],
         "summary": "Retrieve Agent",
-        "description": "The active version, or a named one via `?version=`.",
+        "description": "Retrieve the active Agent version, or a specific version selected by the `version` query parameter.",
         "operationId": "retrieve_agent_v1_agents__agent_id__get",
         "parameters": [
           {
@@ -1027,19 +675,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1070,7 +711,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Edit the agent, minting a new version.\n\n`exclude_unset` is what makes this a patch: only the fields the client\nactually sent are applied, so omitting one keeps its current value instead\nof clearing it.",
+        "description": "Change only the supplied Agent fields and return the resulting version.",
         "operationId": "update_agent_v1_agents__agent_id__patch",
         "parameters": [
           {
@@ -1085,19 +726,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -1138,7 +772,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Edit the agent, minting a new version.\n\n`exclude_unset` is what makes this a patch: only the fields the client\nactually sent are applied, so omitting one keeps its current value instead\nof clearing it.",
+        "description": "Change only the supplied Agent fields and return the resulting version.",
         "operationId": "update_agent_v1_agents__agent_id__post",
         "parameters": [
           {
@@ -1153,19 +787,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -1222,19 +849,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1259,7 +879,7 @@
             }
           }
         },
-        "description": "Archive Agent within the Organization selected by the `x-organization-id` header."
+        "description": "Archive Agent for your Organization."
       }
     },
     "/v1/sessions": {
@@ -1273,19 +893,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -1320,7 +933,7 @@
             }
           }
         },
-        "description": "Create Session within the Organization selected by the `x-organization-id` header."
+        "description": "Create Session for your Organization."
       },
       "get": {
         "tags": [
@@ -1401,19 +1014,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1438,7 +1044,7 @@
             }
           }
         },
-        "description": "List Sessions within the Organization selected by the `x-organization-id` header."
+        "description": "List Sessions for your Organization."
       }
     },
     "/v1/sessions/{session_id}": {
@@ -1462,19 +1068,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1499,7 +1098,7 @@
             }
           }
         },
-        "description": "Retrieve Session within the Organization selected by the `x-organization-id` header."
+        "description": "Retrieve Session for your Organization."
       },
       "post": {
         "tags": [
@@ -1521,19 +1120,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -1568,7 +1160,7 @@
             }
           }
         },
-        "description": "Update Session within the Organization selected by the `x-organization-id` header."
+        "description": "Update Session for your Organization."
       },
       "delete": {
         "tags": [
@@ -1590,19 +1182,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1627,7 +1212,7 @@
             }
           }
         },
-        "description": "Delete Session within the Organization selected by the `x-organization-id` header."
+        "description": "Delete Session for your Organization."
       }
     },
     "/v1/sessions/{session_id}/archive": {
@@ -1651,19 +1236,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1688,7 +1266,7 @@
             }
           }
         },
-        "description": "Archive Session within the Organization selected by the `x-organization-id` header."
+        "description": "Archive Session for your Organization."
       }
     },
     "/v1/sessions/{session_id}/events": {
@@ -1697,7 +1275,7 @@
           "sessions"
         ],
         "summary": "Send Events",
-        "description": "Append client events. Refused with 409 while the agent is still replying.\n\n`user.interrupt` is the exception — it exists to reach a busy session, so\nit is accepted whatever the session is doing.",
+        "description": "Add client events to a Session. A new message is refused with `409` while the Agent is working; an interrupt is accepted during a turn.",
         "operationId": "send_events_v1_sessions__session_id__events_post",
         "parameters": [
           {
@@ -1713,19 +1291,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -1766,7 +1337,7 @@
           "sessions"
         ],
         "summary": "List Events",
-        "description": "The transcript, oldest first.\n\n`after_seq` is the cursor for tailing a session — a client tracking\n`last_event_seq` can ask for what it has not seen without having seen the\nlast event. `after_id`/`before_id` page like everything else.",
+        "description": "List the Session's ordered event history. Use `after_seq` to request only events after a sequence already processed.",
         "operationId": "list_events_v1_sessions__session_id__events_get",
         "parameters": [
           {
@@ -1842,19 +1413,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -1887,7 +1451,7 @@
           "sessions"
         ],
         "summary": "Stream Events",
-        "description": "Follow a session's events live, as server-sent events.\n\nResuming works two ways and they mean the same thing: `after_seq`, and the\n`Last-Event-ID` header a browser's `EventSource` sends by itself after a\ndropped connection. Each event carries its `seq` as the SSE id, so a\nreconnect picks up exactly where the last one stopped.\n\nAsking without either replays the session from the beginning, so a page\nthat was refreshed gets the whole transcript from this one call.\n\nThe stream stays open across turns and closes when the session terminates,\nwhen the client goes away, or after half an hour — at which point the\nclient reconnects with the id it last saw and misses nothing.\n\nNo database session is taken: this connection can outlive a request by a\nlong way, and holding a pooled connection open for it would spend the pool\non readers rather than on work.",
+        "description": "Follow Session events as server-sent events. Resume with `after_seq` or `Last-Event-ID`; without a cursor, the stream starts at the first event.",
         "operationId": "stream_events_v1_sessions__session_id__events_stream_get",
         "parameters": [
           {
@@ -1937,19 +1501,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2007,19 +1564,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2103,7 +1653,7 @@
             }
           }
         },
-        "description": "Retrieve Event within the Organization selected by the `x-organization-id` header."
+        "description": "Retrieve Event for your Organization."
       }
     },
     "/v1/sessions/{session_id}/live/files": {
@@ -2112,7 +1662,7 @@
           "sessions"
         ],
         "summary": "Capture Live File",
-        "description": "Take one file out of the sandbox now, without waiting for the turn.\n\nA session's outputs are collected when its turn ends. This is for the case\nwhere the agent has finished a deliverable partway through and the user\nwants it before the rest of the work is done — what comes back is the same\nkind of file record, downloaded the same way.\n\n409 once the sandbox is gone: the file existed in a container that no\nlonger does, and anything already collected is on `/v1/files` instead.",
+        "description": "Capture a file under `outputs/` as a File before the current turn finishes. The Session must have an available sandbox.",
         "operationId": "capture_live_file_v1_sessions__session_id__live_files_post",
         "parameters": [
           {
@@ -2128,19 +1678,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -2183,7 +1726,7 @@
           "sessions"
         ],
         "summary": "Attach Live Upload",
-        "description": "Put an already uploaded File into an existing Session sandbox.\n\nUpload the durable object through ``POST /v1/files`` first, then pass its\nid here. The Session must be idle and its E2B sandbox must still exist;\nthis endpoint may wake a paused sandbox, but it never rebuilds one that has\ngone away. ``path`` is relative to ``uploads/`` and defaults to the File's\nfilename. The mounted bytes are read-only to the agent.\n\nRetrying the same File at the same path is idempotent. A different File at\nan occupied path, a busy Session, or a Session without a usable sandbox is\nrefused with 409.",
+        "description": "Attach an existing File to an idle Session sandbox. `path` is relative to `uploads/` and defaults to the File's filename.",
         "operationId": "attach_live_upload_v1_sessions__session_id__live_uploads_post",
         "parameters": [
           {
@@ -2199,19 +1742,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -2254,25 +1790,18 @@
           "environments"
         ],
         "summary": "Create Environment",
-        "description": "Register an environment.\n\nDeclaring packages starts an image build that takes minutes, so this comes\nback straight away with `build_state: \"building\"`. Poll this environment\nuntil it reads `ready` — sessions are refused until then.",
+        "description": "Create an Environment for Session sandboxes. Wait for `build_state` to become `ready` before starting a Session.",
         "operationId": "create_environment_v1_environments_post",
         "parameters": [
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -2371,19 +1900,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2408,7 +1930,7 @@
             }
           }
         },
-        "description": "List Environments within the Organization selected by the `x-organization-id` header."
+        "description": "List Environments for your Organization."
       }
     },
     "/v1/environments/{environment_id}": {
@@ -2431,19 +1953,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2468,14 +1983,14 @@
             }
           }
         },
-        "description": "Retrieve Environment within the Organization selected by the `x-organization-id` header."
+        "description": "Retrieve Environment for your Organization."
       },
       "post": {
         "tags": [
           "environments"
         ],
         "summary": "Update Environment",
-        "description": "Changes reach new containers only — running sessions keep the image they started on.",
+        "description": "Update an Environment. Existing Sessions keep the setup with which they started; later Sessions use the update.",
         "operationId": "update_environment_v1_environments__environment_id__post",
         "parameters": [
           {
@@ -2490,19 +2005,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -2543,7 +2051,7 @@
           "environments"
         ],
         "summary": "Delete Environment",
-        "description": "Refused while any session still references it — archive those instead.",
+        "description": "Delete an Environment that is not referenced by a Session.",
         "operationId": "delete_environment_v1_environments__environment_id__delete",
         "parameters": [
           {
@@ -2558,19 +2066,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2603,7 +2104,7 @@
           "environments"
         ],
         "summary": "Archive Environment",
-        "description": "Retire it. Running sessions continue; new ones cannot reference it.",
+        "description": "Archive an Environment so it cannot be selected by new Sessions.",
         "operationId": "archive_environment_v1_environments__environment_id__archive_post",
         "parameters": [
           {
@@ -2618,19 +2119,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2663,25 +2157,18 @@
           "files"
         ],
         "summary": "Upload File",
-        "description": "Upload a file, in one call.\n\nFilename and content type ride along in the multipart part rather than\nbeing declared separately, and the size is whatever arrived — so nothing\nabout the file is a claim that has to be checked afterwards.",
+        "description": "Upload a File using `multipart/form-data`.",
         "operationId": "upload_file_v1_files_post",
         "parameters": [
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -2722,7 +2209,7 @@
           "files"
         ],
         "summary": "List Files",
-        "description": "Everything, or `?scope_id=<session id>` for one session's output.",
+        "description": "List Files, optionally limited to one Session with `scope_id`.",
         "operationId": "list_files_v1_files_get",
         "parameters": [
           {
@@ -2787,19 +2274,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2832,7 +2312,7 @@
           "files"
         ],
         "summary": "Retrieve File",
-        "description": "What the file is, without fetching it — name, size, where it came from.",
+        "description": "Retrieve File metadata without downloading its content.",
         "operationId": "retrieve_file_v1_files__file_id__get",
         "parameters": [
           {
@@ -2847,19 +2327,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2904,19 +2377,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -2941,7 +2407,7 @@
             }
           }
         },
-        "description": "Delete File within the Organization selected by the `x-organization-id` header."
+        "description": "Delete File for your Organization."
       }
     },
     "/v1/files/{file_id}/content": {
@@ -2950,7 +2416,7 @@
           "files"
         ],
         "summary": "Download File",
-        "description": "Redirect to a short-lived signed URL rather than stream the bytes.\n\n307 rather than 302 so the method survives the redirect, and the URL names\none object for a few minutes — it is not the bucket path.",
+        "description": "Get a short-lived download URL for a File.",
         "operationId": "download_file_v1_files__file_id__content_get",
         "parameters": [
           {
@@ -2965,19 +2431,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3008,25 +2467,18 @@
           "skills"
         ],
         "summary": "Create Skill",
-        "description": "Upload a skill package.\n\nMultipart rather than a presigned URL: the package is unpacked inside a\nsandbox and read by the agent as instructions, so it gets checked on the\nway in. Its own SKILL.md is what names it.",
+        "description": "Upload a Skill package using `multipart/form-data`.",
         "operationId": "create_skill_v1_skills_post",
         "parameters": [
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -3125,19 +2577,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3162,7 +2607,7 @@
             }
           }
         },
-        "description": "List Skills within the Organization selected by the `x-organization-id` header."
+        "description": "List Skills for your Organization."
       }
     },
     "/v1/skills/{skill_id}": {
@@ -3185,19 +2630,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3222,14 +2660,14 @@
             }
           }
         },
-        "description": "Retrieve Skill within the Organization selected by the `x-organization-id` header."
+        "description": "Retrieve Skill for your Organization."
       },
       "post": {
         "tags": [
           "skills"
         ],
         "summary": "Update Skill",
-        "description": "Edit a skill, optionally replacing what is in it.\n\nMultipart, like create, because the package can come through here too. The\nid does not change, so every Agent already referencing this skill picks up\nthe new contents without being edited — which is the reason this exists\nrather than callers deleting and re-uploading.\n\nSending a package re-derives the name from its SKILL.md and ignores `name`:\na package that disagreed with the name stored beside it would fail to load\nin the sandbox. Sessions already running keep the package their container\nwas built with.",
+        "description": "Update Skill metadata and optionally replace its package.",
         "operationId": "update_skill_v1_skills__skill_id__post",
         "parameters": [
           {
@@ -3244,19 +2682,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -3310,19 +2741,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3347,7 +2771,7 @@
             }
           }
         },
-        "description": "Delete Skill within the Organization selected by the `x-organization-id` header."
+        "description": "Delete Skill for your Organization."
       }
     },
     "/v1/skills/{skill_id}/content": {
@@ -3370,19 +2794,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3405,7 +2822,7 @@
             }
           }
         },
-        "description": "Download Skill within the Organization selected by the `x-organization-id` header."
+        "description": "Download Skill for your Organization."
       }
     },
     "/v1/memory_stores": {
@@ -3419,19 +2836,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -3466,7 +2876,7 @@
             }
           }
         },
-        "description": "Create Memory Store within the Organization selected by the `x-organization-id` header."
+        "description": "Create Memory Store for your Organization."
       },
       "get": {
         "tags": [
@@ -3546,7 +2956,7 @@
                 }
               ]
             },
-            "description": "Opaque CMA pagination cursor returned by the previous page.",
+            "description": "Opaque pagination cursor returned by the previous page.",
             "example": "page_example_cursor"
           },
           {
@@ -3584,19 +2994,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3621,7 +3024,7 @@
             }
           }
         },
-        "description": "List Memory Stores within the Organization selected by the `x-organization-id` header."
+        "description": "List Memory Stores for your Organization."
       }
     },
     "/v1/memory_stores/{memory_store_id}": {
@@ -3645,19 +3048,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3682,7 +3078,7 @@
             }
           }
         },
-        "description": "Retrieve Memory Store within the Organization selected by the `x-organization-id` header."
+        "description": "Retrieve Memory Store for your Organization."
       },
       "post": {
         "tags": [
@@ -3704,19 +3100,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "requestBody": {
@@ -3751,7 +3140,7 @@
             }
           }
         },
-        "description": "Update Memory Store within the Organization selected by the `x-organization-id` header."
+        "description": "Update Memory Store for your Organization."
       },
       "delete": {
         "tags": [
@@ -3773,19 +3162,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3810,7 +3192,7 @@
             }
           }
         },
-        "description": "Delete Memory Store within the Organization selected by the `x-organization-id` header."
+        "description": "Delete Memory Store for your Organization."
       }
     },
     "/v1/memory_stores/{memory_store_id}/archive": {
@@ -3834,19 +3216,12 @@
           {
             "name": "x-api-key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             },
-            "description": "Optional attribution value. It is accepted but not validated by the current rewrite and must not be treated as an authentication boundary.",
-            "example": "vma_example_key"
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_live_example_key"
           }
         ],
         "responses": {
@@ -3871,68 +3246,7 @@
             }
           }
         },
-        "description": "Archive Memory Store within the Organization selected by the `x-organization-id` header."
-      }
-    },
-    "/v1/models": {
-      "get": {
-        "tags": [
-          "models"
-        ],
-        "summary": "List Models",
-        "operationId": "list_models_v1_models_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "description": "List Models within the Organization selected by the `x-organization-id` header."
-      }
-    },
-    "/v1/models/{model_id}": {
-      "get": {
-        "tags": [
-          "models"
-        ],
-        "summary": "Retrieve Model",
-        "operationId": "retrieve_model_v1_models__model_id__get",
-        "parameters": [
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Unique identifier of the model addressed by this request."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "description": "Retrieve Model within the Organization selected by the `x-organization-id` header."
+        "description": "Archive Memory Store for your Organization."
       }
     }
   },
@@ -3943,7 +3257,7 @@
           "name": {
             "type": "string",
             "maxLength": 255,
-            "description": "What this Account is called in listings and provider exports."
+            "description": "The Account name shown in API responses."
           },
           "limit_usd": {
             "anyOf": [
@@ -3959,7 +3273,7 @@
                 "type": "null"
               }
             ],
-            "description": "Hard spending cap in USD, enforced by the provider rather than by us — it holds even when our own metering does not. Omit to leave the Account uncapped."
+            "description": "Optional spending limit in USD. Omit it for no Account-specific limit."
           },
           "idempotency_key": {
             "anyOf": [
@@ -3971,7 +3285,7 @@
                 "type": "null"
               }
             ],
-            "description": "Repeat this on a retry to get back the Account the first attempt made, instead of a second one billing the same thing."
+            "description": "Reuse this value when retrying creation to receive the same Account."
           }
         },
         "additionalProperties": false,
@@ -4090,7 +3404,7 @@
           "usage_monthly_usd"
         ],
         "title": "AccountUsageResponse",
-        "description": "What an Account has spent, in USD, as the provider counts it.\n\nRead from the provider rather than accumulated here, so it includes\neverything the Account's credential was charged for — not only the calls\nthis platform observed.\n\nEvery figure is cumulative within its window and updates as calls complete.\nThe period figures reset on the provider's UTC boundaries; `usage_usd` never\nresets, which is what makes a difference between two readings meaningful."
+        "description": "Current Account usage in USD, including total and period values."
       },
       "AgentCreateRequest": {
         "properties": {
@@ -4111,16 +3425,6 @@
             ]
           },
           "system": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4216,8 +3520,7 @@
           "tool_use_id",
           "name"
         ],
-        "title": "AgentCustomToolUseEvent",
-        "description": "No `evaluated_permission`: a custom tool is not ours to run, so it always\nwaits for the client. There is no policy to evaluate."
+        "title": "AgentCustomToolUseEvent"
       },
       "AgentMessageEvent": {
         "properties": {
@@ -4274,16 +3577,6 @@
             "type": "object"
           },
           "system": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4393,8 +3686,7 @@
           "processed_at",
           "content"
         ],
-        "title": "AgentThinkingEvent",
-        "description": "A model that returns no reasoning produces no event, rather than an\nempty one."
+        "title": "AgentThinkingEvent"
       },
       "AgentToolResultEvent": {
         "properties": {
@@ -4482,8 +3774,7 @@
           "tool_use_id",
           "name"
         ],
-        "title": "AgentToolUseEvent",
-        "description": "`evaluated_permission` is the agent's permission policy already applied\nto this call, so a client can tell at a glance whether the result is coming\nby itself or waiting on an answer. `ask` means this id will appear in the\nnext `session.status_idle`."
+        "title": "AgentToolUseEvent"
       },
       "AgentUpdateRequest": {
         "properties": {
@@ -4514,16 +3805,6 @@
             ]
           },
           "system": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4611,8 +3892,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "AgentUpdateRequest",
-        "description": "An edit. Send only what changes.\n\nThere is no `version` to send. Versions are the service's to number: an\nedit lands on whatever is active when it arrives, and the response says\nwhich version it became. A client that had to name a version first would\nhave to read one before every write, to supply a number it has no opinion\nabout."
+        "title": "AgentUpdateRequest"
       },
       "AgentVersionResponse": {
         "properties": {
@@ -4638,16 +3918,6 @@
             "type": "object"
           },
           "system": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4718,18 +3988,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "description": "The skill package, as a zip"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "contentMediaType": "application/octet-stream"
           }
         },
         "type": "object",
@@ -4749,20 +4008,9 @@
               {
                 "type": "null"
               }
-            ],
-            "description": "A replacement package, as a zip"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
             ]
           },
-          "description": {
+          "name": {
             "anyOf": [
               {
                 "type": "string"
@@ -4834,8 +4082,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "EndTurn",
-        "description": "Nothing is pending. The next message starts a fresh turn."
+        "title": "EndTurn"
       },
       "EnvironmentConfig": {
         "properties": {
@@ -4858,7 +4105,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "EnvironmentConfig",
-        "description": "The machine, and what is installed on it.\n\nBoth are baked into the image, so both are decided here rather than per\nsession — a headless browser and a spreadsheet script want very different\nmachines, and every session on this environment gets what it asks for."
+        "description": "The sandbox settings shared by Sessions using this Environment."
       },
       "EnvironmentCreateRequest": {
         "properties": {
@@ -4866,16 +4113,6 @@
             "type": "string",
             "maxLength": 255,
             "minLength": 1
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "config": {
             "$ref": "#/components/schemas/EnvironmentConfig"
@@ -4900,16 +4137,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "config": {
             "$ref": "#/components/schemas/EnvironmentConfig"
@@ -4973,16 +4200,6 @@
               }
             ]
           },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "config": {
             "anyOf": [
               {
@@ -5008,8 +4225,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "Failed",
-        "description": "The turn ended because something went wrong.\n\nNothing about the failure is repeated here — the `session.error` event\nimmediately before this one carries it. This exists so that a turn which\nfailed still *ends*: a client waiting for `session.status_idle` is waiting\nfor the one signal that means \"your go\", and a turn that stopped without\never sending it leaves that client waiting for good."
+        "title": "Failed"
       },
       "FileResource": {
         "properties": {
@@ -5039,7 +4255,7 @@
           "file_id"
         ],
         "title": "FileResource",
-        "description": "An uploaded file to put in the container before the session starts.\n\n`path` is relative to the sandbox's `uploads/` directory and defaults to the\nfile's own name. It is relative on purpose: an absolute path would let an\nupload land on `skills/`, which the agent reads as instructions, so the\ncontract has no way to say it rather than a rule against saying it."
+        "description": "A File attached when a Session is created. `path` is relative to `uploads/` and defaults to the File's filename."
       },
       "FileResponse": {
         "properties": {
@@ -5123,8 +4339,7 @@
         "required": [
           "id"
         ],
-        "title": "FileScope",
-        "description": "What a file came out of.\n\nAn object rather than a bare id so the kind of thing is stated rather than\ninferred from a prefix — today only a session produces files, and that will\nnot always be true."
+        "title": "FileScope"
       },
       "HTTPValidationError": {
         "properties": {
@@ -5148,8 +4363,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "Interrupted",
-        "description": "The user stopped the turn.\n\nCarries nothing: the client knows what it sent, and a list here beside\n`requires_action`'s — meaning something else entirely — is a mistake\nwaiting to be made."
+        "title": "Interrupted"
       },
       "ListEventsResponse": {
         "properties": {
@@ -5258,7 +4472,7 @@
           "data"
         ],
         "title": "ListEventsResponse",
-        "description": "One page of the log, and where the log ended when it was read.\n\nA window has to be aimed before it is fetched, so a client paging\nbackwards aims with its own idea of the end — which is stale exactly when\na turn ran while it was not watching. `last_event_seq` makes that visible\nin the same response instead of costing a `GET /v1/sessions/{id}` first,\nand it is free to say: the ownership check this endpoint already performs\nhas the session row in hand."
+        "description": "One page of ordered Session events."
       },
       "ListResponse_AccountResponse_": {
         "properties": {
@@ -5554,7 +4768,7 @@
           "path"
         ],
         "title": "LiveFileRequest",
-        "description": "Take one file out of a running session's sandbox, now.\n\n`path` is relative to the sandbox's `outputs/` directory. A session's\noutputs are collected when its turn ends; this is for the case where the\nagent has finished a deliverable and the user wants it before the rest of\nthe turn is."
+        "description": "A file to capture from `outputs/` in an active Session sandbox."
       },
       "LiveUploadRequest": {
         "properties": {
@@ -5581,7 +4795,7 @@
           "file_id"
         ],
         "title": "LiveUploadRequest",
-        "description": "Put one durable VMA File into an existing Session sandbox.\n\nThe file must already exist under ``/v1/files``. ``path`` is relative to\nthe sandbox's ``uploads/`` directory and defaults to the File's filename,\nmatching the file-resource contract used when a Session is created."
+        "description": "An existing File to attach under `uploads/` in an idle Session sandbox."
       },
       "MemoryStoreCreateRequest": {
         "properties": {
@@ -5589,11 +4803,6 @@
             "type": "string",
             "maxLength": 255,
             "minLength": 1
-          },
-          "description": {
-            "type": "string",
-            "maxLength": 1024,
-            "default": ""
           },
           "metadata": {
             "additionalProperties": {
@@ -5702,7 +4911,7 @@
           "memory_store_id"
         ],
         "title": "MemoryStoreResource",
-        "description": "A persistent Store mounted once, when the Session Sandbox is created."
+        "description": "A Memory Store attached when a Session is created."
       },
       "MemoryStoreResponse": {
         "properties": {
@@ -5716,10 +4925,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "description": {
-            "type": "string",
-            "default": ""
           },
           "metadata": {
             "additionalProperties": {
@@ -5765,17 +4970,6 @@
                 "type": "string",
                 "maxLength": 255,
                 "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 1024
               },
               {
                 "type": "null"
@@ -5854,8 +5048,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "PackagesConfig",
-        "description": "What to install into the image.\n\nVersions use each manager's own syntax — `pandas==2.2.0`, `express@4.18.0`,\n`rails:7.1.0`. Unpinned entries take the latest."
+        "title": "PackagesConfig"
       },
       "RequiresAction": {
         "properties": {
@@ -5876,8 +5069,7 @@
         "required": [
           "tool_use_ids"
         ],
-        "title": "RequiresAction",
-        "description": "Waiting on the client, and on all of these at once — see the module\ndocstring for why a partial answer is refused.\n\nThe order is the order the engine wants its answers in. A client may reply\nin any order, naming each call, and they are put back in this one."
+        "title": "RequiresAction"
       },
       "SendEventsRequest": {
         "properties": {
@@ -5987,8 +5179,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "SendEventsResponse",
-        "description": "The events as they were written. A refused batch never gets this far —\nit comes back as a 409 `SessionBusyError` with nothing appended."
+        "title": "SendEventsResponse"
       },
       "SessionCreateRequest": {
         "properties": {
@@ -6021,10 +5212,10 @@
                 "type": "null"
               }
             ],
-            "description": "Optional model for this Session, pinned for its lifetime. When omitted or null the pinned Agent version's own model applies, resolved at run time — so a Session that expresses no preference keeps following the Agent instead of freezing a copy of it. A bare string is shorthand for `{\"id\": ...}`, as on an Agent.",
             "examples": [
               "claude-opus-5"
-            ]
+            ],
+            "description": "Optional model override for this Session. Omit it to use the selected Agent version's model."
           },
           "account_id": {
             "anyOf": [
@@ -6035,7 +5226,7 @@
                 "type": "null"
               }
             ],
-            "description": "Which Account pays for this Session. Omit to use the Organization's default. Pinned when the Session opens, so its spend stays on one Account for the whole conversation."
+            "description": "The Account assigned to this Session. Omit it to use the Organization's default Account."
           },
           "title": {
             "anyOf": [
@@ -6174,10 +5365,6 @@
           "name": {
             "type": "string"
           },
-          "description": {
-            "type": "string",
-            "default": ""
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -6229,7 +5416,7 @@
                 "type": "null"
               }
             ],
-            "description": "The model pinned to this Session, or null when it follows the Agent version's."
+            "description": "The Session model override, or `null` when the Agent version supplies it."
           },
           "account_id": {
             "anyOf": [
@@ -6453,16 +5640,6 @@
           "name": {
             "type": "string"
           },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "size_bytes": {
             "type": "integer"
           },
@@ -6523,8 +5700,7 @@
         "required": [
           "text"
         ],
-        "title": "TextBlock",
-        "description": "CMA also carries image, document and search-result blocks. Every tool we\nrun returns text, and a block we cannot produce is one clients would write\nhandling for and never exercise."
+        "title": "TextBlock"
       },
       "UserCustomToolResultEvent": {
         "properties": {
@@ -6598,7 +5774,7 @@
           "content"
         ],
         "title": "UserCustomToolResultInput",
-        "description": "A custom tool has no implementation on our side at all, so this event is\nthe only way one ever completes."
+        "description": "The result returned by your application for a custom tool request."
       },
       "UserInterruptEvent": {
         "properties": {
@@ -6827,49 +6003,39 @@
   ],
   "tags": [
     {
-      "name": "organizations",
-      "description": "Organization records and role-based membership placeholders.",
-      "x-displayName": "Organizations"
+      "name": "accounts",
+      "description": "Track and control usage for Agent work.",
+      "x-displayName": "Accounts"
     },
     {
       "name": "agents",
-      "description": "Agent definitions and immutable Agent versions.",
+      "description": "Create reusable agents and manage changes to their instructions and capabilities.",
       "x-displayName": "Agents"
     },
     {
       "name": "environments",
-      "description": "Execution environment configuration and lifecycle.",
+      "description": "Choose the sandbox setup available to an Agent.",
       "x-displayName": "Environments"
     },
     {
       "name": "files",
-      "description": "Private uploaded files and captured Session outputs.",
+      "description": "Upload source files and download files created during a Session.",
       "x-displayName": "Files"
     },
     {
       "name": "memory-stores",
-      "description": "Persistent stores, path-addressed Memories, immutable Versions, and redaction.",
+      "description": "Keep shared knowledge available across Sessions.",
       "x-displayName": "Memory Stores"
     },
     {
-      "name": "models",
-      "description": "Model catalogue entries available to Agent definitions.",
-      "x-displayName": "Models"
-    },
-    {
       "name": "sessions",
-      "description": "Long-running Session lifecycle, resources, durable events, and streaming.",
+      "description": "Start work, continue it later, and follow an Agent's progress.",
       "x-displayName": "Sessions"
     },
     {
       "name": "skills",
-      "description": "Reusable Skill archives available to Agents.",
+      "description": "Give Agents reusable guidance for specific kinds of work.",
       "x-displayName": "Skills"
-    },
-    {
-      "name": "accounts",
-      "description": "accounts API operations.",
-      "x-displayName": "accounts"
     }
   ]
 }

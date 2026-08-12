@@ -1,102 +1,66 @@
 ---
 title: Service Limits
-description: Limits enforced by the active Votrix Managed Agents service.
+description: Public request, resource, and streaming limits.
 ---
 
-Snapshot: 2026-08-01
+Build clients around these current public limits. A request beyond a validated
+field range returns `400` or `422`; an oversized upload returns `413`.
 
-These values come from the active `app/` code. Most are code constants rather
-than deployment settings.
-
-## Uploads and workspace
+## Files, Skills, and Session resources
 
 | Limit | Value |
 | --- | ---: |
-| Single File upload | 100 MiB |
-| File resources attached when creating a Session | 100 |
-| Memory Stores attached when creating a Session | 8 |
+| One File upload | 100 MiB |
+| Resources attached when creating a Session | 100 |
+| Memory Stores attached to one Session | 8 |
 | Memory Store attachment instructions | 4,096 characters |
-| Live Memories in one Memory Store | 2,000 |
-| One Memory path | 1,024 UTF-8 bytes |
-| One Memory content body | 102,400 UTF-8 bytes |
-| Attached File path length | 512 characters |
-| Skill archive upload | 25 MiB |
-| Skill archive members | 1,000 |
-| Skill archive unpacked size | 100 MiB |
-| Maximum per-entry Skill compression ratio | 1,000:1 |
-| Skills referenced by one Agent version at Session creation | 20 |
+| Attached File path | 512 characters |
+| Skills referenced by one Agent version | 20 |
+| One Skill archive | 25 MiB |
+| Files in one Skill archive | 1,000 |
+| Unpacked Skill archive | 100 MiB |
 | Skill name | 64 characters |
 | Skill description | 1,024 characters |
-| Image read by `read_image` | 10 MiB |
-| Output files considered after a turn | 50 by default |
-| Single collected output file | 100 MiB by default |
+| Image read by an Agent | 10 MiB |
+| Output Files collected after a turn | 50 |
+| One collected output File | 100 MiB |
 
-The active rewrite does not enforce the previously documented 64 MiB aggregate
-Session-input limit.
-
-## Environment recipes
+## Memory Stores
 
 | Limit | Value |
 | --- | ---: |
-| CPU | 1–8 |
-| Memory | 512–8,192 MiB |
+| Name | 255 characters |
+| Description | 1,024 characters |
+| Metadata keys | 16 |
+| Metadata key | 64 characters |
+| Metadata value | 512 characters |
 
-Supported package managers are apt, Cargo, RubyGems, Go, npm, and pip.
-
-## Execution
+## Environments and turns
 
 | Limit | Value |
 | --- | ---: |
-| One turn | 600 seconds |
-| Session lease | 120 seconds |
-| Lease heartbeat | every 45 seconds |
-| Sandbox auto-pause timeout | 900 seconds by default; 300 in staging |
-| One sandbox command | 300 seconds by default |
-| Cloud Tasks dispatch deadline | 720 seconds |
-
-The sandbox auto-pause and command timeouts are configurable through
-`SANDBOX_TIMEOUT_SECONDS` and `SANDBOX_COMMAND_TIMEOUT_SECONDS`. The turn,
-lease, heartbeat, and dispatch deadline are code constants.
-
-The E2B timeout resets whenever VMA reconnects or renews the Sandbox. Staging
-intentionally exercises a five-minute timeout before production adopts it.
-Production retains nine hundred seconds while that canary verifies long
-commands, model-think pauses, filesystem output, and Memory Store mounts.
-
-The active runtime does not enforce the previously documented 250 graph-step
-limit.
+| Environment CPU setting | 1–8 |
+| Environment memory setting | 512–8,192 MiB |
+| One Agent turn | 20 minutes |
 
 ## Pagination
 
-| Limit | Value |
-| --- | ---: |
-| Default page size | 20 |
-| Maximum page size | 1,000 |
-
-Every list endpoint clamps `limit` into the range `1..1000`. It uses stable
-`before_id` and `after_id` cursors rather than offsets.
+Most list endpoints return 20 items by default and accept up to 1,000. Memory
+Store lists accept up to 100. Use the cursor fields returned by each endpoint;
+do not construct opaque page tokens yourself.
 
 ## Event streaming
 
 | Limit | Value |
 | --- | ---: |
-| Events read per poll | 100 |
-| Poll interval | 300 ms |
+| Events returned in one stream batch | 100 |
 | SSE keep-alive interval | 15 seconds |
-| Maximum lifetime of one SSE response | 30 minutes |
+| One SSE response | 30 minutes |
 
-The client reconnects with `Last-Event-ID` or `after_seq` after the 30-minute
-response ends. Durable event history remains in `session_events`; the response
-limit is not an event-retention limit.
+The 30-minute response lifetime is not an event-retention limit. Reconnect with
+`Last-Event-ID` or `after_seq` to continue.
 
-## Signed URLs
+## File downloads
 
-| Use | Lifetime |
-| --- | ---: |
-| File download | 5 minutes |
-| Sandbox input, Skill, and output transfer | 10 minutes by default |
-
-Signed URLs grant access to one object and may include its object key in the URL
-path. Response models do not expose a separate storage-key field, and long-lived
-bucket credentials are not returned to clients or copied into the sandbox.
-Sandbox transfer lifetime is configurable with `TRANSFER_URL_TTL_SECONDS`.
+A File download URL is valid for five minutes. Request a new URL from
+`GET /v1/files/{file_id}/content` after it expires.

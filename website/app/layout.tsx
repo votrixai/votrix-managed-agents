@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: '%s | Votrix Managed Agents (VMA)',
   },
   description:
-    'Open-source infrastructure and API reference for long-running managed agents.',
+    'An API-first agent harness framework with sandboxes for tools, files, and ongoing work.',
   robots: {
     index: false,
     follow: false,
@@ -34,10 +34,9 @@ export const metadata: Metadata = {
   keywords: [
     'Votrix',
     'managed agents',
-    'long-running agents',
-    'Deep Agents',
-    'LangGraph',
-    'FastAPI',
+    'AI agents',
+    'agent API',
+    'persistent memory',
   ],
 };
 

@@ -66,3 +66,37 @@ def test_documentation_openapi_publishes_complete_memory_surface():
                 for parameter in operation.get("parameters", [])
                 if parameter.get("in") == "header"
             }
+            assert headers["x-api-key"]["required"] is True
+
+
+def test_documentation_openapi_marks_the_api_key_as_required():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    for path_item in schema["paths"].values():
+        for method, operation in path_item.items():
+            if method not in {"delete", "get", "patch", "post", "put"}:
+                continue
+            api_key = next(
+                parameter
+                for parameter in operation.get("parameters", [])
+                if parameter.get("name") == "x-api-key"
+            )
+            assert api_key["required"] is True
+            assert api_key["schema"] == {"type": "string"}
+
+
+def test_documentation_openapi_does_not_publish_internal_technology_details():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    rendered = json.dumps(schema).lower()
+    forbidden = (
+        "cloud tasks",
+        "container",
+        "credential",
+        "database",
+        "deep agents",
+        "e2b",
+        "fastapi",
+        "langgraph",
+        "postgres",
+        "provider",
+    )
+    assert not [term for term in forbidden if term in rendered]
