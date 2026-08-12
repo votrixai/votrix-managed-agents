@@ -12,7 +12,7 @@
           "accounts"
         ],
         "summary": "Create Account",
-        "description": "Create an Account for tracking and limiting Agent usage separately.",
+        "description": "Create a separate usage and spending boundary inside your Organization. Use additional Accounts when work for different customers, teams, products, or environments should not be mixed together.\n\nAn Account is uncapped unless `limit_usd` is supplied. A successful response has `status: \"active\"` and can be selected when creating a Session.\n\n`idempotency_key` is optional and belongs in the JSON request body. Reuse the same value when retrying a successful create request to receive the original Account instead of creating another one.",
         "operationId": "create_account_v1_accounts_post",
         "parameters": [
           {
@@ -38,11 +38,20 @@
         },
         "responses": {
           "201": {
-            "description": "Successful Response",
+            "description": "The new Account, active and ready to be assigned to a Session.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountResponse"
+                },
+                "example": {
+                  "id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account",
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "name": "Website Builder",
+                  "status": "active",
+                  "is_default": false,
+                  "limit_usd": "20.00"
                 }
               }
             }
@@ -64,7 +73,7 @@
           "accounts"
         ],
         "summary": "List Accounts",
-        "description": "List Accounts for your Organization.",
+        "description": "List the Accounts available to your API key. Accounts are returned oldest first, which normally places the Organization's default Account first.\n\nThe response includes active and suspended Accounts. Use `is_default` to identify the Account selected when Session creation omits `account_id`, and use `status` to decide whether an Account can fund Agent work.\n\nUse `after_id` or `before_id` with the returned cursor fields to move through additional pages.",
         "operationId": "list_accounts_v1_accounts_get",
         "parameters": [
           {
@@ -123,11 +132,36 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "A cursor page of Accounts ordered from oldest to newest.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_AccountResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "acct_default1234567890abcdef1234567890",
+                      "type": "account",
+                      "organization_id": "org_1234567890abcdef1234567890abcdef",
+                      "name": "Default",
+                      "status": "active",
+                      "is_default": true,
+                      "limit_usd": null
+                    },
+                    {
+                      "id": "acct_1234567890abcdef1234567890abcdef",
+                      "type": "account",
+                      "organization_id": "org_1234567890abcdef1234567890abcdef",
+                      "name": "Website Builder",
+                      "status": "suspended",
+                      "is_default": false,
+                      "limit_usd": "20.00"
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "acct_default1234567890abcdef1234567890",
+                  "last_id": "acct_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -175,11 +209,20 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The requested Account's public state and spending limit.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountResponse"
+                },
+                "example": {
+                  "id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account",
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "name": "Website Builder",
+                  "status": "active",
+                  "is_default": false,
+                  "limit_usd": "20.00"
                 }
               }
             }
@@ -195,7 +238,7 @@
             }
           }
         },
-        "description": "Retrieve Account for your Organization."
+        "description": "Retrieve one Account by its public `acct_...` ID.\n\n`status` is `provisioning` while the Account is not ready, `active` when it can fund Agent work, or `suspended` when further work is blocked. `is_default` identifies the fallback used by Sessions that omit `account_id`. `limit_usd: null` means the Account has no Account-specific spending limit."
       }
     },
     "/v1/accounts/{account_id}/usage": {
@@ -204,7 +247,7 @@
           "accounts"
         ],
         "summary": "Retrieve Account Usage",
-        "description": "Return the Account's total, daily, weekly, and monthly usage in USD, together with its limit and remaining amount when a limit is set.",
+        "description": "Return a current USD usage snapshot for one Account. Usage for another Account is never included.\n\n`usage_usd` is cumulative for the Account. The daily, weekly, and monthly fields describe the current period windows. When a spending limit is set, `limit_usd` reports the limit and `limit_remaining_usd` reports the remaining amount. Both limit fields are `null` for an uncapped Account.\n\nUsage remains available while an Account is suspended. Treat this response as a snapshot at request time, not as a receipt for one individual Agent turn.",
         "operationId": "retrieve_account_usage_v1_accounts__account_id__usage_get",
         "parameters": [
           {
@@ -229,11 +272,21 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "A current USD usage snapshot for the requested Account.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountUsageResponse"
+                },
+                "example": {
+                  "account_id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account_usage",
+                  "usage_usd": "8.40",
+                  "usage_daily_usd": "0.75",
+                  "usage_weekly_usd": "3.10",
+                  "usage_monthly_usd": "8.40",
+                  "limit_usd": "20.00",
+                  "limit_remaining_usd": "11.60"
                 }
               }
             }
@@ -257,7 +310,7 @@
           "accounts"
         ],
         "summary": "Suspend Account",
-        "description": "Prevent an Account from funding further Agent work while preserving its identity, limit, and usage history. The default Account cannot be suspended.",
+        "description": "Stop a non-default Account from funding further Agent work. The Account keeps the same ID, spending limit, and usage history, and its usage endpoint remains available.\n\nA suspended Account cannot be selected for a new Session. Existing Sessions remain assigned to it, but their next Agent work cannot continue until the Account is resumed. Suspending an already suspended Account returns that Account without changing it again.\n\nThe Organization's default Account cannot be suspended because it is the fallback for every Session created without an explicit `account_id`.",
         "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
         "parameters": [
           {
@@ -282,11 +335,20 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The same Account with `status: \"suspended\"`.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountResponse"
+                },
+                "example": {
+                  "id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account",
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "name": "Website Builder",
+                  "status": "suspended",
+                  "is_default": false,
+                  "limit_usd": "20.00"
                 }
               }
             }
@@ -310,7 +372,7 @@
           "accounts"
         ],
         "summary": "Resume Account",
-        "description": "Allow a suspended Account to fund Agent work again.",
+        "description": "Return a suspended Account to `active` so it can fund new and existing Sessions again.\n\nResuming preserves the Account's ID, limit, and usage history. Existing Sessions stay assigned to the same Account; they do not need to be recreated. Resuming an already active Account returns it unchanged.",
         "operationId": "resume_account_v1_accounts__account_id__resume_post",
         "parameters": [
           {
@@ -335,11 +397,20 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The same Account with `status: \"active\"`.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountResponse"
+                },
+                "example": {
+                  "id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account",
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "name": "Website Builder",
+                  "status": "active",
+                  "is_default": false,
+                  "limit_usd": "20.00"
                 }
               }
             }
@@ -3285,7 +3356,7 @@
                 "type": "null"
               }
             ],
-            "description": "Reuse this value when retrying creation to receive the same Account."
+            "description": "Optional retry key scoped to the Organization. Reuse it to receive the Account created by the first successful request."
           }
         },
         "additionalProperties": false,
@@ -3293,23 +3364,33 @@
         "required": [
           "name"
         ],
-        "title": "AccountCreateRequest"
+        "title": "AccountCreateRequest",
+        "description": "The public fields accepted when creating an additional Account.",
+        "example": {
+          "name": "Website Builder",
+          "limit_usd": "20.00",
+          "idempotency_key": "create-website-builder-account"
+        }
       },
       "AccountResponse": {
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public Account identifier with the `acct_` prefix."
           },
           "type": {
             "type": "string",
             "const": "account",
-            "default": "account"
+            "default": "account",
+            "description": "Resource type. Always `account`."
           },
           "organization_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The Organization that owns this Account."
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The Account's display name."
           },
           "status": {
             "type": "string",
@@ -3317,10 +3398,12 @@
               "provisioning",
               "active",
               "suspended"
-            ]
+            ],
+            "description": "Whether the Account is `provisioning`, `active`, or `suspended`. Only an active Account can fund Agent work."
           },
           "is_default": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether Sessions use this Account when `account_id` is omitted."
           },
           "limit_usd": {
             "anyOf": [
@@ -3331,7 +3414,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "The Account-specific spending limit in USD, or `null` when uncapped."
           }
         },
         "additionalProperties": false,
@@ -3343,33 +3427,49 @@
           "status",
           "is_default"
         ],
-        "title": "AccountResponse"
+        "title": "AccountResponse",
+        "description": "An Account's identity, readiness, default role, and optional spending limit.",
+        "example": {
+          "id": "acct_1234567890abcdef1234567890abcdef",
+          "type": "account",
+          "organization_id": "org_1234567890abcdef1234567890abcdef",
+          "name": "Website Builder",
+          "status": "active",
+          "is_default": false,
+          "limit_usd": "20.00"
+        }
       },
       "AccountUsageResponse": {
         "properties": {
           "account_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The Account whose usage is represented by this response."
           },
           "type": {
             "type": "string",
             "const": "account_usage",
-            "default": "account_usage"
+            "default": "account_usage",
+            "description": "Resource type. Always `account_usage`."
           },
           "usage_usd": {
             "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Cumulative usage for the Account in USD."
           },
           "usage_daily_usd": {
             "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Usage in the current daily window, in USD."
           },
           "usage_weekly_usd": {
             "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Usage in the current weekly window, in USD."
           },
           "usage_monthly_usd": {
             "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Usage in the current monthly window, in USD."
           },
           "limit_usd": {
             "anyOf": [
@@ -3380,7 +3480,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "The Account's spending limit in USD, or `null` when uncapped."
           },
           "limit_remaining_usd": {
             "anyOf": [
@@ -3391,7 +3492,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "The amount remaining under the Account's limit, or `null` when uncapped."
           }
         },
         "additionalProperties": false,
@@ -3404,7 +3506,17 @@
           "usage_monthly_usd"
         ],
         "title": "AccountUsageResponse",
-        "description": "Current Account usage in USD, including total and period values."
+        "description": "A current USD usage snapshot for one Account.",
+        "example": {
+          "account_id": "acct_1234567890abcdef1234567890abcdef",
+          "type": "account_usage",
+          "usage_usd": "8.40",
+          "usage_daily_usd": "0.75",
+          "usage_weekly_usd": "3.10",
+          "usage_monthly_usd": "8.40",
+          "limit_usd": "20.00",
+          "limit_remaining_usd": "11.60"
+        }
       },
       "AgentCreateRequest": {
         "properties": {
@@ -4480,11 +4592,13 @@
             "items": {
               "$ref": "#/components/schemas/AccountResponse"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Accounts in this page, ordered from oldest to newest."
           },
           "has_more": {
             "type": "boolean",
-            "default": false
+            "default": false,
+            "description": "Whether another page is available in the requested direction."
           },
           "first_id": {
             "anyOf": [
@@ -4494,7 +4608,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "ID of the first Account in this page, or `null` for an empty page."
           },
           "last_id": {
             "anyOf": [
@@ -4504,7 +4619,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "ID of the last Account in this page, or `null` for an empty page."
           }
         },
         "additionalProperties": false,
@@ -4512,7 +4628,8 @@
         "required": [
           "data"
         ],
-        "title": "ListResponse[AccountResponse]"
+        "title": "ListResponse[AccountResponse]",
+        "description": "A cursor page of Accounts ordered from oldest to newest."
       },
       "ListResponse_AgentResponse_": {
         "properties": {
@@ -6004,7 +6121,7 @@
   "tags": [
     {
       "name": "accounts",
-      "description": "Track and control usage for Agent work.",
+      "description": "Create separate usage and spending boundaries for Agent work.",
       "x-displayName": "Accounts"
     },
     {
