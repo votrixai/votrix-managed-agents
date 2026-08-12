@@ -1,39 +1,107 @@
 ---
 title: Accounts
-description: Assign Agent usage, set spending limits, and read current usage.
+description: Separate Agent usage and spending within one Organization.
 ---
 
-An Account is the usage and spending boundary for Agent work. Assigning
-different Sessions to different Accounts lets you track and control their
-spend separately.
+An Account is the usage and spending boundary for Agent work. Every Session
+uses exactly one Account, so work assigned to one Account does not appear in
+another Account's usage totals.
+
+Use Accounts when customers, teams, products, environments, or workflows need
+separate attribution and spending control inside the same Organization.
+
+| What you need | What an Account provides |
+| --- | --- |
+| Separate attribution | Total, daily, weekly, and monthly USD usage for one Account. |
+| Separate limits | An optional USD limit that applies only to that Account. |
+| Stable assignment | A Session keeps the Account selected when it was created. |
+| Independent lifecycle | Suspending one additional Account does not suspend the others. |
+| Retained history | Usage remains readable while an Account is suspended. |
 
 ## Default and additional Accounts
 
-Every Organization has a default Account. When a Session is created without
-`account_id`, VMA assigns that default Account.
+Every Organization has one default Account. When Session creation omits
+`account_id` or sends it as `null`, VMA selects that Account and returns the
+resolved ID as `session.account_id`.
 
-Create additional Accounts when you want separate usage for a customer, team,
-product, or workflow:
+The default Account is suitable when all Agent work belongs to one usage
+bucket. Create additional Accounts when work needs to be measured or limited
+separately.
 
-```json
-{
-  "name": "Customer support",
-  "limit_usd": 250,
-  "idempotency_key": "account-customer-support"
-}
+<Callout title="Default Account" type="info">
+
+The default Account cannot be suspended because it is the fallback for every
+Session created without an explicit `account_id`. Additional Accounts can be
+suspended independently.
+
+</Callout>
+
+## Create an Account
+
+Create an additional Account with a name and, optionally, a spending limit:
+
+```bash
+curl --request POST \
+  --url https://api.vma.votrixai.com/v1/accounts \
+  --header 'content-type: application/json' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --data '{
+    "name": "Website Builder",
+    "limit_usd": "20.00",
+    "idempotency_key": "create-website-builder-account"
+  }'
 ```
 
-- `name` is the label shown in Account responses.
-- `limit_usd` is an optional spending limit. Omit it for no Account-specific
-  limit.
-- `idempotency_key` is optional. Reuse the same value when retrying Account
-  creation so the retry does not create a second Account.
+- `name` is the label returned in Account responses.
+- `limit_usd` is optional. Omit it for no Account-specific limit.
+- `idempotency_key` is optional and belongs in the JSON body, not a request
+  header. Reuse it when retrying a successful create request to receive the
+  original Account instead of creating another one.
+
+A successful create returns `status: "active"` and an `acct_...` ID that can be
+used when creating a Session.
 
 See [Create Account](/docs/api/accounts/create_account_v1_accounts_post).
 
+<Callout title="Current Account surface" type="warn">
+
+The current public API does not include Account update or delete operations.
+Choose `limit_usd` when creating the Account, and use suspend when the Account
+should stop funding work.
+
+</Callout>
+
+## Account status
+
+| Status | Meaning for an API client |
+| --- | --- |
+| `provisioning` | The Account is not ready and cannot be assigned to a new Session. |
+| `active` | The Account can be assigned to Sessions and fund Agent work. |
+| `suspended` | Further Agent work is blocked until the Account is resumed. |
+
+`is_default` tells you whether VMA selects the Account when Session creation
+omits `account_id`. `limit_usd: null` means the Account is uncapped.
+
+Use [List Accounts](/docs/api/accounts/list_accounts_v1_accounts_get) to return
+Accounts oldest first, or
+[Retrieve Account](/docs/api/accounts/retrieve_account_v1_accounts__account_id__get)
+to read one by ID.
+
 ## Assign an Account to a Session
 
-Pass `account_id` when creating the Session:
+Account selection happens when the Session is created.
+
+Omit `account_id` to use the default Account:
+
+```json
+{
+  "agent_id": "agent_...",
+  "environment_id": "env_..."
+}
+```
+
+Pass an additional Account when the Session belongs to a separate usage or
+spending boundary:
 
 ```json
 {
@@ -43,35 +111,64 @@ Pass `account_id` when creating the Session:
 }
 ```
 
-The Session keeps that Account for its lifetime. A later follow-up message in
-the same Session is charged to the same Account.
+The resolved Account is pinned for the Session's lifetime. Follow-up messages
+and existing Sessions do not silently fall back to another Account.
 
 ## Read usage
 
-`GET /v1/accounts/{account_id}/usage` returns:
+```text
+GET /v1/accounts/{account_id}/usage
+```
+
+The response is a current snapshot for that Account only:
 
 | Field | Meaning |
 | --- | --- |
-| `usage_usd` | Total usage for the Account. |
+| `usage_usd` | Cumulative usage for the Account. |
 | `usage_daily_usd` | Usage in the current daily window. |
 | `usage_weekly_usd` | Usage in the current weekly window. |
 | `usage_monthly_usd` | Usage in the current monthly window. |
 | `limit_usd` | The Account's limit, or `null` when uncapped. |
 | `limit_remaining_usd` | Remaining amount under the limit, or `null` when uncapped. |
 
+Usage remains available for a suspended Account. Treat these values as a
+snapshot at request time rather than a receipt for one individual Agent turn.
+
 See [Retrieve Account Usage](/docs/api/accounts/retrieve_account_usage_v1_accounts__account_id__usage_get).
 
 ## Suspend and resume
 
-Suspending an Account prevents it from paying for further Agent work while
-keeping its ID, limit, and usage history. Resume it to allow work again.
+Suspend an additional Account when it should stop funding Agent work:
 
-The default Account cannot be suspended because it is the fallback for
-Sessions created without an explicit `account_id`.
+```text
+POST /v1/accounts/{account_id}/suspend
+```
+
+Suspension preserves the Account's ID, limit, and usage history. The Account
+cannot be selected for a new Session. Existing Sessions stay assigned to it,
+but their next Agent work cannot continue until it is resumed. Repeating the
+suspend call on an already suspended Account returns it unchanged.
+
+Resume the same Account with:
+
+```text
+POST /v1/accounts/{account_id}/resume
+```
+
+The Account returns to `active`; existing Sessions can continue without being
+recreated. Its ID, limit, and usage history stay the same. Repeating resume on
+an already active Account also returns it unchanged.
 
 - [Suspend Account](/docs/api/accounts/suspend_account_v1_accounts__account_id__suspend_post)
 - [Resume Account](/docs/api/accounts/resume_account_v1_accounts__account_id__resume_post)
 
-The complete Accounts reference also includes
-[List Accounts](/docs/api/accounts/list_accounts_v1_accounts_get) and
-[Retrieve Account](/docs/api/accounts/retrieve_account_v1_accounts__account_id__get).
+## Account API Reference
+
+| Operation | Purpose |
+| --- | --- |
+| [Create Account](/docs/api/accounts/create_account_v1_accounts_post) | Create a separate usage and spending boundary. |
+| [List Accounts](/docs/api/accounts/list_accounts_v1_accounts_get) | List Accounts oldest first and identify the default. |
+| [Retrieve Account](/docs/api/accounts/retrieve_account_v1_accounts__account_id__get) | Read one Account's status and limit. |
+| [Retrieve Account Usage](/docs/api/accounts/retrieve_account_usage_v1_accounts__account_id__usage_get) | Read total and current-period USD usage. |
+| [Suspend Account](/docs/api/accounts/suspend_account_v1_accounts__account_id__suspend_post) | Stop an additional Account from funding more work. |
+| [Resume Account](/docs/api/accounts/resume_account_v1_accounts__account_id__resume_post) | Return a suspended Account to active use. |

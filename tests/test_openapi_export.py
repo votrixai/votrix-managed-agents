@@ -23,6 +23,31 @@ MEMORY_OPERATIONS = {
     "POST /v1/memory_stores/{memory_store_id}/archive",
 }
 
+ACCOUNT_OPERATIONS = {
+    ("post", "/v1/accounts"): ("idempotency_key", "uncapped", "Session"),
+    ("get", "/v1/accounts"): ("oldest first", "is_default", "status"),
+    ("get", "/v1/accounts/{account_id}"): (
+        "provisioning",
+        "suspended",
+        "limit_usd",
+    ),
+    ("get", "/v1/accounts/{account_id}/usage"): (
+        "usage_usd",
+        "limit_remaining_usd",
+        "suspended",
+    ),
+    ("post", "/v1/accounts/{account_id}/suspend"): (
+        "default Account",
+        "Existing Sessions",
+        "usage history",
+    ),
+    ("post", "/v1/accounts/{account_id}/resume"): (
+        "Existing Sessions",
+        "usage history",
+        "already active",
+    ),
+}
+
 
 def test_no_document_api_is_published_over_a_memory_store():
     """Deliberately absent. Documents used to have their own CRUD and version
@@ -82,6 +107,42 @@ def test_documentation_openapi_marks_the_api_key_as_required():
             )
             assert api_key["required"] is True
             assert api_key["schema"] == {"type": "string"}
+
+
+def test_account_reference_explains_each_public_operation_and_field():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+
+    for (method, path), expected_phrases in ACCOUNT_OPERATIONS.items():
+        operation = schema["paths"][path][method]
+        description = operation["description"]
+        assert len(description) >= 200
+        assert all(phrase in description for phrase in expected_phrases)
+
+        success_status = "201" if (method, path) == ("post", "/v1/accounts") else "200"
+        success = operation["responses"][success_status]
+        assert success["description"] != "Successful Response"
+        assert success["content"]["application/json"]["example"]
+
+    schemas = schema["components"]["schemas"]
+    for component_name in (
+        "AccountCreateRequest",
+        "AccountResponse",
+        "AccountUsageResponse",
+        "ListResponse_AccountResponse_",
+    ):
+        component = schemas[component_name]
+        assert component["description"]
+        assert all(
+            property_schema.get("description")
+            for property_schema in component["properties"].values()
+        )
+
+    assert "patch" not in schema["paths"]["/v1/accounts/{account_id}"]
+    assert "delete" not in schema["paths"]["/v1/accounts/{account_id}"]
+    suspend_example = schema["paths"]["/v1/accounts/{account_id}/suspend"]["post"][
+        "responses"
+    ]["200"]["content"]["application/json"]["example"]
+    assert suspend_example["status"] == "suspended"
 
 
 def test_documentation_openapi_does_not_publish_internal_technology_details():

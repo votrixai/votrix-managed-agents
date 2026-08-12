@@ -28,7 +28,7 @@ TAG_DESCRIPTIONS = {
     ),
     "accounts": (
         "Accounts",
-        "Track and control usage for Agent work.",
+        "Create separate usage and spending boundaries for Agent work.",
     ),
     "agents": (
         "Agents",
@@ -102,7 +102,40 @@ PARAMETER_EXAMPLES = {
     "view": "full",
 }
 
+ACCOUNT_ID_EXAMPLE = "acct_1234567890abcdef1234567890abcdef"
+ORGANIZATION_ID_EXAMPLE = "org_1234567890abcdef1234567890abcdef"
+ACCOUNT_ACTIVE_EXAMPLE = {
+    "id": ACCOUNT_ID_EXAMPLE,
+    "type": "account",
+    "organization_id": ORGANIZATION_ID_EXAMPLE,
+    "name": "Website Builder",
+    "status": "active",
+    "is_default": False,
+    "limit_usd": "20.00",
+}
+ACCOUNT_SUSPENDED_EXAMPLE = {
+    **ACCOUNT_ACTIVE_EXAMPLE,
+    "status": "suspended",
+}
+ACCOUNT_USAGE_EXAMPLE = {
+    "account_id": ACCOUNT_ID_EXAMPLE,
+    "type": "account_usage",
+    "usage_usd": "8.40",
+    "usage_daily_usd": "0.75",
+    "usage_weekly_usd": "3.10",
+    "usage_monthly_usd": "8.40",
+    "limit_usd": "20.00",
+    "limit_remaining_usd": "11.60",
+}
+
 COMPONENT_EXAMPLES = {
+    "AccountCreateRequest": {
+        "name": "Website Builder",
+        "limit_usd": "20.00",
+        "idempotency_key": "create-website-builder-account",
+    },
+    "AccountResponse": ACCOUNT_ACTIVE_EXAMPLE,
+    "AccountUsageResponse": ACCOUNT_USAGE_EXAMPLE,
     "MemoryStoreCreateRequest": {
         "name": "Content Creator",
         "description": "Durable brand and project context.",
@@ -131,19 +164,64 @@ COMPONENT_EXAMPLES = {
 # with this small, reviewed public-contract vocabulary.
 OPERATION_DESCRIPTIONS = {
     ("post", "/v1/accounts"): (
-        "Create an Account for tracking and limiting Agent usage separately."
+        "Create a separate usage and spending boundary inside your Organization. "
+        "Use additional Accounts when work for different customers, teams, "
+        "products, or environments should not be mixed together.\n\n"
+        "An Account is uncapped unless `limit_usd` is supplied. A successful "
+        "response has `status: \"active\"` and can be selected when creating a "
+        "Session.\n\n"
+        "`idempotency_key` is optional and belongs in the JSON request body. "
+        "Reuse the same value when retrying a successful create request to "
+        "receive the original Account instead of creating another one."
+    ),
+    ("get", "/v1/accounts"): (
+        "List the Accounts available to your API key. Accounts are returned "
+        "oldest first, which normally places the Organization's default Account "
+        "first.\n\n"
+        "The response includes active and suspended Accounts. Use `is_default` "
+        "to identify the Account selected when Session creation omits "
+        "`account_id`, and use `status` to decide whether an Account can fund "
+        "Agent work.\n\n"
+        "Use `after_id` or `before_id` with the returned cursor fields to move "
+        "through additional pages."
+    ),
+    ("get", "/v1/accounts/{account_id}"): (
+        "Retrieve one Account by its public `acct_...` ID.\n\n"
+        "`status` is `provisioning` while the Account is not ready, `active` "
+        "when it can fund Agent work, or `suspended` when further work is "
+        "blocked. `is_default` identifies the fallback used by Sessions that "
+        "omit `account_id`. `limit_usd: null` means the Account has no "
+        "Account-specific spending limit."
     ),
     ("get", "/v1/accounts/{account_id}/usage"): (
-        "Return the Account's total, daily, weekly, and monthly usage in USD, "
-        "together with its limit and remaining amount when a limit is set."
+        "Return a current USD usage snapshot for one Account. Usage for another "
+        "Account is never included.\n\n"
+        "`usage_usd` is cumulative for the Account. The daily, weekly, and "
+        "monthly fields describe the current period windows. When a spending "
+        "limit is set, `limit_usd` reports the limit and "
+        "`limit_remaining_usd` reports the remaining amount. Both limit fields "
+        "are `null` for an uncapped Account.\n\n"
+        "Usage remains available while an Account is suspended. Treat this "
+        "response as a snapshot at request time, not as a receipt for one "
+        "individual Agent turn."
     ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
-        "Prevent an Account from funding further Agent work while preserving "
-        "its identity, limit, and usage history. The default Account cannot be "
-        "suspended."
+        "Stop a non-default Account from funding further Agent work. The "
+        "Account keeps the same ID, spending limit, and usage history, and its "
+        "usage endpoint remains available.\n\n"
+        "A suspended Account cannot be selected for a new Session. Existing "
+        "Sessions remain assigned to it, but their next Agent work cannot "
+        "continue until the Account is resumed. Suspending an already suspended "
+        "Account returns that Account without changing it again.\n\n"
+        "The Organization's default Account cannot be suspended because it is "
+        "the fallback for every Session created without an explicit `account_id`."
     ),
     ("post", "/v1/accounts/{account_id}/resume"): (
-        "Allow a suspended Account to fund Agent work again."
+        "Return a suspended Account to `active` so it can fund new and existing "
+        "Sessions again.\n\n"
+        "Resuming preserves the Account's ID, limit, and usage history. Existing "
+        "Sessions stay assigned to the same Account; they do not need to be "
+        "recreated. Resuming an already active Account returns it unchanged."
     ),
     ("get", "/v1/agents/{agent_id}"): (
         "Retrieve the active Agent version, or a specific version selected by "
@@ -208,9 +286,67 @@ OPERATION_DESCRIPTIONS = {
     ),
 }
 
+OPERATION_SUCCESS_RESPONSES = {
+    ("post", "/v1/accounts"): (
+        "201",
+        "The new Account, active and ready to be assigned to a Session.",
+        ACCOUNT_ACTIVE_EXAMPLE,
+    ),
+    ("get", "/v1/accounts"): (
+        "200",
+        "A cursor page of Accounts ordered from oldest to newest.",
+        {
+            "data": [
+                {
+                    "id": "acct_default1234567890abcdef1234567890",
+                    "type": "account",
+                    "organization_id": ORGANIZATION_ID_EXAMPLE,
+                    "name": "Default",
+                    "status": "active",
+                    "is_default": True,
+                    "limit_usd": None,
+                },
+                ACCOUNT_SUSPENDED_EXAMPLE,
+            ],
+            "has_more": False,
+            "first_id": "acct_default1234567890abcdef1234567890",
+            "last_id": ACCOUNT_ID_EXAMPLE,
+        },
+    ),
+    ("get", "/v1/accounts/{account_id}"): (
+        "200",
+        "The requested Account's public state and spending limit.",
+        ACCOUNT_ACTIVE_EXAMPLE,
+    ),
+    ("get", "/v1/accounts/{account_id}/usage"): (
+        "200",
+        "A current USD usage snapshot for the requested Account.",
+        ACCOUNT_USAGE_EXAMPLE,
+    ),
+    ("post", "/v1/accounts/{account_id}/suspend"): (
+        "200",
+        "The same Account with `status: \"suspended\"`.",
+        ACCOUNT_SUSPENDED_EXAMPLE,
+    ),
+    ("post", "/v1/accounts/{account_id}/resume"): (
+        "200",
+        "The same Account with `status: \"active\"`.",
+        ACCOUNT_ACTIVE_EXAMPLE,
+    ),
+}
+
 COMPONENT_DESCRIPTIONS = {
+    "AccountCreateRequest": (
+        "The public fields accepted when creating an additional Account."
+    ),
+    "AccountResponse": (
+        "An Account's identity, readiness, default role, and optional spending limit."
+    ),
     "AccountUsageResponse": (
-        "Current Account usage in USD, including total and period values."
+        "A current USD usage snapshot for one Account."
+    ),
+    "ListResponse_AccountResponse_": (
+        "A cursor page of Accounts ordered from oldest to newest."
     ),
     "EnvironmentConfig": "The sandbox settings shared by Sessions using this Environment.",
     "FileResource": (
@@ -238,7 +374,60 @@ PROPERTY_DESCRIPTIONS = {
         "Optional spending limit in USD. Omit it for no Account-specific limit."
     ),
     ("AccountCreateRequest", "idempotency_key"): (
-        "Reuse this value when retrying creation to receive the same Account."
+        "Optional retry key scoped to the Organization. Reuse it to receive the "
+        "Account created by the first successful request."
+    ),
+    ("AccountResponse", "id"): "Public Account identifier with the `acct_` prefix.",
+    ("AccountResponse", "type"): "Resource type. Always `account`.",
+    ("AccountResponse", "organization_id"): (
+        "The Organization that owns this Account."
+    ),
+    ("AccountResponse", "name"): "The Account's display name.",
+    ("AccountResponse", "status"): (
+        "Whether the Account is `provisioning`, `active`, or `suspended`. Only "
+        "an active Account can fund Agent work."
+    ),
+    ("AccountResponse", "is_default"): (
+        "Whether Sessions use this Account when `account_id` is omitted."
+    ),
+    ("AccountResponse", "limit_usd"): (
+        "The Account-specific spending limit in USD, or `null` when uncapped."
+    ),
+    ("AccountUsageResponse", "account_id"): (
+        "The Account whose usage is represented by this response."
+    ),
+    ("AccountUsageResponse", "type"): (
+        "Resource type. Always `account_usage`."
+    ),
+    ("AccountUsageResponse", "usage_usd"): (
+        "Cumulative usage for the Account in USD."
+    ),
+    ("AccountUsageResponse", "usage_daily_usd"): (
+        "Usage in the current daily window, in USD."
+    ),
+    ("AccountUsageResponse", "usage_weekly_usd"): (
+        "Usage in the current weekly window, in USD."
+    ),
+    ("AccountUsageResponse", "usage_monthly_usd"): (
+        "Usage in the current monthly window, in USD."
+    ),
+    ("AccountUsageResponse", "limit_usd"): (
+        "The Account's spending limit in USD, or `null` when uncapped."
+    ),
+    ("AccountUsageResponse", "limit_remaining_usd"): (
+        "The amount remaining under the Account's limit, or `null` when uncapped."
+    ),
+    ("ListResponse_AccountResponse_", "data"): (
+        "Accounts in this page, ordered from oldest to newest."
+    ),
+    ("ListResponse_AccountResponse_", "has_more"): (
+        "Whether another page is available in the requested direction."
+    ),
+    ("ListResponse_AccountResponse_", "first_id"): (
+        "ID of the first Account in this page, or `null` for an empty page."
+    ),
+    ("ListResponse_AccountResponse_", "last_id"): (
+        "ID of the last Account in this page, or `null` for an empty page."
     ),
     ("SessionCreateRequest", "account_id"): (
         "The Account assigned to this Session. Omit it to use the Organization's "
@@ -317,6 +506,22 @@ def _operation_description(operation: dict[str, Any]) -> str:
     return f"{summary.rstrip('.')} for your Organization."
 
 
+def _enrich_success_response(
+    *, method: str, path: str, operation: dict[str, Any]
+) -> None:
+    configured = OPERATION_SUCCESS_RESPONSES.get((method, path))
+    if configured is None:
+        return
+    status, description, example = configured
+    response = operation.setdefault("responses", {}).get(status)
+    if not isinstance(response, dict):
+        return
+    response["description"] = description
+    media = response.get("content", {}).get("application/json")
+    if isinstance(media, dict):
+        media["example"] = example
+
+
 def _enrich_sse_response(*, method: str, path: str, operation: dict[str, Any]) -> None:
     if method != "get" or path != "/v1/sessions/{session_id}/events/stream":
         return
@@ -378,6 +583,11 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
             operation["description"] = OPERATION_DESCRIPTIONS.get(
                 (normalized_method, path),
                 _operation_description(operation),
+            )
+            _enrich_success_response(
+                method=normalized_method,
+                path=path,
+                operation=operation,
             )
             for parameter in operation.get("parameters", []):
                 if isinstance(parameter, dict):
