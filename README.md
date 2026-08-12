@@ -226,6 +226,21 @@ It uses an in-memory SQLite database and stubs E2B, storage, models, and Cloud
 Tasks where needed. `tests_live/` is the explicit external-service suite and is
 not part of the default pytest path.
 
+GitHub Actions is reserved for documentation deployment. Run the former CI
+checks locally before merging:
+
+```bash
+./scripts/validate-local.sh
+```
+
+The script validates the backend on Python 3.12 and 3.13, the documentation
+site, and the Cloudflare API router. Pass `backend`, `docs`, or `router` to run
+only selected groups, for example:
+
+```bash
+./scripts/validate-local.sh backend docs
+```
+
 ## Documentation
 
 Current rewrite documentation:
