@@ -98,7 +98,7 @@ def settings():
         name
         for name in (
             "database_url",
-            "anthropic_api_key",
+            "openrouter_management_key",
             "e2b_api_key",
             "s3_endpoint_url",
             "s3_access_key_id",

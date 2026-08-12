@@ -445,11 +445,7 @@ async def create_default_account(
 
 @lru_cache(maxsize=1)
 def _key_admin() -> OpenRouterManagementClient:
-    settings = get_settings()
-    return OpenRouterManagementClient(
-        settings.openrouter_management_key,
-        workspace_id=settings.openrouter_workspace_id,
-    )
+    return OpenRouterManagementClient(get_settings().openrouter_management_key)
 
 
 @lru_cache(maxsize=1)

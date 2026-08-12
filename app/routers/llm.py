@@ -1,6 +1,10 @@
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/v1/models", tags=["models"])
+router = APIRouter(
+    prefix="/v1/models",
+    tags=["models"],
+    include_in_schema=False,
+)
 
 
 @router.get("")

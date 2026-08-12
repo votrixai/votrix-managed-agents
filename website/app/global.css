@@ -81,6 +81,18 @@ html > body[data-scroll-locked] {
   object-fit: contain;
 }
 
+#nd-nav a[href="/docs/api"],
+#nd-nav a[href="/docs/api/"] {
+  border-color: var(--color-fd-primary);
+  background-color: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+}
+
+#nd-nav a[href="/docs/api"]:hover,
+#nd-nav a[href="/docs/api/"]:hover {
+  opacity: 0.9;
+}
+
 #nd-sidebar {
   --color-fd-muted: #f0efec;
   --color-fd-secondary: #f0efec;
@@ -115,12 +127,6 @@ html > body[data-scroll-locked] {
     transparent 70%
   );
   filter: blur(10px);
-}
-
-.terminal-window {
-  box-shadow:
-    0 32px 90px rgba(26, 25, 23, 0.16),
-    0 3px 12px rgba(26, 25, 23, 0.08);
 }
 
 .docs-prose table {

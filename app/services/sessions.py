@@ -422,9 +422,15 @@ async def list_events(
     limit: int = DEFAULT_PAGE_SIZE,
     before_id: str | None = None,
     after_id: str | None = None,
-) -> Page:
-    await get_session(db, session_id=session_id, organization_id=organization_id)
-    return await sessions_q.list_events(
+) -> tuple[Session, Page]:
+    """A page of the log, with the session it came from.
+
+    The session is returned rather than discarded because the ownership check
+    had to load it anyway, and its `last_event_seq` is what tells a caller
+    whether the window it just asked for was aimed at the right end.
+    """
+    session = await get_session(db, session_id=session_id, organization_id=organization_id)
+    page = await sessions_q.list_events(
         db,
         session_id=session_id,
         organization_id=organization_id,
@@ -433,6 +439,7 @@ async def list_events(
         before_id=before_id,
         after_id=after_id,
     )
+    return session, page
 
 
 async def get_event(db: AsyncSession, *, event_id: str, organization_id: str) -> SessionEvent:

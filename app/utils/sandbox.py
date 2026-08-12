@@ -69,6 +69,7 @@ GUEST_USER = "user"
 SKILLS_DIR = f"{WORKDIR}/skills"
 UPLOADS_DIR = f"{WORKDIR}/uploads"
 OUTPUTS_DIR = f"{WORKDIR}/outputs"
+WEB_CACHE_DIR = f"{WORKDIR}/.web_cache" # store long,intermediate results returned by web_fetch
 
 # How long a connection just proven live is taken at its word before being
 # checked again. Long enough to cover a burst — copying one file in is two
@@ -867,6 +868,18 @@ class Sandbox:
         await self.ensure_connected()
         return bytes(await self._native.files.read(path, format="bytes", user=GUEST_USER))
 
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        """The write-side mirror of `read_bytes`: one file, into the container.
+
+        For callers outside the agent's own tool loop that need to put content
+        into the sandbox — currently just `web_fetch`'s overflow path. Creates
+        the parent directory first, since nothing before this ever wrote here.
+        """
+        parent = str(PurePosixPath(path).parent)
+        await self.run(f"mkdir -p {shlex.quote(parent)}")
+        await self.ensure_connected()
+        await self._native.files.write(path, data, user=GUEST_USER)
+
     async def list_files(
         self,
         path: str,
@@ -1128,6 +1141,7 @@ __all__ = [
     "OUTPUTS_DIR",
     "SKILLS_DIR",
     "UPLOADS_DIR",
+    "WEB_CACHE_DIR",
     "WORKDIR",
     "BuildStatus",
     "Image",

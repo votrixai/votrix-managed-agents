@@ -4,9 +4,14 @@ Turns are run by the API process — inline, or by Cloud Tasks calling
 `/internal/sessions/{id}/process`. Neither of those can clean up after itself
 if the process dies mid-turn, which is what this is for.
 
-Run it with `python -m app.worker`, or not at all: a stranded session already
-frees itself the moment its lease lapses, so all this adds is not having to
-wait for the next message to notice.
+Run it with `python -m app.worker`, or set `VMA_RUN_SWEEPER=true` and the app
+starts `run_forever` on its own loop. Hosted worker instances enable it whenever
+Cloud Tasks wakes them; scale-to-zero makes the sweep best-effort while idle.
+
+Running it at all is optional: a stranded session already frees itself the
+moment its lease lapses, so all this adds is not having to wait for the next
+message to notice. What the wait costs is the conversation reading as though
+the agent were still typing, for as long as nobody sends anything.
 """
 
 from __future__ import annotations

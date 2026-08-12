@@ -24,34 +24,39 @@ HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "tra
 TAG_DESCRIPTIONS = {
     "organizations": (
         "Organizations",
-        "Organization records and role-based membership placeholders.",
+        "Manage Organization details and members.",
     ),
-    "agents": ("Agents", "Agent definitions and immutable Agent versions."),
+    "accounts": (
+        "Accounts",
+        "Track and control usage for Agent work.",
+    ),
+    "agents": (
+        "Agents",
+        "Create reusable agents and manage changes to their instructions and capabilities.",
+    ),
     "environments": (
         "Environments",
-        "Execution environment configuration and lifecycle.",
+        "Choose the sandbox setup available to an Agent.",
     ),
-    "files": ("Files", "Private uploaded files and captured Session outputs."),
+    "files": (
+        "Files",
+        "Upload source files and download files created during a Session.",
+    ),
     "memory-stores": (
         "Memory Stores",
-        "Persistent stores, path-addressed Memories, immutable Versions, and redaction.",
+        "Keep shared knowledge available across Sessions.",
     ),
-    "models": ("Models", "Model catalogue entries available to Agent definitions."),
+    "models": ("Models", "See the models available to Agents."),
     "sessions": (
         "Sessions",
-        "Long-running Session lifecycle, resources, durable events, and streaming.",
+        "Start work, continue it later, and follow an Agent's progress.",
     ),
-    "skills": ("Skills", "Reusable Skill archives available to Agents."),
+    "skills": ("Skills", "Give Agents reusable guidance for specific kinds of work."),
 }
 
 PARAMETER_DESCRIPTIONS = {
-    "x-organization-id": (
-        "Required Organization scope for this request. The current rewrite trusts "
-        "this value and does not yet authenticate the caller."
-    ),
     "x-api-key": (
-        "Optional attribution value. It is accepted but not validated by the current "
-        "rewrite and must not be treated as an authentication boundary."
+        "Your VMA API key. It identifies the Organization this request can access."
     ),
     "Last-Event-ID": (
         "Last received Session event sequence. The SSE stream resumes after it."
@@ -70,7 +75,7 @@ PARAMETER_DESCRIPTIONS = {
     "limit": "Maximum number of records returned in this page.",
     "memory_id": "Only return Versions belonging to this Memory.",
     "operation": "Only return Versions for this operation.",
-    "page": "Opaque CMA pagination cursor returned by the previous page.",
+    "page": "Opaque pagination cursor returned by the previous page.",
     "path_prefix": "Slash-terminated Memory path prefix used to filter descendants.",
     "scope_id": "Only return Files belonging to this scope.",
     "session_id": "Only return Memory Versions attributed to this Session.",
@@ -79,8 +84,7 @@ PARAMETER_DESCRIPTIONS = {
 }
 
 PARAMETER_EXAMPLES = {
-    "x-organization-id": "org_1234567890abcdef1234567890abcdef",
-    "x-api-key": "vma_example_key",
+    "x-api-key": "vma_live_example_key",
     "Last-Event-ID": "42",
     "after_seq": 42,
     "api_key_id": "apikey_1234567890abcdef1234567890abcdef",
@@ -122,6 +126,134 @@ COMPONENT_EXAMPLES = {
 }
 
 
+# Router and model docstrings are written for maintainers and can discuss how
+# the service is built. The documentation schema deliberately replaces them
+# with this small, reviewed public-contract vocabulary.
+OPERATION_DESCRIPTIONS = {
+    ("post", "/v1/accounts"): (
+        "Create an Account for tracking and limiting Agent usage separately."
+    ),
+    ("get", "/v1/accounts/{account_id}/usage"): (
+        "Return the Account's total, daily, weekly, and monthly usage in USD, "
+        "together with its limit and remaining amount when a limit is set."
+    ),
+    ("post", "/v1/accounts/{account_id}/suspend"): (
+        "Prevent an Account from funding further Agent work while preserving "
+        "its identity, limit, and usage history. The default Account cannot be "
+        "suspended."
+    ),
+    ("post", "/v1/accounts/{account_id}/resume"): (
+        "Allow a suspended Account to fund Agent work again."
+    ),
+    ("get", "/v1/agents/{agent_id}"): (
+        "Retrieve the active Agent version, or a specific version selected by "
+        "the `version` query parameter."
+    ),
+    ("patch", "/v1/agents/{agent_id}"): (
+        "Change only the supplied Agent fields and return the resulting version."
+    ),
+    ("post", "/v1/agents/{agent_id}"): (
+        "Change only the supplied Agent fields and return the resulting version."
+    ),
+    ("post", "/v1/sessions/{session_id}/events"): (
+        "Add client events to a Session. A new message is refused with `409` "
+        "while the Agent is working; an interrupt is accepted during a turn."
+    ),
+    ("get", "/v1/sessions/{session_id}/events"): (
+        "List the Session's ordered event history. Use `after_seq` to request "
+        "only events after a sequence already processed."
+    ),
+    ("get", "/v1/sessions/{session_id}/events/stream"): (
+        "Follow Session events as server-sent events. Resume with `after_seq` "
+        "or `Last-Event-ID`; without a cursor, the stream starts at the first "
+        "event."
+    ),
+    ("post", "/v1/sessions/{session_id}/live/files"): (
+        "Capture a file under `outputs/` as a File before the current turn "
+        "finishes. The Session must have an available sandbox."
+    ),
+    ("post", "/v1/sessions/{session_id}/live/uploads"): (
+        "Attach an existing File to an idle Session sandbox. `path` is relative "
+        "to `uploads/` and defaults to the File's filename."
+    ),
+    ("post", "/v1/environments"): (
+        "Create an Environment for Session sandboxes. Wait for `build_state` "
+        "to become `ready` before starting a Session."
+    ),
+    ("post", "/v1/environments/{environment_id}"): (
+        "Update an Environment. Existing Sessions keep the setup with which "
+        "they started; later Sessions use the update."
+    ),
+    ("delete", "/v1/environments/{environment_id}"): (
+        "Delete an Environment that is not referenced by a Session."
+    ),
+    ("post", "/v1/environments/{environment_id}/archive"): (
+        "Archive an Environment so it cannot be selected by new Sessions."
+    ),
+    ("post", "/v1/files"): "Upload a File using `multipart/form-data`.",
+    ("get", "/v1/files"): (
+        "List Files, optionally limited to one Session with `scope_id`."
+    ),
+    ("get", "/v1/files/{file_id}"): (
+        "Retrieve File metadata without downloading its content."
+    ),
+    ("get", "/v1/files/{file_id}/content"): (
+        "Get a short-lived download URL for a File."
+    ),
+    ("post", "/v1/skills"): (
+        "Upload a Skill package using `multipart/form-data`."
+    ),
+    ("post", "/v1/skills/{skill_id}"): (
+        "Update Skill metadata and optionally replace its package."
+    ),
+}
+
+COMPONENT_DESCRIPTIONS = {
+    "AccountUsageResponse": (
+        "Current Account usage in USD, including total and period values."
+    ),
+    "EnvironmentConfig": "The sandbox settings shared by Sessions using this Environment.",
+    "FileResource": (
+        "A File attached when a Session is created. `path` is relative to "
+        "`uploads/` and defaults to the File's filename."
+    ),
+    "ListEventsResponse": "One page of ordered Session events.",
+    "LiveFileRequest": (
+        "A file to capture from `outputs/` in an active Session sandbox."
+    ),
+    "LiveUploadRequest": (
+        "An existing File to attach under `uploads/` in an idle Session sandbox."
+    ),
+    "MemoryStoreResource": (
+        "A Memory Store attached when a Session is created."
+    ),
+    "UserCustomToolResultInput": (
+        "The result returned by your application for a custom tool request."
+    ),
+}
+
+PROPERTY_DESCRIPTIONS = {
+    ("AccountCreateRequest", "name"): "The Account name shown in API responses.",
+    ("AccountCreateRequest", "limit_usd"): (
+        "Optional spending limit in USD. Omit it for no Account-specific limit."
+    ),
+    ("AccountCreateRequest", "idempotency_key"): (
+        "Reuse this value when retrying creation to receive the same Account."
+    ),
+    ("SessionCreateRequest", "account_id"): (
+        "The Account assigned to this Session. Omit it to use the Organization's "
+        "default Account."
+    ),
+    ("SessionCreateRequest", "model"): (
+        "Optional model override for this Session. Omit it to use the selected "
+        "Agent version's model."
+    ),
+    ("SessionResponse", "model"): (
+        "The Session model override, or `null` when the Agent version supplies it."
+    ),
+}
+
+
 def _parameter_description(parameter: dict[str, Any]) -> str:
     name = str(parameter.get("name") or "parameter")
     if name in PARAMETER_DESCRIPTIONS:
@@ -140,8 +272,24 @@ def _enrich_parameter(parameter: dict[str, Any]) -> None:
     if not str(parameter.get("description") or "").strip():
         parameter["description"] = _parameter_description(parameter)
     name = str(parameter.get("name") or "")
+    if name == "x-api-key":
+        # Authentication rejects a missing key. The dependency accepts None
+        # only so it can return the intended 401 response instead of a generic
+        # validation error, so the public contract is still required/string.
+        parameter["required"] = True
+        parameter["schema"] = {"type": "string"}
     if name in PARAMETER_EXAMPLES and "example" not in parameter:
         parameter["example"] = PARAMETER_EXAMPLES[name]
+
+
+def _remove_descriptions(value: Any) -> None:
+    if isinstance(value, dict):
+        value.pop("description", None)
+        for child in value.values():
+            _remove_descriptions(child)
+    elif isinstance(value, list):
+        for child in value:
+            _remove_descriptions(child)
 
 
 def _enrich_component_schemas(schema: dict[str, Any]) -> None:
@@ -149,21 +297,24 @@ def _enrich_component_schemas(schema: dict[str, Any]) -> None:
     for name, component in schemas.items():
         if not isinstance(component, dict):
             continue
+        _remove_descriptions(component)
+        if name in COMPONENT_DESCRIPTIONS:
+            component["description"] = COMPONENT_DESCRIPTIONS[name]
         if name in COMPONENT_EXAMPLES:
             component.setdefault("example", COMPONENT_EXAMPLES[name])
-        for property_schema in component.get("properties", {}).values():
+        for property_name, property_schema in component.get("properties", {}).items():
             if isinstance(property_schema, dict):
                 # The field name is already visible in Fumadocs. Repeating the
                 # generated title hides the useful primitive/union type.
                 property_schema.pop("title", None)
+                description = PROPERTY_DESCRIPTIONS.get((name, property_name))
+                if description is not None:
+                    property_schema["description"] = description
 
 
 def _operation_description(operation: dict[str, Any]) -> str:
     summary = str(operation.get("summary") or "this operation").strip()
-    return (
-        f"{summary.rstrip('.')} within the Organization selected by the "
-        "`x-organization-id` header."
-    )
+    return f"{summary.rstrip('.')} for your Organization."
 
 
 def _enrich_sse_response(*, method: str, path: str, operation: dict[str, Any]) -> None:
@@ -211,14 +362,11 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
 
     info = schema.setdefault("info", {})
     info["description"] = (
-        "The HTTP API implemented by the active Votrix Managed Agents rewrite. "
-        "This document is generated from the same FastAPI application that serves "
-        "requests, so route and model changes are checked into the documentation "
-        "with the code.\n\n"
+        "VMA is an API-first agent harness framework that gives every Agent a "
+        "sandbox for tools, files, and ongoing work.\n\n"
         f"> **Base URL** `{server_url.rstrip('/')}`\n\n"
-        "Organization-scoped routes require `x-organization-id`. The current "
-        "rewrite trusts that header and accepts, but does not authenticate, the "
-        "optional `x-api-key`; do not expose it directly to untrusted clients."
+        "Send your VMA API key in the `x-api-key` header with each request. The key "
+        "automatically connects the request to the right Organization."
     )
 
     _enrich_component_schemas(schema)
@@ -227,8 +375,10 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
             normalized_method = method.lower()
             if normalized_method not in HTTP_METHODS or not isinstance(operation, dict):
                 continue
-            if not str(operation.get("description") or "").strip():
-                operation["description"] = _operation_description(operation)
+            operation["description"] = OPERATION_DESCRIPTIONS.get(
+                (normalized_method, path),
+                _operation_description(operation),
+            )
             for parameter in operation.get("parameters", []):
                 if isinstance(parameter, dict):
                     _enrich_parameter(parameter)

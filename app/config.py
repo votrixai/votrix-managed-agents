@@ -51,14 +51,14 @@ class Settings(BaseSettings):
     # provisioning key, so a leak of this one cannot be spent, only used to
     # enumerate and revoke.
     openrouter_management_key: str = ""
-    # Which provider workspace new keys are created in. Empty means the
-    # management key's own default.
-    openrouter_workspace_id: str = ""
 
     # Base64url AES-256 key wrapping provider secrets at rest. Without it no
     # Account credential can be written or read, which is why provisioning
     # fails loudly rather than storing a key in the clear.
     vma_encryption_key: str = ""
+
+    # Server-side credential used by the web_search and web_fetch tools.
+    firecrawl_api_key: str = ""
 
     # Object storage (Cloudflare R2 speaks the S3 API).
     s3_endpoint_url: str = ""
@@ -70,9 +70,9 @@ class Settings(BaseSettings):
     #
     # Zero means `NullPool`: a fresh connection per database session, which
     # against a hosted Postgres is a TCP handshake, a TLS handshake and an
-    # authentication round trip every time — 1.9 seconds against the Supabase
-    # pooler in us-east-2, versus 0.9 for the same work on a connection that
-    # already exists.
+    # authentication round trip every time. The gap grows when developers are
+    # far from the shared Supabase region, so local Postgres runs should keep a
+    # bounded pool instead of reconnecting for every session.
     #
     # The ceiling is not ours. That pooler, in session mode, refuses the
     # sixteenth client outright:
@@ -137,6 +137,21 @@ class Settings(BaseSettings):
     tasks_queue: str = ""
     tasks_service_account: str = ""
     worker_url: str = ""
+
+    # Run the janitor (app/worker.py) inside this process, as a background loop.
+    #
+    # Off by default because most processes must not: it is one sweep of the
+    # whole tenant's stranded sessions per minute. Hosted workers enable it so
+    # each Cloud Tasks cold start also starts the loop. With `minScale: 0` it is
+    # intentionally best-effort between requests: the Session lease remains
+    # authoritative, and the next message can reclaim an expired lease even if
+    # no sweep ran while the worker was scaled to zero.
+    #
+    # Safe on more than one instance, but only because the sweep selects its
+    # batch `FOR UPDATE SKIP LOCKED` (see `list_stuck_sessions`). Without that
+    # two sweepers would read the same stranded session and both write it an
+    # error event. `maxScale` on the worker is 4, so this is not hypothetical.
+    vma_run_sweeper: bool = False
 
     @property
     def cors_origins(self) -> tuple[str, ...]:

@@ -79,8 +79,9 @@ operator-provisioned Organization platform funding.
 ### Changed
 
 - All hosted VMA API and worker services now scale to zero when idle. Cloud
-  Tasks wakes workers for normal turns, and Session leases let the next message
-  reclaim an abandoned turn.
+  Tasks wakes workers for normal turns; the expired-Session sweeper is
+  best-effort while a worker instance is active, and Session leases still let
+  the next message reclaim an abandoned turn.
 - Hosted runtimes now follow their Supabase data plane: production Cloud Run,
   Cloud Tasks, and Artifact Registry use `us-east4`, while staging uses
   `us-west2`. The regional Cloud Build source connection remains in
@@ -104,9 +105,8 @@ operator-provisioned Organization platform funding.
 - The Cloud Run beta profile now separates public API instances from a private,
   Cloud Tasks-driven worker service. Both environments scale API and worker
   services from zero; each worker accepts up to 20 concurrent turn requests and
-  each environment permits up to four worker instances. The standalone
-  expired-Session sweep remains optional rather than a permanently hosted
-  process.
+  each environment permits up to four worker instances. The expired-Session
+  sweeper runs best-effort whenever a worker instance is active.
 - PostgreSQL control-plane traffic now uses a bounded, configurable SQLAlchemy
   application pool by default; SQLite keeps `NullPool`, and
   `VMA_DB_POOL_SIZE=0` is the explicit PostgreSQL opt-out.

@@ -1,6 +1,10 @@
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/v1/organizations", tags=["organizations"])
+router = APIRouter(
+    prefix="/v1/organizations",
+    tags=["organizations"],
+    include_in_schema=False,
+)
 
 
 @router.post("")

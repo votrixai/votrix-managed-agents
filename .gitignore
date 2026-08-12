@@ -25,3 +25,4 @@ votrix_managed_agents.db*
 
 
 tests_live/manual_io/*
+.DS_Store

@@ -24,8 +24,8 @@ identity and a migration gate before every API-and-worker rollout.
 Each environment is split into an API service and a worker service. API
 instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
 instances expose a private OIDC turn endpoint plus health endpoints. Each worker
-admits at most 20 in-flight turn requests. The standalone expired-Session sweep
-is not enabled as a hosted background process.
+admits at most 20 in-flight turn requests and keeps one
+best-effort sweeper for expired Session leases while an instance is active.
 Both roles keep CPU allocated, use one web process, and run the
 same startup and database liveness probes. Each instance is pinned to one vCPU
 and 4 GiB memory; API instances accept 80 concurrent HTTP requests while worker
@@ -104,6 +104,7 @@ VMA_SUPABASE_URL=
 VMA_SUPABASE_PUBLISHABLE_KEY=
 VMA_ENCRYPTION_KEY=
 OPENROUTER_MANAGEMENT_KEY=
+FIRECRAWL_API_KEY=
 E2B_API_KEY=
 S3_ENDPOINT_URL=
 S3_ACCESS_KEY_ID=
@@ -130,6 +131,7 @@ only these names:
 | `VMA_SUPABASE_PUBLISHABLE_KEY` | `vma-supabase-publishable-key` | `vma-supabase-publishable-key-staging` |
 | `VMA_ENCRYPTION_KEY` | `vma-encryption-key` | `vma-encryption-key-staging` |
 | `OPENROUTER_MANAGEMENT_KEY` | `vma-openrouter-management-key` | `vma-openrouter-management-key-staging` |
+| `FIRECRAWL_API_KEY` | `vma-firecrawl-api-key` | `vma-firecrawl-api-key-staging` |
 | `E2B_API_KEY` | `vma-e2b-api-key` | `vma-e2b-api-key-staging` |
 | `S3_ENDPOINT_URL` | `vma-s3-endpoint-url` | `vma-s3-endpoint-url-staging` |
 | `S3_ACCESS_KEY_ID` | `vma-s3-access-key-id` | `vma-s3-access-key-id-staging` |
@@ -182,6 +184,7 @@ VMA_DB_MAX_OVERFLOW=8
 Worker-specific settings are:
 
 ```env
+VMA_RUN_SWEEPER=true
 VMA_CHECKPOINT_POOL_MAX_SIZE=6
 VMA_DB_POOL_SIZE=8
 VMA_DB_MAX_OVERFLOW=4
@@ -301,7 +304,7 @@ pooler client ceiling, transaction-pool backend budget, and operational
 headroom are recorded in the scaling runbook.
 
 Cloud Tasks delivery wakes a worker from zero and retries failed deliveries.
-The optional Session sweep is not a replacement for successful task creation;
+The expired-Session sweeper is not a replacement for successful task creation;
 changing `minScale` does not repair queue or IAM failures. Queue retry policy is
 `maxAttempts=8`, 5–300 second backoff, and at most 25 concurrent dispatches.
 Each task sets its own 1,800-second dispatch deadline in application code; there

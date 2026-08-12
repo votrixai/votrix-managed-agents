@@ -8,17 +8,17 @@ cross-instance preview transport from `PLAN-horizontal-scaling.md` have shipped.
 Autoscaling (P3, Cloud Tasks) ships pre-launch as part of the first release
 (spec: `PLAN-p3-autoscale.md`).
 Cloud Tasks push drives Cloud Run autoscaling. Hosted services scale to zero;
-Session leases remain authoritative when a worker disappears or while the
-services are idle.
+the expired-Session sweeper runs best-effort whenever a worker instance is
+active, while Session leases remain authoritative during idle periods.
 
 ## First-release topology after P3
 
 | Service | Role | Scaling | Manifest |
 |---|---|---|---|
 | `votrix-managed-agents` | Public API + SSE | `minScale=0 / maxScale=2`, request-driven | `service.production.yaml` |
-| `votrix-managed-agents-worker` | Private OIDC turn execution | Cloud Tasks request-driven, `minScale=0 / maxScale=4` | `service.worker.production.yaml` |
+| `votrix-managed-agents-worker` | Private OIDC turn execution + expired-Session sweeper | Cloud Tasks request-driven, `minScale=0 / maxScale=4` | `service.worker.production.yaml` |
 | `votrix-managed-agents-staging` | Staging API + SSE | `minScale=0 / maxScale=2`, request-driven | `service.staging.yaml` |
-| `votrix-managed-agents-staging-worker` | Staging turn execution | Cloud Tasks request-driven, `minScale=0 / maxScale=4` | `service.worker.staging.yaml` |
+| `votrix-managed-agents-staging-worker` | Staging turn execution + expired-Session sweeper | Cloud Tasks request-driven, `minScale=0 / maxScale=4` | `service.worker.staging.yaml` |
 
 Project `votrixai-480422`. Production runs in `us-east4`; staging runs in
 `us-west2` (see `scripts/gcloud/config.sh`).
@@ -58,8 +58,8 @@ so the manifest remains the source of truth. **A manual
 Named Cloud Tasks target the private worker URL with an OIDC token. Each task is
 an in-flight HTTP request for the duration of the turn, so Cloud Run observes
 demand and scales worker instances. Nothing inside the process adds a second
-turn limiter beyond `containerConcurrency`. The optional standalone Session
-sweep does not execute turns and does not recover failed task creation.
+turn limiter beyond `containerConcurrency`. The expired-Session sweeper does
+not execute turns and does not recover failed task creation.
 
 ### Standard persistent capacity change
 
@@ -120,12 +120,12 @@ If task creation or delivery is failing:
    `scripts/gcloud/8-setup-cloud-tasks.sh <environment>` to repair queue policy
    and IAM drift.
 4. For a worker that died mid-turn, the Session lease expires and the next
-   message can reclaim it. Run `python -m app.worker` separately only when an
-   operator needs stale visible state cleared before another message arrives.
+   message can reclaim it. Waking the worker also starts the best-effort sweeper
+   that clears the stale visible state.
 
-Cloud Tasks retry `maxAttempts=8` is an infrastructure delivery bound. Once the
-application receives a turn, it records any execution failure as a Session
-event and returns success so the same model turn is not executed again.
+Cloud Tasks retry `maxAttempts=8` is an infrastructure delivery bound, not the
+model-execution attempt counter. The application maps terminal/busy outcomes to
+HTTP 200 and only transient outcomes to retryable 5xx responses.
 
 ## Inline dispatch is local/self-hosted only
 

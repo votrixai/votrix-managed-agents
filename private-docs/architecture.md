@@ -41,7 +41,7 @@ rotation remain launch gates tracked in `PLAN-pre-launch-hardening.md` and
              +--------- private worker service -----------------+
              | role=worker · minScale 0 / maxScale 4            |
              | containerConcurrency 20                          |
-             | Cloud Tasks push · Session lease expiry          |
+             | Cloud Tasks push + best-effort Session sweeper   |
              | Session lease + lock_version write fencing       |
              | append-only event commits                        |
              | DeepAgents/LangGraph · E2B sandbox 1:1/session   |
@@ -65,19 +65,19 @@ Violating any of these is an incident.
    idle Session atomically. A release or interrupt advances `lock_version`, and
    a superseded worker cannot append another Agent event.
 3. **A lost worker is bounded by the Session lease.** The next message can
-   reclaim an expired lease. The optional standalone sweep only shortens stale
-   UI state when an operator runs it.
+   reclaim an expired lease. The worker's expired-Session sweeper only shortens
+   the stale UI state while an instance happens to be active.
 4. **The worker endpoint stays private.** Cloud Tasks calls it with a runtime
    service-account OIDC token; public traffic must not bypass the Session gate.
 5. **Session-scoped PostgreSQL features never use the transaction pooler.**
-   LISTEN/NOTIFY subscriptions use the dedicated session DSN. Runtime and
-   checkpoint traffic use transaction mode with server-side prepared statements
-   disabled.
+   LISTEN/NOTIFY subscriptions and session advisory locks use the dedicated
+   session DSN. Runtime and checkpoint traffic use transaction mode with
+   server-side prepared statements disabled.
 6. **Event wake-up is best-effort.** `pg_notify` reduces stream polling latency,
    but clients reconcile against durable events and no correctness path depends
    on a notification arriving.
 7. **Cloud Tasks is the hosted execution path.** Scale-to-zero workers wake on
-   task delivery. A warm worker or separately run sweep does not recreate a task
+   task delivery. A warm worker or Session sweeper does not recreate a task
    whose creation failed.
 
 ## Scaling model

@@ -1,136 +1,70 @@
 ---
 title: Overview
-description: Run Votrix Managed Agents and understand its current scope.
+description: What VMA is, what it gives your agents, and where to begin.
 ---
 
-Votrix Managed Agents is a proprietary service for running long-lived,
-versioned agents, built with FastAPI, Deep Agents, LangGraph, E2B, and
-SQLAlchemy.
+Votrix Managed Agents (VMA) is an API-first **agent harness framework**. It
+gives every Agent a sandbox where it can use tools, work with files, and carry
+multi-step jobs through to completion.
 
-<Callout title="Development authentication boundary" type="warn">
+You define what an Agent should do and send it work through the API. VMA keeps
+the Agent, its sandbox, its files, and the history of the job connected in one
+Session, so your product does not have to rebuild that surrounding system for
+every workflow.
 
-The active implementation requires `x-organization-id` but does not yet
-authenticate that tenant selection. Do not expose it directly to untrusted
-clients. Read [implementation status](./rewrite-status.md) for the remaining
-production gaps.
+## What VMA gives you
+
+- **Reusable Agents** — define a role, instructions, tools, and Skills once,
+  then use that Agent for many jobs.
+- **A sandbox for real work** — let an Agent use tools, read inputs, create
+  files, and complete work that takes more than one step.
+- **Ongoing Sessions** — send follow-up messages or feedback while keeping the
+  same work and conversation together.
+- **Files and shared memory** — provide source material, collect deliverables,
+  and make useful context available across Sessions.
+- **Live progress and control** — follow events as they happen, approve actions,
+  answer custom tools, or interrupt a turn.
+
+VMA is a good fit for research, content production, analysis, operations, and
+other work where an Agent needs tools, files, or continuity beyond one model
+response.
+
+## How it works
+
+1. **Create an Agent** with a job, instructions, and the capabilities it needs.
+2. **Start a Session** with an Environment and any Files or Memory Stores.
+3. **Send a message** describing the work.
+4. **Follow Session events** until the Agent finishes or asks for input.
+5. **Collect the result** and continue the same Session when needed.
+
+## The main resources
+
+| Resource | What it represents |
+| --- | --- |
+| **Agent** | A reusable worker with instructions, tools, and Skills. |
+| **Environment** | The sandbox setup available to an Agent. |
+| **Session** | One ongoing job, including its history and sandbox. |
+| **Account** | The usage and spending boundary for a Session. |
+| **Skill** | Reusable guidance for a particular kind of work. |
+| **File** | An input supplied to an Agent or an output it creates. |
+| **Memory Store** | A shared workspace that can continue across Sessions. |
+| **Event** | An ordered update in a Session, from you or the Agent. |
+
+<Callout title="Public contract" type="info">
+
+These docs describe only the behavior an API client can rely on: public
+resources, request and response fields, events, errors, and limits. Anything
+outside that public contract is intentionally out of scope.
 
 </Callout>
 
-## Current capabilities
+## Where to start
 
-- immutable Agent versions and Session version pinning;
-- E2B Environment image recipes;
-- one persistent E2B sandbox per Session;
-- append-only Session events and resumable SSE;
-- Deep Agents filesystem tools, Skill loading, and human-in-the-loop tool
-  decisions;
-- private S3-compatible File and Skill storage;
-- SQLite or PostgreSQL resource state and separate LangGraph checkpoints;
-- inline turns or OIDC-authenticated Cloud Tasks push dispatch.
-
-Implemented resource routes trust `x-organization-id` and do not validate
-`x-api-key`. The Organization and model placeholders do not yet use that
-dependency. The service must not be exposed to untrusted clients.
-
-## Choose a starting point
-
-| Goal | Read |
+| I want to… | Go to… |
 | --- | --- |
-| See what was ported | [Rewrite status](./rewrite-status.md) |
-| Understand the layers and data flows | [Rewrite architecture](./votrix-core-architecture.md) |
-| Integrate Session events | [Session events](./session-events.md) |
-| Resume an event stream | [Event streaming](./streaming.md) |
-| Handle failures | [Errors](./errors.md) |
-| Check enforced limits | [Service limits](./limits.md) |
-| Understand Agent snapshots | [Agent versioning](./agent-versioning.md) |
-
-## Run the active app
-
-Requirements:
-
-- Python 3.12 or newer
-- [`uv`](https://docs.astral.sh/uv/)
-
-From the repository root:
-
-```bash
-cp .env.example .env
-uv sync
-uv run alembic upgrade head
-uv run uvicorn app.main:app --reload
-```
-
-The OpenAPI document is available at
-`http://127.0.0.1:8000/openapi.json`.
-
-The first active Alembic revision starts a new lineage. Use a fresh database;
-`alembic upgrade head` does not upgrade databases stamped with the superseded
-lineage. Moving that data requires a separate migration based on Git history.
-
-List Agents with the current development tenant header:
-
-```bash
-curl http://127.0.0.1:8000/v1/agents \
-  --header "x-organization-id: org_local"
-```
-
-The database defaults to a local SQLite file. A full Session run additionally
-needs an E2B key and one model-provider key:
-
-```dotenv
-E2B_API_KEY=...
-ANTHROPIC_API_KEY=...
-```
-
-Use `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, or `OPENAI_API_KEY` for a model from
-those providers. Files, Skills, attached inputs, and output collection need
-private S3-compatible storage:
-
-```dotenv
-S3_ENDPOINT_URL=https://...
-S3_ACCESS_KEY_ID=...
-S3_SECRET_ACCESS_KEY=...
-S3_BUCKET_NAME=...
-```
-
-## System shape
-
-```text
-HTTP client
-  |
-  v
-FastAPI router -> service -> tenant-scoped SQLAlchemy query -> SQLite/Postgres
-                    |
-                    +-> E2B sandbox and image
-                    +-> private S3-compatible storage
-                    +-> inline turn or Cloud Tasks callback
-                                      |
-                                      v
-                              Deep Agents + LangGraph
-                                |       |       |
-                                v       v       v
-                              model   tools   checkpoint
-
-SSE reader <---- polls committed session_events
-```
-
-Routers own HTTP, services own use-case rules and commits, queries own
-persistence, and the runtime translates between Deep Agents state and public
-events. The sandbox is the execution boundary; the relational event log is the
-client-facing source of truth.
-
-## Documentation authority
-
-The navigation contains only documentation reviewed against the active app.
-The API reference is generated from `app.server.create_app`; a snapshot test
-fails when its checked-in OpenAPI schema no longer matches the application.
-
-## Tests
-
-```bash
-uv run pytest
-```
-
-The default suite is isolated and runs against in-memory SQLite. Real E2B,
-storage, model, and Cloud Tasks checks live under `tests_live/` and must be run
-deliberately.
+| Run my first Agent | [Quickstart](/docs/quickstart) |
+| Understand how the resources fit together | [Core Concepts](/docs/core-concepts) |
+| Manage usage and spend | [Accounts](/docs/accounts) |
+| See every endpoint and field | [API Reference](/docs/api) |
+| Follow work as it happens | [Session Events](/docs/session-events) |
+| Keep context across Sessions | [Memory Stores](/docs/memory-stores) |

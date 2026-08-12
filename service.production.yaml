@@ -114,6 +114,11 @@ spec:
                 secretKeyRef:
                   key: latest
                   name: vma-openrouter-management-key
+            - name: FIRECRAWL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: latest
+                  name: vma-firecrawl-api-key
             - name: VMA_CHECKPOINT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
