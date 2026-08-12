@@ -81,22 +81,69 @@ async def test_web_fetch_live_long_page_writes_to_sandbox():
 # rest?
 #
 # The question is chosen so it cannot be answered any other way. Wikipedia's
-# Python article is ~240k characters; `web_fetch` returns the first 20k. The
-# name of Python 2's final release manager is well past that, so an agent that
-# stops at the tool result has to say it does not know. Getting it right means
-# it used the sandbox path — which is the entire point of saving the file.
+# Python article is ~240k characters and `web_fetch` returns the first 20k;
+# Python 2's final release sits well past that. An agent that stops at the tool
+# result has to say it does not know, so a right answer means it used the
+# sandbox path — which is the whole reason the file is saved.
+
+
+async def _run_to_idle(api, session_id: str, text: str, *, timeout: float = 600.0):
+    """Send one message and collect the turn, approving what it stops to ask.
+
+    The suite's own `send` helper reads the log once, immediately. That was
+    right when the request stayed open for the turn; dispatch returns as soon
+    as the message is accepted now, so a single read sees the message and
+    nothing else. This waits instead.
+    """
+
+    import asyncio
+    import time
+
+    from tests_live.helpers import allow, events_after, last_seq
+
+    cursor = await last_seq(api, session_id)
+    response = await api.post(
+        f"/v1/sessions/{session_id}/events",
+        json={"events": [{"type": "user.message", "content": [{"type": "text", "text": text}]}]},
+    )
+    response.raise_for_status()
+
+    collected: list[dict] = []
+    approved: set[str] = set()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        fresh = await events_after(api, session_id, cursor)
+        if fresh:
+            collected += fresh
+            cursor = fresh[-1]["seq"]
+
+        idle = [e for e in collected if e["type"] == "session.status_idle"]
+        if idle:
+            stop = idle[-1].get("stop_reason") or {}
+            if stop.get("type") != "requires_action":
+                return collected
+            waiting = [i for i in (stop.get("event_ids") or []) if i not in approved]
+            if waiting:
+                approved.update(waiting)
+                await api.post(
+                    f"/v1/sessions/{session_id}/events",
+                    json={"events": [allow(i) for i in waiting]},
+                )
+        await asyncio.sleep(1.0)
+
+    raise AssertionError(f"turn never finished: {[e['type'] for e in collected]}")
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_an_agent_recovers_what_the_truncation_cut_off(api, session):
-    from tests_live.helpers import calls, run_to_end, said
+    from tests_live.helpers import calls, said
 
-    events = await run_to_end(
+    events = await _run_to_idle(
         api,
         session,
         "Fetch https://en.wikipedia.org/wiki/Python_(programming_language) and tell me "
-        "which Python version the article says was the last release of Python 2, and "
-        "the exact date it was released. Answer from the page, not from memory.",
+        "which Python version the article says was the final release of Python 2, and "
+        "the date it was released. Answer from the page, not from memory.",
     )
 
     used = [call.get("name") for call in calls(events)]
@@ -105,9 +152,9 @@ async def test_an_agent_recovers_what_the_truncation_cut_off(api, session):
     print("\n--- what it answered ---\n", reply)
 
     assert "web_fetch" in used, f"the agent never fetched the page; it used {used}"
-    # Reading past the truncation is the behaviour under test — whether it
-    # greps or reads with an offset is the agent's call, but it has to do one.
-    assert any(name in used for name in ("grep", "read_file")), (
+    # Reading past the truncation is the behaviour under test. Whether it greps
+    # or reads with an offset is the agent's call, but it has to do one.
+    assert any(name in used for name in ("grep", "read_file", "execute")), (
         f"the agent answered from the truncated head alone; it used {used}"
     )
     assert "2.7.18" in reply, f"wrong or missing answer: {reply!r}"

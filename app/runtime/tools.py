@@ -35,7 +35,9 @@ TOOLSET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "glob",
         "grep",
         "write_todos",
-        "task",
+        # No `task`: the general-purpose subagent that carries it is disabled
+        # in `runtime/engine.py`. Naming it here would promise a tool the
+        # model never sees and let a stored config set a policy for it.
     ),
     "web_toolset_20260401": ("web_fetch", "web_search"),
 }

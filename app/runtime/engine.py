@@ -17,7 +17,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from deepagents import create_deep_agent
+from deepagents import (
+    GeneralPurposeSubagentProfile,
+    HarnessProfile,
+    create_deep_agent,
+    register_harness_profile,
+)
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
@@ -41,6 +46,31 @@ from app.utils.timing import timed
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
 ToolCompleted = Callable[[str], Awaitable[None]]
 _FILESYSTEM_MUTATORS = {"write_file", "edit_file", "execute"}
+
+# No `task` tool, and so no subagents. DeepAgents adds a `general-purpose`
+# subagent unless told otherwise, and only attaches `SubAgentMiddleware` — the
+# thing that carries `task` — when at least one synchronous subagent exists.
+# We pass no `subagents=`, so disabling the default one leaves the middleware
+# out entirely rather than leaving a tool nobody can reach.
+#
+# Why it is off: that subagent inherits the parent's tools *and* its skills,
+# but not its system prompt and not the conversation. A copy of an agent that
+# has been told how to talk to a user, has every paid tool, and knows nothing
+# about what the user asked, will hold a conversation with its own parent —
+# and spend money doing it. Worse, none of that reaches the client: the
+# subagent's calls are internal to the graph, so the whole run appears in the
+# event log as a single `task` with no cost and no trace attached.
+#
+# Registered under the provider rather than a model id because every model in
+# the catalogue is reached through `ChatOpenRouter` (see `_build_chat_model`),
+# which resolves to provider `openrouter`. Profile lookup falls back from
+# `provider:identifier` to the bare provider, so this one entry covers the
+# whole catalogue. There is no wildcard key; a second gateway would need its
+# own registration here.
+register_harness_profile(
+    "openrouter",
+    HarnessProfile(general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)),
+)
 
 
 class UnsupportedEventError(RuntimeError):

@@ -170,10 +170,17 @@ async def organization(server) -> str:
     """
     from app.db.engine import session_scope
     from app.db.queries import organizations
+    from app.services import accounts
 
     slug = f"live-{uuid.uuid4().hex[:10]}"
     async with session_scope() as db:
         created = await organizations.create_organization(db, slug=slug, name="Live tests")
+        # Nothing runs on an Organization that cannot spend: opening a session
+        # checks for a default Account and refuses with 409 without one. Real
+        # rather than stubbed, because what it provisions is the per-Account
+        # provider key every turn in this suite is billed to — a fake one would
+        # move the failure to the first model call.
+        await accounts.ensure_default_account(db, organization_id=created.id)
         await db.commit()
         return created.id
 
