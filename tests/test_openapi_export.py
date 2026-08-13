@@ -131,6 +131,36 @@ def test_required_request_parameters_have_realistic_examples():
                     assert parameter.get("example"), parameter
 
 
+def test_agent_examples_do_not_invent_empty_configuration_items():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    request = schema["paths"]["/v1/agents"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["examples"]["sample_request"]["value"]
+
+    for field in ("tools", "mcp_servers", "skills"):
+        assert field not in request
+
+    schemas = schema["components"]["schemas"]
+    response = schemas["AgentResponse"]["examples"][0]
+    version = schemas["AgentVersionResponse"]["examples"][0]
+    for field in ("tools", "mcp_servers", "skills"):
+        assert response[field] == []
+        assert version[field] == []
+
+    # `description` is an API field, not merely a JSON Schema annotation. The
+    # presentation cleanup must preserve it so every example remains valid for
+    # the schema it documents.
+    for component_name in (
+        "AgentCreateRequest",
+        "AgentUpdateRequest",
+        "AgentResponse",
+        "AgentVersionResponse",
+    ):
+        component = schemas[component_name]
+        assert "description" in component["properties"]
+        assert set(component["examples"][0]) <= set(component["properties"])
+
+
 def test_documentation_openapi_publishes_complete_memory_surface():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
     assert MEMORY_OPERATIONS <= _operations(schema)

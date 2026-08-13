@@ -3876,6 +3876,16 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tools": {
             "items": {
               "additionalProperties": true,
@@ -4048,6 +4058,16 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tools": {
             "items": {
               "additionalProperties": true,
@@ -4114,7 +4134,51 @@
           "created_at",
           "updated_at"
         ],
-        "title": "AgentResponse"
+        "title": "AgentResponse",
+        "example": {
+          "id": "agent_1234567890abcdef1234567890abcdef",
+          "type": "agent",
+          "name": "Research Assistant",
+          "version": 1,
+          "model": {
+            "id": "claude-sonnet-5"
+          },
+          "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+          "description": "Creates concise, source-backed research briefs.",
+          "tools": [],
+          "mcp_servers": [],
+          "skills": [],
+          "multiagent": null,
+          "metadata": {
+            "team": "research"
+          },
+          "created_at": "2026-08-13T14:30:00Z",
+          "updated_at": "2026-08-13T14:30:00Z",
+          "archived_at": null
+        },
+        "examples": [
+          {
+            "id": "agent_1234567890abcdef1234567890abcdef",
+            "type": "agent",
+            "name": "Research Assistant",
+            "version": 1,
+            "model": {
+              "id": "claude-sonnet-5"
+            },
+            "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+            "description": "Creates concise, source-backed research briefs.",
+            "tools": [],
+            "mcp_servers": [],
+            "skills": [],
+            "multiagent": null,
+            "metadata": {
+              "team": "research"
+            },
+            "created_at": "2026-08-13T14:30:00Z",
+            "updated_at": "2026-08-13T14:30:00Z",
+            "archived_at": null
+          }
+        ]
       },
       "AgentThinkingEvent": {
         "properties": {
@@ -4276,6 +4340,16 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tools": {
             "anyOf": [
               {
@@ -4405,6 +4479,16 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tools": {
             "items": {
               "additionalProperties": true,
@@ -4460,13 +4544,67 @@
           "model",
           "created_at"
         ],
-        "title": "AgentVersionResponse"
+        "title": "AgentVersionResponse",
+        "example": {
+          "id": "av_1234567890abcdef1234567890abcdef",
+          "type": "agent_version",
+          "agent_id": "agent_1234567890abcdef1234567890abcdef",
+          "version": 1,
+          "name": "Research Assistant",
+          "model": {
+            "id": "claude-sonnet-5"
+          },
+          "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+          "description": "Creates concise, source-backed research briefs.",
+          "tools": [],
+          "mcp_servers": [],
+          "skills": [],
+          "multiagent": null,
+          "metadata": {
+            "team": "research"
+          },
+          "runtime": {},
+          "created_at": "2026-08-13T14:30:00Z"
+        },
+        "examples": [
+          {
+            "id": "av_1234567890abcdef1234567890abcdef",
+            "type": "agent_version",
+            "agent_id": "agent_1234567890abcdef1234567890abcdef",
+            "version": 1,
+            "name": "Research Assistant",
+            "model": {
+              "id": "claude-sonnet-5"
+            },
+            "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+            "description": "Creates concise, source-backed research briefs.",
+            "tools": [],
+            "mcp_servers": [],
+            "skills": [],
+            "multiagent": null,
+            "metadata": {
+              "team": "research"
+            },
+            "runtime": {},
+            "created_at": "2026-08-13T14:30:00Z"
+          }
+        ]
       },
       "Body_create_skill_v1_skills_post": {
         "properties": {
           "file": {
             "type": "string",
             "contentMediaType": "application/octet-stream"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -4489,6 +4627,16 @@
             ]
           },
           "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4592,6 +4740,16 @@
             "maxLength": 255,
             "minLength": 1
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "config": {
             "$ref": "#/components/schemas/EnvironmentConfig"
           }
@@ -4645,6 +4803,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "config": {
             "$ref": "#/components/schemas/EnvironmentConfig"
@@ -4702,6 +4870,16 @@
                 "type": "string",
                 "maxLength": 255,
                 "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -5363,6 +5541,11 @@
             "maxLength": 255,
             "minLength": 1
           },
+          "description": {
+            "type": "string",
+            "maxLength": 1024,
+            "default": ""
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -5494,6 +5677,10 @@
           "name": {
             "type": "string"
           },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -5538,6 +5725,17 @@
                 "type": "string",
                 "maxLength": 255,
                 "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
               },
               {
                 "type": "null"
@@ -5983,6 +6181,10 @@
           "name": {
             "type": "string"
           },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -6265,6 +6467,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "size_bytes": {
             "type": "integer"

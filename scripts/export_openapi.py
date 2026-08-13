@@ -142,6 +142,43 @@ ACCOUNT_USAGE_EXAMPLE = {
     "limit_usd": "20.00",
     "limit_remaining_usd": "11.60",
 }
+AGENT_ACTIVE_EXAMPLE = {
+    "id": AGENT_ID_EXAMPLE,
+    "type": "agent",
+    "name": "Research Assistant",
+    "version": 1,
+    "model": {"id": "claude-sonnet-5"},
+    "system": (
+        "Research the topic carefully and save the final brief in "
+        "outputs/brief.md."
+    ),
+    "description": "Creates concise, source-backed research briefs.",
+    "tools": [],
+    "mcp_servers": [],
+    "skills": [],
+    "multiagent": None,
+    "metadata": {"team": "research"},
+    "created_at": "2026-08-13T14:30:00Z",
+    "updated_at": "2026-08-13T14:30:00Z",
+    "archived_at": None,
+}
+AGENT_VERSION_EXAMPLE = {
+    "id": "av_1234567890abcdef1234567890abcdef",
+    "type": "agent_version",
+    "agent_id": AGENT_ID_EXAMPLE,
+    "version": 1,
+    "name": "Research Assistant",
+    "model": {"id": "claude-sonnet-5"},
+    "system": AGENT_ACTIVE_EXAMPLE["system"],
+    "description": AGENT_ACTIVE_EXAMPLE["description"],
+    "tools": [],
+    "mcp_servers": [],
+    "skills": [],
+    "multiagent": None,
+    "metadata": {"team": "research"},
+    "runtime": {},
+    "created_at": "2026-08-13T14:30:00Z",
+}
 
 COMPONENT_EXAMPLES = {
     "AccountCreateRequest": {
@@ -168,6 +205,8 @@ COMPONENT_EXAMPLES = {
         ),
         "metadata": {"team": "research", "reviewed": True},
     },
+    "AgentResponse": AGENT_ACTIVE_EXAMPLE,
+    "AgentVersionResponse": AGENT_VERSION_EXAMPLE,
     "EnvironmentCreateRequest": {
         "name": "Data Analysis Workspace",
         "description": "A sandbox with common data-analysis packages.",
@@ -552,8 +591,15 @@ def _enrich_parameter(parameter: dict[str, Any]) -> None:
 def _remove_descriptions(value: Any) -> None:
     if isinstance(value, dict):
         value.pop("description", None)
-        for child in value.values():
-            _remove_descriptions(child)
+        for key, child in value.items():
+            if key == "properties" and isinstance(child, dict):
+                # `description` may be a real API field name. Only remove the
+                # JSON Schema annotation from each property's schema; never
+                # remove an entry from the properties map itself.
+                for property_schema in child.values():
+                    _remove_descriptions(property_schema)
+            else:
+                _remove_descriptions(child)
     elif isinstance(value, list):
         for child in value:
             _remove_descriptions(child)
