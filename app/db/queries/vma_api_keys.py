@@ -9,7 +9,6 @@ import structlog
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import VMA_API_SCOPE, VmaApiKey
 from app.utils.id_generator import new_id
 
@@ -27,34 +26,46 @@ KNOWN_VMA_API_KEY_SCOPES = frozenset(
 )
 DEFAULT_VMA_API_KEY_SCOPES = (VMA_API_SCOPE,)
 
-LIVE_VMA_API_KEY_PREFIX = "vma_live_"
-TEST_VMA_API_KEY_PREFIX = "vma_test_"
-KNOWN_VMA_API_KEY_PREFIXES = (
-    LIVE_VMA_API_KEY_PREFIX,
-    TEST_VMA_API_KEY_PREFIX,
+VMA_API_KEY_PREFIX = "vma_"
+LEGACY_VMA_API_KEY_PREFIXES = (
+    "vma_live_",
+    "vma_test_",
 )
 DISPLAYED_VMA_API_KEY_PREFIX_LENGTH = 17
 MINIMUM_VMA_API_KEY_RANDOM_LENGTH = 32
 
 
 def vma_api_key_prefix(*, app_env: str | None = None) -> str:
-    environment = app_env if app_env is not None else get_settings().app_env
-    if str(environment).strip().lower() == "production":
-        return LIVE_VMA_API_KEY_PREFIX
-    return TEST_VMA_API_KEY_PREFIX
+    """Return the environment-independent prefix for newly issued keys.
+
+    ``app_env`` remains accepted so callers compiled against the former
+    environment-specific API do not break during the format migration.
+    """
+    return VMA_API_KEY_PREFIX
 
 
 def generate_vma_api_key(*, app_env: str | None = None) -> str:
-    return f"{vma_api_key_prefix(app_env=app_env)}{secrets.token_urlsafe(32)}"
+    prefix = vma_api_key_prefix(app_env=app_env)
+    while True:
+        token = f"{prefix}{secrets.token_urlsafe(32)}"
+        if not token.startswith(LEGACY_VMA_API_KEY_PREFIXES):
+            return token
 
 
 def validate_vma_api_key_prefix(token: str, *, app_env: str | None = None) -> None:
+    """Accept unified keys plus the two retired environment-prefixed forms."""
     expected_prefix = vma_api_key_prefix(app_env=app_env)
-    if not token.startswith(KNOWN_VMA_API_KEY_PREFIXES):
-        raise ValueError("api_key must use the vma_live_ or vma_test_ prefix")
     if not token.startswith(expected_prefix):
-        raise ValueError(f"api_key must use the {expected_prefix} prefix for this environment")
-    if len(token) < len(expected_prefix) + MINIMUM_VMA_API_KEY_RANDOM_LENGTH:
+        raise ValueError(f"api_key must use the {expected_prefix} prefix")
+    entropy_prefix = next(
+        (
+            prefix
+            for prefix in LEGACY_VMA_API_KEY_PREFIXES
+            if token.startswith(prefix)
+        ),
+        expected_prefix,
+    )
+    if len(token) < len(entropy_prefix) + MINIMUM_VMA_API_KEY_RANDOM_LENGTH:
         raise ValueError(
             "api_key must contain at least "
             f"{MINIMUM_VMA_API_KEY_RANDOM_LENGTH} characters after the prefix"
@@ -62,17 +73,13 @@ def validate_vma_api_key_prefix(token: str, *, app_env: str | None = None) -> No
 
 
 def is_legacy_vma_api_key(token: str) -> bool:
-    return token.startswith("vma_") and not token.startswith(KNOWN_VMA_API_KEY_PREFIXES)
+    return token.startswith(LEGACY_VMA_API_KEY_PREFIXES)
 
 
 def validate_legacy_vma_api_key(token: str) -> None:
     if not is_legacy_vma_api_key(token):
-        raise ValueError("legacy api_key must use the vma_ prefix")
-    if len(token) < len("vma_") + MINIMUM_VMA_API_KEY_RANDOM_LENGTH:
-        raise ValueError(
-            "legacy api_key must contain at least "
-            f"{MINIMUM_VMA_API_KEY_RANDOM_LENGTH} characters after the prefix"
-        )
+        raise ValueError("legacy api_key must use the vma_live_ or vma_test_ prefix")
+    validate_vma_api_key_prefix(token)
 
 
 def hash_vma_api_key(token: str) -> str:

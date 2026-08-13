@@ -11,14 +11,20 @@ from app.db.queries import organizations
 from app.db.queries import vma_api_keys as keys
 
 
-def test_vma_api_key_generation_uses_environment_prefix(monkeypatch):
-    assert keys.generate_vma_api_key(app_env="staging").startswith("vma_test_")
-    assert keys.generate_vma_api_key(app_env="production").startswith("vma_live_")
+def test_vma_api_key_generation_uses_unified_prefix(monkeypatch):
+    staging = keys.generate_vma_api_key(app_env="staging")
+    production = keys.generate_vma_api_key(app_env="production")
+    assert staging.startswith("vma_")
+    assert production.startswith("vma_")
+    assert not staging.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
+    assert not production.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
 
     monkeypatch.setenv("APP_ENV", "production")
     clear_settings_cache()
     try:
-        assert keys.generate_vma_api_key().startswith("vma_live_")
+        generated = keys.generate_vma_api_key()
+        assert generated.startswith("vma_")
+        assert not generated.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
     finally:
         clear_settings_cache()
 
@@ -34,13 +40,15 @@ def test_vma_api_key_scope_and_prefix_validation():
         keys.normalize_vma_api_key_scopes(["root"])
     with pytest.raises(ValueError, match="collection"):
         keys.normalize_vma_api_key_scopes("api")
-    with pytest.raises(ValueError, match="vma_test_"):
-        keys.validate_vma_api_key_prefix(
-            "vma_live_" + "x" * 32,
-            app_env="staging",
-        )
+    keys.validate_vma_api_key_prefix("vma_" + "x" * 32, app_env="production")
+    keys.validate_vma_api_key_prefix("vma_live_" + "x" * 32, app_env="staging")
+    keys.validate_vma_api_key_prefix("vma_test_" + "x" * 32, app_env="production")
+    with pytest.raises(ValueError, match="vma_ prefix"):
+        keys.validate_vma_api_key_prefix("sk_" + "x" * 32)
     with pytest.raises(ValueError, match="at least 32"):
-        keys.validate_legacy_vma_api_key("vma_too_short")
+        keys.validate_vma_api_key_prefix("vma_too_short")
+    with pytest.raises(ValueError, match="at least 32"):
+        keys.validate_legacy_vma_api_key("vma_live_too_short")
 
 
 async def test_create_vma_api_key_only_persists_hash(db, org):
@@ -54,7 +62,8 @@ async def test_create_vma_api_key_only_persists_hash(db, org):
     )
     await db.commit()
 
-    assert plaintext.startswith("vma_test_")
+    assert plaintext.startswith("vma_")
+    assert not plaintext.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
     assert api_key.key_hash == keys.hash_vma_api_key(plaintext)
     assert api_key.prefix == plaintext[: keys.DISPLAYED_VMA_API_KEY_PREFIX_LENGTH]
     assert api_key.scopes == [keys.VMA_API_SCOPE, keys.VMA_API_KEYS_MANAGE_SCOPE]
