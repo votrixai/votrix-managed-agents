@@ -30,8 +30,7 @@ async def test_bootstrap_creates_and_idempotently_reuses_management_key(
     )
 
     assert created.organization_created
-    assert created.secret.startswith("vma_")
-    assert not created.secret.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
+    keys.validate_vma_api_key(created.secret)
     rows = await keys.list_vma_api_keys(db, organization_id="org_bootstrap")
     assert len(rows) == 1
     assert rows[0].id == created.key_id
@@ -54,45 +53,11 @@ async def test_bootstrap_creates_and_idempotently_reuses_management_key(
         )
 
 
-async def test_legacy_bootstrap_requires_explicit_empty_org_import(
-    db,
-    org,
-    bootstrap_with_test_db,
-):
-    legacy_secret = "vma_live_" + "x" * 32
-
-    with pytest.raises(ValueError, match="allow-legacy-import"):
-        await bootstrap.bootstrap_api_key(
-            organization_id=org,
-            api_key=legacy_secret,
-        )
-
-    imported = await bootstrap.bootstrap_api_key(
-        organization_id=org,
-        api_key=legacy_secret,
-        allow_legacy_import=True,
-    )
-    assert imported.secret == legacy_secret
-    stored = await keys.get_vma_api_key_by_token(db, legacy_secret)
-    assert stored is not None
-    assert stored.key_hash == keys.hash_vma_api_key(legacy_secret)
-    assert stored.prefix != legacy_secret
-
-    await keys.revoke_vma_api_key(db, stored, reason="test")
-    await db.commit()
-    with pytest.raises(bootstrap.BootstrapConflict, match="before the Organization"):
-        await bootstrap.bootstrap_api_key(
-            organization_id=org,
-            api_key="vma_test_" + "y" * 32,
-            allow_legacy_import=True,
-        )
-
-
-async def test_bootstrap_accepts_unified_preprovisioned_key_without_legacy_flag(
+async def test_bootstrap_accepts_preprovisioned_key(
     db,
     bootstrap_with_test_db,
 ):
-    secret = "vma_" + "x" * 32
+    secret = "vma_" + "x" * keys.VMA_API_KEY_RANDOM_LENGTH
 
     imported = await bootstrap.bootstrap_api_key(
         organization_id="org_unified_bootstrap",

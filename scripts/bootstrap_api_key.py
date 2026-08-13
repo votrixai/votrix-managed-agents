@@ -43,7 +43,6 @@ async def bootstrap_api_key(
     organization_name: str | None = None,
     key_name: str = "Bootstrap admin",
     allow_additional_admin_key: bool = False,
-    allow_legacy_import: bool = False,
     api_key: str | None = None,
 ) -> BootstrapResult:
     organization_id = _organization_id(organization_id)
@@ -58,12 +57,9 @@ async def bootstrap_api_key(
         max_length=255,
     )
     key_name = _required_text(key_name, "key_name", max_length=255)
-    legacy_api_key = False
     if api_key is not None:
         api_key = _required_text(api_key, "api_key", max_length=512)
-        legacy_api_key = api_keys_q.is_legacy_vma_api_key(api_key)
-        if not legacy_api_key:
-            api_keys_q.validate_vma_api_key_prefix(api_key)
+        api_keys_q.validate_vma_api_key(api_key)
 
     async with session_scope() as db:
         result = await db.execute(
@@ -112,17 +108,6 @@ async def bootstrap_api_key(
                     secret=api_key,
                     organization_created=False,
                 )
-        if legacy_api_key:
-            if not allow_legacy_import:
-                raise ValueError(
-                    "legacy environment-prefixed API key may only reuse an existing "
-                    "active management key unless --allow-legacy-import is explicitly set"
-                )
-            if existing:
-                raise BootstrapConflict(
-                    "legacy environment-prefixed VMA API keys can only be imported "
-                    "before the Organization has any key rows"
-                )
         if active_admins and not allow_additional_admin_key:
             prefixes = ", ".join(item.prefix for item in active_admins)
             raise BootstrapConflict(
@@ -136,7 +121,6 @@ async def bootstrap_api_key(
             organization_id=organization_id,
             name=key_name,
             token=api_key,
-            allow_legacy_token=legacy_api_key and allow_legacy_import,
             scopes=[
                 api_keys_q.VMA_API_SCOPE,
                 api_keys_q.VMA_API_KEYS_MANAGE_SCOPE,
@@ -186,15 +170,6 @@ def _parser() -> argparse.ArgumentParser:
         help="Explicitly allow another active management key in the same Organization.",
     )
     parser.add_argument(
-        "--allow-legacy-import",
-        action="store_true",
-        help=(
-            "Allow a trusted, existing vma_live_* or vma_test_* secret to seed an "
-            "Organization that has no API-key rows. This is a one-time migration "
-            "escape hatch."
-        ),
-    )
-    parser.add_argument(
         "--api-key-stdin",
         action="store_true",
         help=(
@@ -221,7 +196,6 @@ async def _run(args: argparse.Namespace) -> BootstrapResult:
         organization_name=args.organization_name,
         key_name=args.key_name,
         allow_additional_admin_key=args.allow_additional_admin_key,
-        allow_legacy_import=args.allow_legacy_import,
         api_key=api_key,
     )
 

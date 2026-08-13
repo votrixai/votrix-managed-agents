@@ -87,7 +87,6 @@ gcloud secrets versions access "$ENABLED_VERSION" \
     --organization-name "$ORGANIZATION_NAME" \
     --key-name "GCP operator bootstrap" \
     --api-key-stdin \
-    --allow-legacy-import \
     --redact-secret
 
 unset DATABASE_URL DATABASE_SCHEMA
