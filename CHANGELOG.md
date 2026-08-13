@@ -89,9 +89,8 @@ operator-provisioned Organization platform funding.
 - The external product contract is now explicitly Votrix Managed Agents (VMA):
   the TypeScript package is `@votrix/managed-agents`, client credentials use
   `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use the unified
-  `vma_` prefix in every environment. Existing `vma_live_` and `vma_test_` keys
-  remain valid during migration. Generic main-product Votrix SDK and credential
-  names are no longer consumed by VMA clients.
+  `vma_` prefix in every environment. Generic main-product Votrix SDK and
+  credential names are no longer consumed by VMA clients.
 - **Pre-launch breaking reset:** the top-level tenant is now Organization,
   identified by `organization_id` and `org_*` IDs. Legacy tenant names,
   fields, CLI flags, defaults, and compatibility aliases were removed. Existing
