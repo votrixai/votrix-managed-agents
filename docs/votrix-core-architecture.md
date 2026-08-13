@@ -176,7 +176,7 @@ Every implemented public resource is scoped by an Organization:
 
 ```text
 request
-  -> x-organization-id
+  -> x-api-key lookup
   -> service organization_id argument
   -> query predicate
 ```
@@ -187,17 +187,11 @@ Object storage adds the same partition to each key:
 organizations/{organization_id}/{category}/{date}/{object}
 ```
 
-This is tenant **scoping**, but it is not authentication. The current dependency
-in `app/routers/deps.py`:
-
-- requires `x-organization-id`;
-- accepts an optional `x-api-key`;
-- does not validate the API key or the caller's membership;
-- trusts the caller's Organization selection.
-
-Therefore the active app must not be exposed to untrusted clients. A production
-API-key provider, scopes, quotas, and hosted identity injection are not part of
-the current architecture.
+The dependency in `app/routers/deps.py` requires `x-api-key`, hashes it, and
+loads an active database record. That record supplies `organization_id`; a
+caller-supplied Organization header is neither required nor trusted. Revoked,
+expired, malformed, and unknown keys all fail authentication before a resource
+query runs.
 
 The internal turn-processing endpoint has a different boundary. In cloud mode
 it validates a Google OIDC token for:

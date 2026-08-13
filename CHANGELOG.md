@@ -143,7 +143,8 @@ operator-provisioned Organization platform funding.
   deployment inputs no longer contain model-provider keys.
 - Hosted staging and production now receive environment-isolated Supabase URL
   and publishable-key Secret Manager bindings. Browser CORS explicitly admits
-  `X-Organization-Id` from the configured Votrix app and documentation origins.
+  the authenticated API headers from configured Votrix app and documentation
+  origins.
 - Cloud Build ignores Cloudflare-router-only changes as well as documentation
   and SDK-only changes, so an edge routing update cannot unnecessarily rebuild
   the API image or run database migrations.

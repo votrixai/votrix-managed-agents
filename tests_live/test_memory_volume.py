@@ -50,7 +50,7 @@ def settings():
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def memory_store(api):
+async def memory_store(api, organization):
     response = await api.post(
         "/v1/memory_stores",
         json={
@@ -71,7 +71,7 @@ async def memory_store(api):
         store = await memory_q.get_memory_store(
             db,
             memory_store_id=created["id"],
-            organization_id=api.headers["x-organization-id"],
+            organization_id=organization,
         )
         sandboxes = list(
             (
@@ -175,7 +175,7 @@ async def _container(session_id: str) -> Sandbox:
 
 
 async def test_memory_api_seed_mount_runtime_update_and_version_round_trip(
-    api, new_memory_session, memory_store
+    api, organization, new_memory_session, memory_store
 ):
     resource = {
         "type": "memory_store",
@@ -208,7 +208,7 @@ async def test_memory_api_seed_mount_runtime_update_and_version_round_trip(
         synced = await memory_records.reconcile_session_memory_stores(
             db,
             session_id=first_id,
-            organization_id=api.headers["x-organization-id"],
+            organization_id=organization,
             sandbox=first,
         )
     assert synced.changed == 1

@@ -24,7 +24,6 @@ class Organization(TimestampMixin, Base):
     __tablename__ = "organizations"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

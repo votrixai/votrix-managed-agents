@@ -323,8 +323,7 @@ identity and delegated resource namespaces remain deferred.
 - [x] Start with the small `api`, `api_keys:manage`, and `worker` scope model;
   expand only when product requirements justify it.
 - [x] Enforce expiration, revocation, and scopes in request dependencies.
-- [x] Ensure callers cannot select a tenant with an untrusted
-  `X-Organization-ID`-style header.
+- [x] Derive the tenant exclusively from the authenticated API key.
 - [x] Define a secure bootstrap path for creating the first Organization admin key
   without leaving a permanent global production key.
 - [x] Attribute authenticated key lifecycle and request authorization/completion

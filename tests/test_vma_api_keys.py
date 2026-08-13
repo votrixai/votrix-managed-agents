@@ -77,7 +77,9 @@ async def test_lookup_rejects_tokens_outside_the_exact_format(db, org):
 
 
 async def test_vma_api_key_queries_are_tenant_scoped(db, org):
-    other = await organizations_service.create_organization(db, keys=FakeKeys(), slug="other-keys", name="Other")
+    other = await organizations_service.create_organization(
+        db, keys=FakeKeys(), name="Other"
+    )
     first, _ = await keys.create_vma_api_key(
         db,
         organization_id=org,
@@ -217,7 +219,6 @@ async def test_replacement_lineage_cannot_cross_organizations(db, org):
     other = await organizations_service.create_organization(
         db,
         keys=FakeKeys(),
-        slug="other-lineage",
         name="Other lineage",
     )
     original, _ = await keys.create_vma_api_key(

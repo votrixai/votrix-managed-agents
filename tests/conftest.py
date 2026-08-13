@@ -133,7 +133,7 @@ async def org(db):
     cannot open a conversation at all.
     """
     organization = await organizations_service.create_organization(
-        db, slug="acme", name="Acme", keys=FakeKeys()
+        db, name="Acme", keys=FakeKeys()
     )
     await db.commit()
     return organization.id
@@ -146,7 +146,7 @@ async def bare_org(db):
     What one made before Accounts existed looks like, and what a creation that
     stopped halfway leaves behind.
     """
-    organization = await organizations.create_organization(db, slug="bare", name="Bare")
+    organization = await organizations.create_organization(db, name="Bare")
     await db.commit()
     return organization.id
 
@@ -175,7 +175,7 @@ async def other_tenant(db):
     Reaching one takes a key issued for it — a test cannot name a tenant it
     holds no key for, which is exactly what a caller cannot do.
     """
-    other = await organizations.create_organization(db, slug="other", name="Other")
+    other = await organizations.create_organization(db, name="Other")
     _, token = await api_keys_q.create_vma_api_key(
         db, organization_id=other.id, name="other"
     )

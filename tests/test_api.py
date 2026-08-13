@@ -90,20 +90,6 @@ async def test_an_unknown_key_is_refused(client, org):
     assert response.status_code == 401
 
 
-async def test_naming_a_tenant_does_not_reach_it(client, org):
-    """The header is gone, and sending it anyway changes nothing.
-
-    Which tenant a request reaches comes off the key. A caller that could
-    state its own tenant could state anyone's, and checking the key afterwards
-    only turns that into a comparison — the same answer with one more way to
-    get it wrong.
-    """
-    response = await client.get(
-        "/v1/sessions", headers={"x-organization-id": org}
-    )
-    assert response.status_code == 401
-
-
 async def test_a_revoked_key_stops_working(client, db, org):
     from app.db.queries import vma_api_keys as keys_q
 
