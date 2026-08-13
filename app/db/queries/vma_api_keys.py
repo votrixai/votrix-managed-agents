@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
@@ -27,59 +28,24 @@ KNOWN_VMA_API_KEY_SCOPES = frozenset(
 DEFAULT_VMA_API_KEY_SCOPES = (VMA_API_SCOPE,)
 
 VMA_API_KEY_PREFIX = "vma_"
-LEGACY_VMA_API_KEY_PREFIXES = (
-    "vma_live_",
-    "vma_test_",
+VMA_API_KEY_SECRET_BYTES = 32
+VMA_API_KEY_RANDOM_LENGTH = 43
+VMA_API_KEY_PATTERN = re.compile(
+    rf"{re.escape(VMA_API_KEY_PREFIX)}[A-Za-z0-9_-]{{{VMA_API_KEY_RANDOM_LENGTH}}}"
 )
 DISPLAYED_VMA_API_KEY_PREFIX_LENGTH = 17
-MINIMUM_VMA_API_KEY_RANDOM_LENGTH = 32
 
 
-def vma_api_key_prefix(*, app_env: str | None = None) -> str:
-    """Return the environment-independent prefix for newly issued keys.
-
-    ``app_env`` remains accepted so callers compiled against the former
-    environment-specific API do not break during the format migration.
-    """
-    return VMA_API_KEY_PREFIX
+def generate_vma_api_key() -> str:
+    return f"{VMA_API_KEY_PREFIX}{secrets.token_urlsafe(VMA_API_KEY_SECRET_BYTES)}"
 
 
-def generate_vma_api_key(*, app_env: str | None = None) -> str:
-    prefix = vma_api_key_prefix(app_env=app_env)
-    while True:
-        token = f"{prefix}{secrets.token_urlsafe(32)}"
-        if not token.startswith(LEGACY_VMA_API_KEY_PREFIXES):
-            return token
-
-
-def validate_vma_api_key_prefix(token: str, *, app_env: str | None = None) -> None:
-    """Accept unified keys plus the two retired environment-prefixed forms."""
-    expected_prefix = vma_api_key_prefix(app_env=app_env)
-    if not token.startswith(expected_prefix):
-        raise ValueError(f"api_key must use the {expected_prefix} prefix")
-    entropy_prefix = next(
-        (
-            prefix
-            for prefix in LEGACY_VMA_API_KEY_PREFIXES
-            if token.startswith(prefix)
-        ),
-        expected_prefix,
-    )
-    if len(token) < len(entropy_prefix) + MINIMUM_VMA_API_KEY_RANDOM_LENGTH:
+def validate_vma_api_key(token: str) -> None:
+    if VMA_API_KEY_PATTERN.fullmatch(token) is None:
         raise ValueError(
-            "api_key must contain at least "
-            f"{MINIMUM_VMA_API_KEY_RANDOM_LENGTH} characters after the prefix"
+            f"api_key must use the {VMA_API_KEY_PREFIX} prefix followed by exactly "
+            f"{VMA_API_KEY_RANDOM_LENGTH} URL-safe characters"
         )
-
-
-def is_legacy_vma_api_key(token: str) -> bool:
-    return token.startswith(LEGACY_VMA_API_KEY_PREFIXES)
-
-
-def validate_legacy_vma_api_key(token: str) -> None:
-    if not is_legacy_vma_api_key(token):
-        raise ValueError("legacy api_key must use the vma_live_ or vma_test_ prefix")
-    validate_vma_api_key_prefix(token)
 
 
 def hash_vma_api_key(token: str) -> str:
@@ -117,7 +83,6 @@ async def create_vma_api_key(
     organization_id: str,
     name: str,
     token: str | None = None,
-    allow_legacy_token: bool = False,
     scopes: Iterable[str] = DEFAULT_VMA_API_KEY_SCOPES,
     expires_at: datetime | None = None,
     created_by: str | None = None,
@@ -132,10 +97,7 @@ async def create_vma_api_key(
 
     plaintext = token or generate_vma_api_key()
     if token is not None:
-        if allow_legacy_token and is_legacy_vma_api_key(plaintext):
-            validate_legacy_vma_api_key(plaintext)
-        else:
-            validate_vma_api_key_prefix(plaintext)
+        validate_vma_api_key(plaintext)
 
     if replaces_key_id is not None:
         replaced = await get_vma_api_key(
@@ -172,6 +134,8 @@ async def get_vma_api_key_by_token(
     *,
     include_inactive: bool = False,
 ) -> VmaApiKey | None:
+    if VMA_API_KEY_PATTERN.fullmatch(token) is None:
+        return None
     stmt = select(VmaApiKey).where(VmaApiKey.key_hash == hash_vma_api_key(token))
     if not include_inactive:
         now = datetime.now(timezone.utc)

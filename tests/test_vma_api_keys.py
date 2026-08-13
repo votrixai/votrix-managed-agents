@@ -6,30 +6,19 @@ from app.services import organizations as organizations_service
 from tests.conftest import FakeKeys
 from sqlalchemy.exc import IntegrityError
 
-from app.config import clear_settings_cache
 from app.db.queries import organizations
 from app.db.queries import vma_api_keys as keys
 
 
-def test_vma_api_key_generation_uses_unified_prefix(monkeypatch):
-    staging = keys.generate_vma_api_key(app_env="staging")
-    production = keys.generate_vma_api_key(app_env="production")
-    assert staging.startswith("vma_")
-    assert production.startswith("vma_")
-    assert not staging.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
-    assert not production.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
+def test_vma_api_key_generation_uses_one_exact_format():
+    generated = keys.generate_vma_api_key()
 
-    monkeypatch.setenv("APP_ENV", "production")
-    clear_settings_cache()
-    try:
-        generated = keys.generate_vma_api_key()
-        assert generated.startswith("vma_")
-        assert not generated.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
-    finally:
-        clear_settings_cache()
+    assert generated.startswith(keys.VMA_API_KEY_PREFIX)
+    assert len(generated) == len(keys.VMA_API_KEY_PREFIX) + keys.VMA_API_KEY_RANDOM_LENGTH
+    keys.validate_vma_api_key(generated)
 
 
-def test_vma_api_key_scope_and_prefix_validation():
+def test_vma_api_key_scope_and_format_validation():
     assert keys.normalize_vma_api_key_scopes(
         [keys.VMA_WORKER_SCOPE, keys.VMA_API_SCOPE, keys.VMA_API_SCOPE]
     ) == (keys.VMA_API_SCOPE, keys.VMA_WORKER_SCOPE)
@@ -40,15 +29,15 @@ def test_vma_api_key_scope_and_prefix_validation():
         keys.normalize_vma_api_key_scopes(["root"])
     with pytest.raises(ValueError, match="collection"):
         keys.normalize_vma_api_key_scopes("api")
-    keys.validate_vma_api_key_prefix("vma_" + "x" * 32, app_env="production")
-    keys.validate_vma_api_key_prefix("vma_live_" + "x" * 32, app_env="staging")
-    keys.validate_vma_api_key_prefix("vma_test_" + "x" * 32, app_env="production")
+    keys.validate_vma_api_key("vma_" + "x" * keys.VMA_API_KEY_RANDOM_LENGTH)
     with pytest.raises(ValueError, match="vma_ prefix"):
-        keys.validate_vma_api_key_prefix("sk_" + "x" * 32)
-    with pytest.raises(ValueError, match="at least 32"):
-        keys.validate_vma_api_key_prefix("vma_too_short")
-    with pytest.raises(ValueError, match="at least 32"):
-        keys.validate_legacy_vma_api_key("vma_live_too_short")
+        keys.validate_vma_api_key("key_" + "x" * keys.VMA_API_KEY_RANDOM_LENGTH)
+    with pytest.raises(ValueError, match="exactly 43"):
+        keys.validate_vma_api_key("vma_" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH - 1))
+    with pytest.raises(ValueError, match="exactly 43"):
+        keys.validate_vma_api_key("vma_" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH + 1))
+    with pytest.raises(ValueError, match="URL-safe"):
+        keys.validate_vma_api_key("vma_" + "+" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH - 1))
 
 
 async def test_create_vma_api_key_only_persists_hash(db, org):
@@ -62,8 +51,7 @@ async def test_create_vma_api_key_only_persists_hash(db, org):
     )
     await db.commit()
 
-    assert plaintext.startswith("vma_")
-    assert not plaintext.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
+    keys.validate_vma_api_key(plaintext)
     assert api_key.key_hash == keys.hash_vma_api_key(plaintext)
     assert api_key.prefix == plaintext[: keys.DISPLAYED_VMA_API_KEY_PREFIX_LENGTH]
     assert api_key.scopes == [keys.VMA_API_SCOPE, keys.VMA_API_KEYS_MANAGE_SCOPE]
@@ -73,6 +61,19 @@ async def test_create_vma_api_key_only_persists_hash(db, org):
 
     resolved = await keys.get_vma_api_key_by_token(db, plaintext)
     assert resolved is api_key
+
+
+async def test_lookup_rejects_tokens_outside_the_exact_format(db, org):
+    malformed = "vma_" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH + 1)
+    api_key, _ = await keys.create_vma_api_key(
+        db,
+        organization_id=org,
+        name="Unreachable malformed row",
+    )
+    api_key.key_hash = keys.hash_vma_api_key(malformed)
+    await db.commit()
+
+    assert await keys.get_vma_api_key_by_token(db, malformed) is None
 
 
 async def test_vma_api_key_queries_are_tenant_scoped(db, org):
