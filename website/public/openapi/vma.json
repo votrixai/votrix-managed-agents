@@ -23,7 +23,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -127,7 +127,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -204,7 +204,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -267,7 +267,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -330,7 +330,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -392,7 +392,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -444,7 +444,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -585,7 +585,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -681,7 +681,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -751,7 +751,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -802,7 +802,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -863,7 +863,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -925,7 +925,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -969,7 +969,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -1090,7 +1090,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1144,7 +1144,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1196,7 +1196,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -1258,7 +1258,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1312,7 +1312,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1367,7 +1367,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -1489,7 +1489,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1577,7 +1577,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1640,7 +1640,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -1754,7 +1754,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -1818,7 +1818,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -1872,7 +1872,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -1976,7 +1976,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2029,7 +2029,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2081,7 +2081,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -2142,7 +2142,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2195,7 +2195,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2239,7 +2239,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -2350,7 +2350,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2403,7 +2403,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2453,7 +2453,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2507,7 +2507,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2549,7 +2549,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -2653,7 +2653,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2706,7 +2706,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2758,7 +2758,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -2817,7 +2817,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2870,7 +2870,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -2912,7 +2912,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -3070,7 +3070,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -3124,7 +3124,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -3176,7 +3176,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "requestBody": {
@@ -3238,7 +3238,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
@@ -3292,7 +3292,7 @@
               "type": "string"
             },
             "description": "Your VMA API key. It identifies the Organization this request can access.",
-            "example": "vma_live_example_key"
+            "example": "vma_example_key"
           }
         ],
         "responses": {
