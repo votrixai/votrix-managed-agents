@@ -12,7 +12,7 @@
           "accounts"
         ],
         "summary": "Create Account",
-        "description": "Create a separate usage and spending boundary inside your Organization. Use additional Accounts when work for different customers, teams, products, or environments should not be mixed together.\n\nAn Account is uncapped unless `limit_usd` is supplied. A successful response has `status: \"active\"` and can be selected when creating a Session.\n\n`idempotency_key` is optional and belongs in the JSON request body. Reuse the same value when retrying a successful create request to receive the original Account instead of creating another one.",
+        "description": "Create a separate usage and spending boundary inside your Organization. Use additional Accounts when work for different customers, teams, products, or environments should not be mixed together.\n\nAn Account is uncapped unless `limit_usd` is supplied. A successful response has `status: \"active\"` and can be selected when creating a Session.\n\n`idempotency_key` is optional and belongs in the JSON request body. Reuse the same value when retrying a successful create request to receive the original Account instead of creating another one.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
         "operationId": "create_account_v1_accounts_post",
         "parameters": [
           {
@@ -73,7 +73,7 @@
           "accounts"
         ],
         "summary": "List Accounts",
-        "description": "List the Accounts available to your API key. Accounts are returned oldest first, which normally places the Organization's default Account first.\n\nThe response includes active and suspended Accounts. Use `is_default` to identify the Account selected when Session creation omits `account_id`, and use `status` to decide whether an Account can fund Agent work.\n\nUse `after_id` or `before_id` with the returned cursor fields to move through additional pages.",
+        "description": "List the Accounts available to your API key. Accounts are returned oldest first, which normally places the Organization's default Account first.\n\nThe response includes active and suspended Accounts. Use `is_default` to identify the Account selected when Session creation omits `account_id`, and use `status` to decide whether an Account can fund Agent work.\n\nUse `after_id` or `before_id` with the returned cursor fields to move through additional pages.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
         "operationId": "list_accounts_v1_accounts_get",
         "parameters": [
           {
@@ -238,7 +238,7 @@
             }
           }
         },
-        "description": "Retrieve one Account by its public `acct_...` ID.\n\n`status` is `provisioning` while the Account is not ready, `active` when it can fund Agent work, or `suspended` when further work is blocked. `is_default` identifies the fallback used by Sessions that omit `account_id`. `limit_usd: null` means the Account has no Account-specific spending limit."
+        "description": "Retrieve one Account by its public `acct_...` ID.\n\n`status` is `provisioning` while the Account is not ready, `active` when it can fund Agent work, or `suspended` when further work is blocked. `is_default` identifies the fallback used by Sessions that omit `account_id`. `limit_usd: null` means the Account has no Account-specific spending limit.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension."
       }
     },
     "/v1/accounts/{account_id}/usage": {
@@ -247,7 +247,7 @@
           "accounts"
         ],
         "summary": "Retrieve Account Usage",
-        "description": "Return a current USD usage snapshot for one Account. Usage for another Account is never included.\n\n`usage_usd` is cumulative for the Account. The daily, weekly, and monthly fields describe the current period windows. When a spending limit is set, `limit_usd` reports the limit and `limit_remaining_usd` reports the remaining amount. Both limit fields are `null` for an uncapped Account.\n\nUsage remains available while an Account is suspended. Treat this response as a snapshot at request time, not as a receipt for one individual Agent turn.",
+        "description": "Return a current USD usage snapshot for one Account. Usage for another Account is never included.\n\n`usage_usd` is cumulative for the Account. The daily, weekly, and monthly fields describe the current period windows. When a spending limit is set, `limit_usd` reports the limit and `limit_remaining_usd` reports the remaining amount. Both limit fields are `null` for an uncapped Account.\n\nUsage remains available while an Account is suspended. Treat this response as a snapshot at request time, not as a receipt for one individual Agent turn.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
         "operationId": "retrieve_account_usage_v1_accounts__account_id__usage_get",
         "parameters": [
           {
@@ -310,7 +310,7 @@
           "accounts"
         ],
         "summary": "Suspend Account",
-        "description": "Stop a non-default Account from funding further Agent work. The Account keeps the same ID, spending limit, and usage history, and its usage endpoint remains available.\n\nA suspended Account cannot be selected for a new Session. Existing Sessions remain assigned to it, but their next Agent work cannot continue until the Account is resumed. Suspending an already suspended Account returns that Account without changing it again.\n\nThe Organization's default Account cannot be suspended because it is the fallback for every Session created without an explicit `account_id`.",
+        "description": "Stop a non-default Account from funding further Agent work. The Account keeps the same ID, spending limit, and usage history, and its usage endpoint remains available.\n\nA suspended Account cannot be selected for a new Session. Existing Sessions remain assigned to it, but their next Agent work cannot continue until the Account is resumed. Suspending an already suspended Account returns that Account without changing it again.\n\nThe Organization's default Account cannot be suspended because it is the fallback for every Session created without an explicit `account_id`.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
         "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
         "parameters": [
           {
@@ -372,7 +372,7 @@
           "accounts"
         ],
         "summary": "Resume Account",
-        "description": "Return a suspended Account to `active` so it can fund new and existing Sessions again.\n\nResuming preserves the Account's ID, limit, and usage history. Existing Sessions stay assigned to the same Account; they do not need to be recreated. Resuming an already active Account returns it unchanged.",
+        "description": "Return a suspended Account to `active` so it can fund new and existing Sessions again.\n\nResuming preserves the Account's ID, limit, and usage history. Existing Sessions stay assigned to the same Account; they do not need to be recreated. Resuming an already active Account returns it unchanged.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
         "operationId": "resume_account_v1_accounts__account_id__resume_post",
         "parameters": [
           {

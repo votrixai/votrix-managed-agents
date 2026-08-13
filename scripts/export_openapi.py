@@ -162,6 +162,12 @@ COMPONENT_EXAMPLES = {
 # Router and model docstrings are written for maintainers and can discuss how
 # the service is built. The documentation schema deliberately replaces them
 # with this small, reviewed public-contract vocabulary.
+ACCOUNT_GUIDE_REFERENCE = (
+    "\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, "
+    "Session assignment, usage, spending limits, and suspension."
+)
+
+
 OPERATION_DESCRIPTIONS = {
     ("post", "/v1/accounts"): (
         "Create a separate usage and spending boundary inside your Organization. "
@@ -173,6 +179,7 @@ OPERATION_DESCRIPTIONS = {
         "`idempotency_key` is optional and belongs in the JSON request body. "
         "Reuse the same value when retrying a successful create request to "
         "receive the original Account instead of creating another one."
+        + ACCOUNT_GUIDE_REFERENCE
     ),
     ("get", "/v1/accounts"): (
         "List the Accounts available to your API key. Accounts are returned "
@@ -184,6 +191,7 @@ OPERATION_DESCRIPTIONS = {
         "Agent work.\n\n"
         "Use `after_id` or `before_id` with the returned cursor fields to move "
         "through additional pages."
+        + ACCOUNT_GUIDE_REFERENCE
     ),
     ("get", "/v1/accounts/{account_id}"): (
         "Retrieve one Account by its public `acct_...` ID.\n\n"
@@ -192,6 +200,7 @@ OPERATION_DESCRIPTIONS = {
         "blocked. `is_default` identifies the fallback used by Sessions that "
         "omit `account_id`. `limit_usd: null` means the Account has no "
         "Account-specific spending limit."
+        + ACCOUNT_GUIDE_REFERENCE
     ),
     ("get", "/v1/accounts/{account_id}/usage"): (
         "Return a current USD usage snapshot for one Account. Usage for another "
@@ -204,6 +213,7 @@ OPERATION_DESCRIPTIONS = {
         "Usage remains available while an Account is suspended. Treat this "
         "response as a snapshot at request time, not as a receipt for one "
         "individual Agent turn."
+        + ACCOUNT_GUIDE_REFERENCE
     ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
         "Stop a non-default Account from funding further Agent work. The "
@@ -215,6 +225,7 @@ OPERATION_DESCRIPTIONS = {
         "Account returns that Account without changing it again.\n\n"
         "The Organization's default Account cannot be suspended because it is "
         "the fallback for every Session created without an explicit `account_id`."
+        + ACCOUNT_GUIDE_REFERENCE
     ),
     ("post", "/v1/accounts/{account_id}/resume"): (
         "Return a suspended Account to `active` so it can fund new and existing "
@@ -222,6 +233,7 @@ OPERATION_DESCRIPTIONS = {
         "Resuming preserves the Account's ID, limit, and usage history. Existing "
         "Sessions stay assigned to the same Account; they do not need to be "
         "recreated. Resuming an already active Account returns it unchanged."
+        + ACCOUNT_GUIDE_REFERENCE
     ),
     ("get", "/v1/agents/{agent_id}"): (
         "Retrieve the active Agent version, or a specific version selected by "
