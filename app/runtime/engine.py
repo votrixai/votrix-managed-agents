@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -594,6 +595,8 @@ def _system_prompt(
     configured: str | None,
     attached_files: list[str],
     attached_memory_stores: list[dict[str, Any]] | None = None,
+    *,
+    now: datetime | None = None,
 ) -> str | None:
     """Add the bit about the workspace that only we know.
 
@@ -605,7 +608,20 @@ def _system_prompt(
 
     Nothing is added when nothing was attached, beyond where output goes.
     """
+    current_date_text = (
+        (now or datetime.now(timezone.utc))
+        .astimezone(timezone.utc)
+        .date()
+        .isoformat()
+    )
     lines = [
+        "## Current Date",
+        "",
+        f"- Current date (UTC): {current_date_text}",
+        "",
+        "Use this date as the source of truth when interpreting "
+        "relative dates such as today, yesterday, recently, and this year.",
+        "",
         "## Workspace",
         "",
         f"You are working in `{WORKDIR}`.",
