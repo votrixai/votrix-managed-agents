@@ -115,13 +115,13 @@ async def bootstrap_api_key(
         if legacy_api_key:
             if not allow_legacy_import:
                 raise ValueError(
-                    "legacy vma_ api_key may only reuse an existing active management "
-                    "key unless --allow-legacy-import is explicitly set"
+                    "legacy environment-prefixed API key may only reuse an existing "
+                    "active management key unless --allow-legacy-import is explicitly set"
                 )
             if existing:
                 raise BootstrapConflict(
-                    "legacy VMA API keys can only be imported before the Organization "
-                    "has any key rows"
+                    "legacy environment-prefixed VMA API keys can only be imported "
+                    "before the Organization has any key rows"
                 )
         if active_admins and not allow_additional_admin_key:
             prefixes = ", ".join(item.prefix for item in active_admins)
@@ -189,15 +189,16 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-legacy-import",
         action="store_true",
         help=(
-            "Allow a trusted, existing legacy vma_* secret to seed an Organization "
-            "that has no API-key rows. This is a one-time migration escape hatch."
+            "Allow a trusted, existing vma_live_* or vma_test_* secret to seed an "
+            "Organization that has no API-key rows. This is a one-time migration "
+            "escape hatch."
         ),
     )
     parser.add_argument(
         "--api-key-stdin",
         action="store_true",
         help=(
-            "Read a pre-generated environment-specific VMA API key from stdin. "
+            "Read a pre-generated VMA API key from stdin. "
             "This makes bootstrap idempotent when an operator secret is provisioned "
             "before the database row."
         ),

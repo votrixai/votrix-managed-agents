@@ -30,7 +30,8 @@ async def test_bootstrap_creates_and_idempotently_reuses_management_key(
     )
 
     assert created.organization_created
-    assert created.secret.startswith("vma_test_")
+    assert created.secret.startswith("vma_")
+    assert not created.secret.startswith(keys.LEGACY_VMA_API_KEY_PREFIXES)
     rows = await keys.list_vma_api_keys(db, organization_id="org_bootstrap")
     assert len(rows) == 1
     assert rows[0].id == created.key_id
@@ -58,7 +59,7 @@ async def test_legacy_bootstrap_requires_explicit_empty_org_import(
     org,
     bootstrap_with_test_db,
 ):
-    legacy_secret = "vma_legacy_" + "x" * 32
+    legacy_secret = "vma_live_" + "x" * 32
 
     with pytest.raises(ValueError, match="allow-legacy-import"):
         await bootstrap.bootstrap_api_key(
@@ -82,6 +83,23 @@ async def test_legacy_bootstrap_requires_explicit_empty_org_import(
     with pytest.raises(bootstrap.BootstrapConflict, match="before the Organization"):
         await bootstrap.bootstrap_api_key(
             organization_id=org,
-            api_key="vma_legacy_" + "y" * 32,
+            api_key="vma_test_" + "y" * 32,
             allow_legacy_import=True,
         )
+
+
+async def test_bootstrap_accepts_unified_preprovisioned_key_without_legacy_flag(
+    db,
+    bootstrap_with_test_db,
+):
+    secret = "vma_" + "x" * 32
+
+    imported = await bootstrap.bootstrap_api_key(
+        organization_id="org_unified_bootstrap",
+        organization_slug="unified-bootstrap",
+        organization_name="Unified bootstrap",
+        api_key=secret,
+    )
+
+    assert imported.secret == secret
+    assert await keys.get_vma_api_key_by_token(db, secret) is not None

@@ -84,7 +84,7 @@ PARAMETER_DESCRIPTIONS = {
 }
 
 PARAMETER_EXAMPLES = {
-    "x-api-key": "vma_live_example_key",
+    "x-api-key": "vma_example_key",
     "Last-Event-ID": "42",
     "after_seq": 42,
     "api_key_id": "apikey_1234567890abcdef1234567890abcdef",

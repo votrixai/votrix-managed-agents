@@ -347,11 +347,11 @@ These create `vma-operator-api-key-staging` and `vma-operator-api-key`. Neither
 secret is mounted into Cloud Run; they are operator/client credentials, not a
 shared runtime authentication bypass. The script never prints the plaintext
 key and can be retried safely with the same pre-provisioned value.
-If an environment already has a legacy `vma_*` operator secret, the trusted
-bootstrap imports it only when that Organization has no API-key rows; later
-runs must match the existing active management key. The bootstrap uses the
-same environment-specific database schema as the deploy scripts; override it
-only during a coordinated schema rename with
+If an environment already has a legacy `vma_live_*` or `vma_test_*` operator
+secret, the trusted bootstrap imports it only when that Organization has no
+API-key rows; later runs must match the existing active management key. The
+bootstrap uses the same environment-specific database schema as the deploy
+scripts; override it only during a coordinated schema rename with
 `VMA_BOOTSTRAP_DATABASE_SCHEMA`.
 
 For a non-GCP secret sink, run the lower-level bootstrap CLI once from a trusted
