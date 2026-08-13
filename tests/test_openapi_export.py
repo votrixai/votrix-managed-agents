@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from scripts.export_openapi import (
     DEFAULT_OUTPUT,
@@ -47,6 +48,9 @@ ACCOUNT_OPERATIONS = {
         "already active",
     ),
 }
+
+ACCOUNT_GUIDE_LINK = "[Accounts guide](/docs/accounts)"
+API_REFERENCE_INDEX = Path(__file__).parents[1] / "docs" / "api" / "index.mdx"
 
 
 def test_no_document_api_is_published_over_a_memory_store():
@@ -117,6 +121,7 @@ def test_account_reference_explains_each_public_operation_and_field():
         description = operation["description"]
         assert len(description) >= 200
         assert all(phrase in description for phrase in expected_phrases)
+        assert ACCOUNT_GUIDE_LINK in description
 
         success_status = "201" if (method, path) == ("post", "/v1/accounts") else "200"
         success = operation["responses"][success_status]
@@ -143,6 +148,11 @@ def test_account_reference_explains_each_public_operation_and_field():
         "responses"
     ]["200"]["content"]["application/json"]["example"]
     assert suspend_example["status"] == "suspended"
+
+
+def test_api_reference_landing_page_links_to_the_accounts_guide():
+    content = API_REFERENCE_INDEX.read_text(encoding="utf-8")
+    assert "[Accounts](../accounts.md)" in content
 
 
 def test_documentation_openapi_does_not_publish_internal_technology_details():
