@@ -79,6 +79,58 @@ def test_documentation_openapi_snapshot_matches_active_app():
     assert committed == generated
 
 
+def test_every_json_request_body_has_a_copyable_sample_request():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    documented: list[str] = []
+
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method not in {"delete", "get", "patch", "post", "put"}:
+                continue
+            media = (
+                operation.get("requestBody", {})
+                .get("content", {})
+                .get("application/json")
+            )
+            if media is None:
+                continue
+
+            documented.append(f"{method.upper()} {path}")
+            sample = media["examples"]["sample_request"]
+            assert sample["summary"] == "Sample request"
+            assert sample["value"]
+
+            component_name = media["schema"]["$ref"].rsplit("/", 1)[-1]
+            component = schema["components"]["schemas"][component_name]
+            assert component["examples"][0] == sample["value"]
+
+            request_json = next(
+                item
+                for item in operation["x-codeSamples"]
+                if item.get("id") == "request-json"
+            )
+            assert request_json["label"] == "Request JSON"
+            assert request_json["lang"] == "json"
+            assert json.loads(request_json["source"]) == sample["value"]
+
+    assert documented
+
+
+def test_required_request_parameters_have_realistic_examples():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+
+    for path_item in schema["paths"].values():
+        for method, operation in path_item.items():
+            if method not in {"delete", "get", "patch", "post", "put"}:
+                continue
+            for parameter in operation.get("parameters", []):
+                if parameter.get("required") and parameter.get("in") in {
+                    "header",
+                    "path",
+                }:
+                    assert parameter.get("example"), parameter
+
+
 def test_documentation_openapi_publishes_complete_memory_surface():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
     assert MEMORY_OPERATIONS <= _operations(schema)

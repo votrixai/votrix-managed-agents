@@ -32,6 +32,17 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AccountCreateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "name": "Website Builder",
+                    "limit_usd": "20.00",
+                    "idempotency_key": "create-website-builder-account"
+                  }
+                }
               }
             }
           }
@@ -66,7 +77,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"name\": \"Website Builder\",\n  \"limit_usd\": \"20.00\",\n  \"idempotency_key\": \"create-website-builder-account\"\n}"
+          }
+        ]
       },
       "get": {
         "tags": [
@@ -194,7 +213,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the account addressed by this request."
+            "description": "Unique identifier of the account addressed by this request.",
+            "example": "acct_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -257,7 +277,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the account addressed by this request."
+            "description": "Unique identifier of the account addressed by this request.",
+            "example": "acct_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -320,7 +341,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the account addressed by this request."
+            "description": "Unique identifier of the account addressed by this request.",
+            "example": "acct_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -382,7 +404,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the account addressed by this request."
+            "description": "Unique identifier of the account addressed by this request.",
+            "example": "acct_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -453,6 +476,21 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AgentCreateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "name": "Research Assistant",
+                    "model": "claude-sonnet-5",
+                    "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                    "description": "Creates concise, source-backed research briefs.",
+                    "metadata": {
+                      "team": "research"
+                    }
+                  }
+                }
               }
             }
           }
@@ -479,7 +517,15 @@
             }
           }
         },
-        "description": "Create Agent for your Organization."
+        "description": "Create Agent for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"name\": \"Research Assistant\",\n  \"model\": \"claude-sonnet-5\",\n  \"system\": \"Research the topic carefully and save the final brief in outputs/brief.md.\",\n  \"description\": \"Creates concise, source-backed research briefs.\",\n  \"metadata\": {\n    \"team\": \"research\"\n  }\n}"
+          }
+        ]
       },
       "get": {
         "tags": [
@@ -628,7 +674,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the agent addressed by this request."
+            "description": "Unique identifier of the agent addressed by this request.",
+            "example": "agent_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "limit",
@@ -725,7 +772,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the agent addressed by this request."
+            "description": "Unique identifier of the agent addressed by this request.",
+            "example": "agent_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "version",
@@ -792,7 +840,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the agent addressed by this request."
+            "description": "Unique identifier of the agent addressed by this request.",
+            "example": "agent_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -811,6 +860,19 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AgentUpdateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
+                    "metadata": {
+                      "team": "research",
+                      "reviewed": true
+                    }
+                  }
+                }
               }
             }
           }
@@ -836,7 +898,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"system\": \"Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.\",\n  \"metadata\": {\n    \"team\": \"research\",\n    \"reviewed\": true\n  }\n}"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -853,7 +923,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the agent addressed by this request."
+            "description": "Unique identifier of the agent addressed by this request.",
+            "example": "agent_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -872,6 +943,19 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AgentUpdateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
+                    "metadata": {
+                      "team": "research",
+                      "reviewed": true
+                    }
+                  }
+                }
               }
             }
           }
@@ -897,7 +981,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"system\": \"Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.\",\n  \"metadata\": {\n    \"team\": \"research\",\n    \"reviewed\": true\n  }\n}"
+          }
+        ]
       }
     },
     "/v1/agents/{agent_id}/archive": {
@@ -915,7 +1007,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the agent addressed by this request."
+            "description": "Unique identifier of the agent addressed by this request.",
+            "example": "agent_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -978,6 +1071,18 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SessionCreateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                    "environment_id": "env_1234567890abcdef1234567890abcdef",
+                    "account_id": "acct_1234567890abcdef1234567890abcdef",
+                    "title": "Q3 market research brief"
+                  }
+                }
               }
             }
           }
@@ -1004,7 +1109,15 @@
             }
           }
         },
-        "description": "Create Session for your Organization."
+        "description": "Create Session for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"agent_id\": \"agent_1234567890abcdef1234567890abcdef\",\n  \"environment_id\": \"env_1234567890abcdef1234567890abcdef\",\n  \"account_id\": \"acct_1234567890abcdef1234567890abcdef\",\n  \"title\": \"Q3 market research brief\"\n}"
+          }
+        ]
       },
       "get": {
         "tags": [
@@ -1133,7 +1246,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1185,7 +1298,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1205,6 +1318,15 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SessionUpdateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "title": "Q3 market research brief — revised"
+                  }
+                }
               }
             }
           }
@@ -1231,7 +1353,15 @@
             }
           }
         },
-        "description": "Update Session for your Organization."
+        "description": "Update Session for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"title\": \"Q3 market research brief — revised\"\n}"
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -1247,7 +1377,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1301,7 +1431,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1356,7 +1486,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1376,6 +1506,25 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SendEventsRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "events": [
+                      {
+                        "type": "user.message",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Write a short brief on the future of vertical AI agents."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -1401,7 +1550,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"events\": [\n    {\n      \"type\": \"user.message\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Write a short brief on the future of vertical AI agents.\"\n        }\n      ]\n    }\n  ]\n}"
+          }
+        ]
       },
       "get": {
         "tags": [
@@ -1418,7 +1575,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1532,7 +1689,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1620,7 +1777,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1630,7 +1787,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the event addressed by this request."
+            "description": "Unique identifier of the event addressed by this request.",
+            "example": "evt_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -1743,7 +1901,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1763,6 +1921,15 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LiveFileRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "path": "brief.pdf"
+                  }
+                }
               }
             }
           }
@@ -1788,7 +1955,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"path\": \"brief.pdf\"\n}"
+          }
+        ]
       }
     },
     "/v1/sessions/{session_id}/live/uploads": {
@@ -1807,7 +1982,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Only return Memory Versions attributed to this Session.",
+            "description": "Unique identifier of the session addressed by this request.",
             "example": "sess_1234567890abcdef1234567890abcdef"
           },
           {
@@ -1827,6 +2002,16 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LiveUploadRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "file_id": "file_1234567890abcdef1234567890abcdef",
+                    "path": "source-material.pdf"
+                  }
+                }
               }
             }
           }
@@ -1852,7 +2037,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"file_id\": \"file_1234567890abcdef1234567890abcdef\",\n  \"path\": \"source-material.pdf\"\n}"
+          }
+        ]
       }
     },
     "/v1/environments": {
@@ -1881,6 +2074,26 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/EnvironmentCreateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "name": "Data Analysis Workspace",
+                    "description": "A sandbox with common data-analysis packages.",
+                    "config": {
+                      "packages": {
+                        "pip": [
+                          "pandas==2.2.3",
+                          "openpyxl==3.1.5"
+                        ]
+                      },
+                      "cpu": 2,
+                      "memory_mb": 2048
+                    }
+                  }
+                }
               }
             }
           }
@@ -1906,7 +2119,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"name\": \"Data Analysis Workspace\",\n  \"description\": \"A sandbox with common data-analysis packages.\",\n  \"config\": {\n    \"packages\": {\n      \"pip\": [\n        \"pandas==2.2.3\",\n        \"openpyxl==3.1.5\"\n      ]\n    },\n    \"cpu\": 2,\n    \"memory_mb\": 2048\n  }\n}"
+          }
+        ]
       },
       "get": {
         "tags": [
@@ -2019,7 +2240,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the environment addressed by this request."
+            "description": "Unique identifier of the environment addressed by this request.",
+            "example": "env_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2071,7 +2293,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the environment addressed by this request."
+            "description": "Unique identifier of the environment addressed by this request.",
+            "example": "env_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2090,6 +2313,25 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/EnvironmentUpdateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "description": "A larger sandbox for data-analysis workloads.",
+                    "config": {
+                      "packages": {
+                        "pip": [
+                          "pandas==2.2.3",
+                          "openpyxl==3.1.5"
+                        ]
+                      },
+                      "cpu": 4,
+                      "memory_mb": 4096
+                    }
+                  }
+                }
               }
             }
           }
@@ -2115,7 +2357,15 @@
               }
             }
           }
-        }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"description\": \"A larger sandbox for data-analysis workloads.\",\n  \"config\": {\n    \"packages\": {\n      \"pip\": [\n        \"pandas==2.2.3\",\n        \"openpyxl==3.1.5\"\n      ]\n    },\n    \"cpu\": 4,\n    \"memory_mb\": 4096\n  }\n}"
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -2132,7 +2382,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the environment addressed by this request."
+            "description": "Unique identifier of the environment addressed by this request.",
+            "example": "env_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2185,7 +2436,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the environment addressed by this request."
+            "description": "Unique identifier of the environment addressed by this request.",
+            "example": "env_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2393,7 +2645,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the file addressed by this request."
+            "description": "Unique identifier of the file addressed by this request.",
+            "example": "file_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2443,7 +2696,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the file addressed by this request."
+            "description": "Unique identifier of the file addressed by this request.",
+            "example": "file_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2497,7 +2751,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the file addressed by this request."
+            "description": "Unique identifier of the file addressed by this request.",
+            "example": "file_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2696,7 +2951,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the skill addressed by this request."
+            "description": "Unique identifier of the skill addressed by this request.",
+            "example": "skill_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2748,7 +3004,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the skill addressed by this request."
+            "description": "Unique identifier of the skill addressed by this request.",
+            "example": "skill_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2807,7 +3064,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the skill addressed by this request."
+            "description": "Unique identifier of the skill addressed by this request.",
+            "example": "skill_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2860,7 +3118,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "Unique identifier of the skill addressed by this request."
+            "description": "Unique identifier of the skill addressed by this request.",
+            "example": "skill_1234567890abcdef1234567890abcdef"
           },
           {
             "name": "x-api-key",
@@ -2921,6 +3180,19 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MemoryStoreCreateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "name": "Content Creator",
+                    "description": "Durable brand and project context.",
+                    "metadata": {
+                      "team": "creative"
+                    }
+                  }
+                }
               }
             }
           }
@@ -2947,7 +3219,15 @@
             }
           }
         },
-        "description": "Create Memory Store for your Organization."
+        "description": "Create Memory Store for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"name\": \"Content Creator\",\n  \"description\": \"Durable brand and project context.\",\n  \"metadata\": {\n    \"team\": \"creative\"\n  }\n}"
+          }
+        ]
       },
       "get": {
         "tags": [
@@ -3185,6 +3465,18 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MemoryStoreUpdateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "description": "Durable brand, asset, and active-project context.",
+                    "metadata": {
+                      "team": "content"
+                    }
+                  }
+                }
               }
             }
           }
@@ -3211,7 +3503,15 @@
             }
           }
         },
-        "description": "Update Memory Store for your Organization."
+        "description": "Update Memory Store for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"description\": \"Durable brand, asset, and active-project context.\",\n  \"metadata\": {\n    \"team\": \"content\"\n  }\n}"
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -3370,7 +3670,14 @@
           "name": "Website Builder",
           "limit_usd": "20.00",
           "idempotency_key": "create-website-builder-account"
-        }
+        },
+        "examples": [
+          {
+            "name": "Website Builder",
+            "limit_usd": "20.00",
+            "idempotency_key": "create-website-builder-account"
+          }
+        ]
       },
       "AccountResponse": {
         "properties": {
@@ -3437,7 +3744,18 @@
           "status": "active",
           "is_default": false,
           "limit_usd": "20.00"
-        }
+        },
+        "examples": [
+          {
+            "id": "acct_1234567890abcdef1234567890abcdef",
+            "type": "account",
+            "organization_id": "org_1234567890abcdef1234567890abcdef",
+            "name": "Website Builder",
+            "status": "active",
+            "is_default": false,
+            "limit_usd": "20.00"
+          }
+        ]
       },
       "AccountUsageResponse": {
         "properties": {
@@ -3516,7 +3834,19 @@
           "usage_monthly_usd": "8.40",
           "limit_usd": "20.00",
           "limit_remaining_usd": "11.60"
-        }
+        },
+        "examples": [
+          {
+            "account_id": "acct_1234567890abcdef1234567890abcdef",
+            "type": "account_usage",
+            "usage_usd": "8.40",
+            "usage_daily_usd": "0.75",
+            "usage_weekly_usd": "3.10",
+            "usage_monthly_usd": "8.40",
+            "limit_usd": "20.00",
+            "limit_remaining_usd": "11.60"
+          }
+        ]
       },
       "AgentCreateRequest": {
         "properties": {
@@ -3593,7 +3923,27 @@
           "name",
           "model"
         ],
-        "title": "AgentCreateRequest"
+        "title": "AgentCreateRequest",
+        "example": {
+          "name": "Research Assistant",
+          "model": "claude-sonnet-5",
+          "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+          "description": "Creates concise, source-backed research briefs.",
+          "metadata": {
+            "team": "research"
+          }
+        },
+        "examples": [
+          {
+            "name": "Research Assistant",
+            "model": "claude-sonnet-5",
+            "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+            "description": "Creates concise, source-backed research briefs.",
+            "metadata": {
+              "team": "research"
+            }
+          }
+        ]
       },
       "AgentCustomToolUseEvent": {
         "properties": {
@@ -4004,7 +4354,23 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "AgentUpdateRequest"
+        "title": "AgentUpdateRequest",
+        "example": {
+          "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
+          "metadata": {
+            "team": "research",
+            "reviewed": true
+          }
+        },
+        "examples": [
+          {
+            "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
+            "metadata": {
+              "team": "research",
+              "reviewed": true
+            }
+          }
+        ]
       },
       "AgentVersionResponse": {
         "properties": {
@@ -4235,7 +4601,37 @@
         "required": [
           "name"
         ],
-        "title": "EnvironmentCreateRequest"
+        "title": "EnvironmentCreateRequest",
+        "example": {
+          "name": "Data Analysis Workspace",
+          "description": "A sandbox with common data-analysis packages.",
+          "config": {
+            "packages": {
+              "pip": [
+                "pandas==2.2.3",
+                "openpyxl==3.1.5"
+              ]
+            },
+            "cpu": 2,
+            "memory_mb": 2048
+          }
+        },
+        "examples": [
+          {
+            "name": "Data Analysis Workspace",
+            "description": "A sandbox with common data-analysis packages.",
+            "config": {
+              "packages": {
+                "pip": [
+                  "pandas==2.2.3",
+                  "openpyxl==3.1.5"
+                ]
+              },
+              "cpu": 2,
+              "memory_mb": 2048
+            }
+          }
+        ]
       },
       "EnvironmentResponse": {
         "properties": {
@@ -4325,7 +4721,35 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "EnvironmentUpdateRequest"
+        "title": "EnvironmentUpdateRequest",
+        "example": {
+          "description": "A larger sandbox for data-analysis workloads.",
+          "config": {
+            "packages": {
+              "pip": [
+                "pandas==2.2.3",
+                "openpyxl==3.1.5"
+              ]
+            },
+            "cpu": 4,
+            "memory_mb": 4096
+          }
+        },
+        "examples": [
+          {
+            "description": "A larger sandbox for data-analysis workloads.",
+            "config": {
+              "packages": {
+                "pip": [
+                  "pandas==2.2.3",
+                  "openpyxl==3.1.5"
+                ]
+              },
+              "cpu": 4,
+              "memory_mb": 4096
+            }
+          }
+        ]
       },
       "Failed": {
         "properties": {
@@ -4885,7 +5309,15 @@
           "path"
         ],
         "title": "LiveFileRequest",
-        "description": "A file to capture from `outputs/` in an active Session sandbox."
+        "description": "A file to capture from `outputs/` in an active Session sandbox.",
+        "example": {
+          "path": "brief.pdf"
+        },
+        "examples": [
+          {
+            "path": "brief.pdf"
+          }
+        ]
       },
       "LiveUploadRequest": {
         "properties": {
@@ -4912,7 +5344,17 @@
           "file_id"
         ],
         "title": "LiveUploadRequest",
-        "description": "An existing File to attach under `uploads/` in an idle Session sandbox."
+        "description": "An existing File to attach under `uploads/` in an idle Session sandbox.",
+        "example": {
+          "file_id": "file_1234567890abcdef1234567890abcdef",
+          "path": "source-material.pdf"
+        },
+        "examples": [
+          {
+            "file_id": "file_1234567890abcdef1234567890abcdef",
+            "path": "source-material.pdf"
+          }
+        ]
       },
       "MemoryStoreCreateRequest": {
         "properties": {
@@ -4940,7 +5382,16 @@
           "metadata": {
             "team": "creative"
           }
-        }
+        },
+        "examples": [
+          {
+            "name": "Content Creator",
+            "description": "Durable brand and project context.",
+            "metadata": {
+              "team": "creative"
+            }
+          }
+        ]
       },
       "MemoryStoreListResponse": {
         "properties": {
@@ -5122,7 +5573,15 @@
           "metadata": {
             "team": "content"
           }
-        }
+        },
+        "examples": [
+          {
+            "description": "Durable brand, asset, and active-project context.",
+            "metadata": {
+              "team": "content"
+            }
+          }
+        ]
       },
       "PackagesConfig": {
         "properties": {
@@ -5225,7 +5684,35 @@
         "required": [
           "events"
         ],
-        "title": "SendEventsRequest"
+        "title": "SendEventsRequest",
+        "example": {
+          "events": [
+            {
+              "type": "user.message",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Write a short brief on the future of vertical AI agents."
+                }
+              ]
+            }
+          ]
+        },
+        "examples": [
+          {
+            "events": [
+              {
+                "type": "user.message",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Write a short brief on the future of vertical AI agents."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "SendEventsResponse": {
         "properties": {
@@ -5377,7 +5864,21 @@
           "agent_id",
           "environment_id"
         ],
-        "title": "SessionCreateRequest"
+        "title": "SessionCreateRequest",
+        "example": {
+          "agent_id": "agent_1234567890abcdef1234567890abcdef",
+          "environment_id": "env_1234567890abcdef1234567890abcdef",
+          "account_id": "acct_1234567890abcdef1234567890abcdef",
+          "title": "Q3 market research brief"
+        },
+        "examples": [
+          {
+            "agent_id": "agent_1234567890abcdef1234567890abcdef",
+            "environment_id": "env_1234567890abcdef1234567890abcdef",
+            "account_id": "acct_1234567890abcdef1234567890abcdef",
+            "title": "Q3 market research brief"
+          }
+        ]
       },
       "SessionErrorEvent": {
         "properties": {
@@ -5742,7 +6243,15 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "SessionUpdateRequest"
+        "title": "SessionUpdateRequest",
+        "example": {
+          "title": "Q3 market research brief — revised"
+        },
+        "examples": [
+          {
+            "title": "Q3 market research brief — revised"
+          }
+        ]
       },
       "SkillResponse": {
         "properties": {

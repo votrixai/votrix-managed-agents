@@ -8,6 +8,7 @@ second route allowlist or replace generated schemas with hand-written copies.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -83,27 +84,41 @@ PARAMETER_DESCRIPTIONS = {
     "view": "Choose the basic metadata view or the full content view.",
 }
 
+ACCOUNT_ID_EXAMPLE = "acct_1234567890abcdef1234567890abcdef"
+AGENT_ID_EXAMPLE = "agent_1234567890abcdef1234567890abcdef"
+ENVIRONMENT_ID_EXAMPLE = "env_1234567890abcdef1234567890abcdef"
+EVENT_ID_EXAMPLE = "evt_1234567890abcdef1234567890abcdef"
+FILE_ID_EXAMPLE = "file_1234567890abcdef1234567890abcdef"
+MEMORY_STORE_ID_EXAMPLE = "memstore_1234567890abcdef1234567890abcdef"
+ORGANIZATION_ID_EXAMPLE = "org_1234567890abcdef1234567890abcdef"
+SESSION_ID_EXAMPLE = "sess_1234567890abcdef1234567890abcdef"
+SKILL_ID_EXAMPLE = "skill_1234567890abcdef1234567890abcdef"
+
 PARAMETER_EXAMPLES = {
     "x-api-key": "vma_example_key",
     "Last-Event-ID": "42",
+    "account_id": ACCOUNT_ID_EXAMPLE,
+    "agent_id": AGENT_ID_EXAMPLE,
     "after_seq": 42,
     "api_key_id": "apikey_1234567890abcdef1234567890abcdef",
     "created_at[gte]": "2026-07-01T00:00:00Z",
     "created_at[lte]": "2026-08-01T00:00:00Z",
     "depth": 1,
+    "environment_id": ENVIRONMENT_ID_EXAMPLE,
+    "event_id": EVENT_ID_EXAMPLE,
+    "file_id": FILE_ID_EXAMPLE,
     "limit": 20,
     "memory_id": "mem_1234567890abcdef1234567890abcdef",
-    "memory_store_id": "memstore_1234567890abcdef1234567890abcdef",
+    "memory_store_id": MEMORY_STORE_ID_EXAMPLE,
     "memory_version_id": "memver_1234567890abcdef1234567890abcdef",
     "operation": "modified",
     "page": "page_example_cursor",
     "path_prefix": "/projects/",
-    "session_id": "sess_1234567890abcdef1234567890abcdef",
+    "session_id": SESSION_ID_EXAMPLE,
+    "skill_id": SKILL_ID_EXAMPLE,
     "view": "full",
 }
 
-ACCOUNT_ID_EXAMPLE = "acct_1234567890abcdef1234567890abcdef"
-ORGANIZATION_ID_EXAMPLE = "org_1234567890abcdef1234567890abcdef"
 ACCOUNT_ACTIVE_EXAMPLE = {
     "id": ACCOUNT_ID_EXAMPLE,
     "type": "account",
@@ -136,6 +151,45 @@ COMPONENT_EXAMPLES = {
     },
     "AccountResponse": ACCOUNT_ACTIVE_EXAMPLE,
     "AccountUsageResponse": ACCOUNT_USAGE_EXAMPLE,
+    "AgentCreateRequest": {
+        "name": "Research Assistant",
+        "model": "claude-sonnet-5",
+        "system": (
+            "Research the topic carefully and save the final brief in "
+            "outputs/brief.md."
+        ),
+        "description": "Creates concise, source-backed research briefs.",
+        "metadata": {"team": "research"},
+    },
+    "AgentUpdateRequest": {
+        "system": (
+            "Research the topic carefully, cite sources, and save the final "
+            "brief in outputs/brief.md."
+        ),
+        "metadata": {"team": "research", "reviewed": True},
+    },
+    "EnvironmentCreateRequest": {
+        "name": "Data Analysis Workspace",
+        "description": "A sandbox with common data-analysis packages.",
+        "config": {
+            "packages": {"pip": ["pandas==2.2.3", "openpyxl==3.1.5"]},
+            "cpu": 2,
+            "memory_mb": 2048,
+        },
+    },
+    "EnvironmentUpdateRequest": {
+        "description": "A larger sandbox for data-analysis workloads.",
+        "config": {
+            "packages": {"pip": ["pandas==2.2.3", "openpyxl==3.1.5"]},
+            "cpu": 4,
+            "memory_mb": 4096,
+        },
+    },
+    "LiveFileRequest": {"path": "brief.pdf"},
+    "LiveUploadRequest": {
+        "file_id": FILE_ID_EXAMPLE,
+        "path": "source-material.pdf",
+    },
     "MemoryStoreCreateRequest": {
         "name": "Content Creator",
         "description": "Durable brand and project context.",
@@ -145,17 +199,29 @@ COMPONENT_EXAMPLES = {
         "description": "Durable brand, asset, and active-project context.",
         "metadata": {"team": "content"},
     },
-    "MemoryCreateRequest": {
-        "path": "/context.md",
-        "content": "Brand voice: warm, concise, and practical.",
+    "SendEventsRequest": {
+        "events": [
+            {
+                "type": "user.message",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Write a short brief on the future of vertical AI "
+                            "agents."
+                        ),
+                    }
+                ],
+            }
+        ]
     },
-    "MemoryUpdateRequest": {
-        "content": "Brand voice: warm, direct, concise, and practical.",
-        "precondition": {
-            "type": "content_sha256",
-            "content_sha256": "0" * 64,
-        },
+    "SessionCreateRequest": {
+        "agent_id": AGENT_ID_EXAMPLE,
+        "environment_id": ENVIRONMENT_ID_EXAMPLE,
+        "account_id": ACCOUNT_ID_EXAMPLE,
+        "title": "Q3 market research brief",
     },
+    "SessionUpdateRequest": {"title": "Q3 market research brief — revised"},
 }
 
 
@@ -457,11 +523,11 @@ PROPERTY_DESCRIPTIONS = {
 
 def _parameter_description(parameter: dict[str, Any]) -> str:
     name = str(parameter.get("name") or "parameter")
-    if name in PARAMETER_DESCRIPTIONS:
-        return PARAMETER_DESCRIPTIONS[name]
     if parameter.get("in") == "path" and name.endswith("_id"):
         resource = name.removesuffix("_id").replace("_", " ")
         return f"Unique identifier of the {resource} addressed by this request."
+    if name in PARAMETER_DESCRIPTIONS:
+        return PARAMETER_DESCRIPTIONS[name]
     label = name.replace("_", " ").replace("-", " ")
     return f"Value supplied for the {label} {parameter.get('in', 'request')} parameter."
 
@@ -502,7 +568,12 @@ def _enrich_component_schemas(schema: dict[str, Any]) -> None:
         if name in COMPONENT_DESCRIPTIONS:
             component["description"] = COMPONENT_DESCRIPTIONS[name]
         if name in COMPONENT_EXAMPLES:
-            component.setdefault("example", COMPONENT_EXAMPLES[name])
+            example = COMPONENT_EXAMPLES[name]
+            # OpenAPI 3.1 Schema Objects use the JSON Schema `examples` array.
+            # Keep the singular form as well for viewers that still implement
+            # the older OpenAPI convention.
+            component.setdefault("example", deepcopy(example))
+            component.setdefault("examples", [deepcopy(example)])
         for property_name, property_schema in component.get("properties", {}).items():
             if isinstance(property_schema, dict):
                 # The field name is already visible in Fumadocs. Repeating the
@@ -511,6 +582,56 @@ def _enrich_component_schemas(schema: dict[str, Any]) -> None:
                 description = PROPERTY_DESCRIPTIONS.get((name, property_name))
                 if description is not None:
                     property_schema["description"] = description
+
+
+def _component_example_for_media(media: dict[str, Any]) -> Any | None:
+    media_schema = media.get("schema")
+    if not isinstance(media_schema, dict):
+        return None
+    reference = media_schema.get("$ref")
+    prefix = "#/components/schemas/"
+    if not isinstance(reference, str) or not reference.startswith(prefix):
+        return None
+    return COMPONENT_EXAMPLES.get(reference.removeprefix(prefix))
+
+
+def _enrich_request_examples(operation: dict[str, Any]) -> None:
+    """Publish one copyable example for every documented JSON request body."""
+    request_body = operation.get("requestBody")
+    if not isinstance(request_body, dict):
+        return
+    media = request_body.get("content", {}).get("application/json")
+    if not isinstance(media, dict):
+        return
+    example = _component_example_for_media(media)
+    if example is None:
+        return
+
+    if "example" not in media and "examples" not in media:
+        media["examples"] = {
+            "sample_request": {
+                "summary": "Sample request",
+                "description": (
+                    "A representative JSON request body. Replace any example "
+                    "resource IDs with IDs from your Organization."
+                ),
+                "value": deepcopy(example),
+            }
+        }
+
+    code_samples = operation.setdefault("x-codeSamples", [])
+    if not any(
+        isinstance(sample, dict) and sample.get("id") == "request-json"
+        for sample in code_samples
+    ):
+        code_samples.append(
+            {
+                "id": "request-json",
+                "lang": "json",
+                "label": "Request JSON",
+                "source": json.dumps(example, indent=2, ensure_ascii=False),
+            }
+        )
 
 
 def _operation_description(operation: dict[str, Any]) -> str:
@@ -601,6 +722,7 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
                 path=path,
                 operation=operation,
             )
+            _enrich_request_examples(operation)
             for parameter in operation.get("parameters", []):
                 if isinstance(parameter, dict):
                     _enrich_parameter(parameter)

@@ -34,6 +34,12 @@ export const OpenAPIPage = createOpenAPIPage({
       dark: 'vesper',
     },
   },
+  schemaUI: {
+    // Request components carry reviewed OpenAPI examples. Render them beside
+    // the field schema so readers can copy the JSON without first translating
+    // a generated TypeScript type or a cURL command.
+    showExample: true,
+  },
   playground: {
     fetchOptions: {
       requestTimeout: 60,
