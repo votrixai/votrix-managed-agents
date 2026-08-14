@@ -16,6 +16,7 @@ from httpx import ASGITransport, AsyncClient
 from app import human_auth
 from app.main import app
 from app.db.queries import organizations as organizations_q
+from app.db.queries import vma_api_keys as api_keys_q
 from app.routers import health as health_router
 from app.routers.deps import get_db
 
@@ -220,6 +221,210 @@ async def test_api_key_tenant_wins_over_user_selected_organization(
     )
 
     assert response.status_code == 200
+
+
+async def test_member_creates_an_api_key_that_is_returned_only_once(
+    client,
+    db,
+    org,
+    monkeypatch,
+):
+    await organizations_q.add_member(
+        db,
+        organization_id=org,
+        user_id="key-user",
+        email="key-user@example.com",
+    )
+    await db.commit()
+
+    async def authenticated_user(access_token: str):
+        assert access_token == "key-user-token"
+        return human_auth.AuthenticatedUser(id="key-user", app_metadata={})
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    auth = {
+        "authorization": "Bearer key-user-token",
+        "x-organization-id": org,
+    }
+
+    created = await client.post(
+        "/v1/me/api-keys",
+        headers=auth,
+        json={"name": "  Local development  "},
+    )
+
+    assert created.status_code == 201
+    assert created.headers["cache-control"] == "private, no-store, max-age=0"
+    payload = created.json()["data"]
+    plaintext = payload["api_key"]
+    api_keys_q.validate_vma_api_key(plaintext)
+    assert payload["name"] == "Local development"
+    assert payload["can_revoke"] is True
+
+    stored = await api_keys_q.get_vma_api_key_by_token(db, plaintext)
+    assert stored is not None
+    assert stored.organization_id == org
+    assert stored.created_by == "key-user"
+    assert plaintext not in {str(value) for value in stored.__dict__.values()}
+
+    listed = await client.get("/v1/me/api-keys", headers=auth)
+
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "private, no-store, max-age=0"
+    assert len(listed.json()["data"]) == 1
+    listed_key = listed.json()["data"][0]
+    assert listed_key["id"] == payload["id"]
+    assert listed_key["name"] == payload["name"]
+    assert listed_key["prefix"] == payload["prefix"]
+    assert listed_key["can_revoke"] is True
+    assert plaintext not in listed.text
+
+
+async def test_api_key_auth_cannot_manage_api_keys(client, headers):
+    response = await client.get("/v1/me/api-keys", headers=headers)
+
+    assert response.status_code == 401
+
+
+async def test_member_revokes_only_a_key_they_created(
+    client,
+    db,
+    org,
+    monkeypatch,
+):
+    await organizations_q.add_member(
+        db,
+        organization_id=org,
+        user_id="member-key-user",
+    )
+    someone_elses_key, someone_elses_plaintext = await api_keys_q.create_vma_api_key(
+        db,
+        organization_id=org,
+        name="Shared service",
+        created_by="another-user",
+    )
+    await db.commit()
+
+    async def authenticated_user(_access_token: str):
+        return human_auth.AuthenticatedUser(id="member-key-user", app_metadata={})
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    auth = {
+        "authorization": "Bearer member-token",
+        "x-organization-id": org,
+    }
+
+    listed = await client.get("/v1/me/api-keys", headers=auth)
+    denied = await client.delete(
+        f"/v1/me/api-keys/{someone_elses_key.id}",
+        headers=auth,
+    )
+    own = await client.post(
+        "/v1/me/api-keys",
+        headers=auth,
+        json={"name": "My integration"},
+    )
+    own_plaintext = own.json()["data"]["api_key"]
+    revoked = await client.delete(
+        f"/v1/me/api-keys/{own.json()['data']['id']}",
+        headers=auth,
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["can_revoke"] is False
+    assert denied.status_code == 403
+    assert revoked.status_code == 200
+    assert revoked.json()["revoked"] is True
+    assert await api_keys_q.get_vma_api_key_by_token(db, own_plaintext) is None
+    assert (
+        await api_keys_q.get_vma_api_key_by_token(db, someone_elses_plaintext)
+        is someone_elses_key
+    )
+
+
+async def test_admin_can_revoke_any_api_only_key_but_management_keys_are_hidden(
+    client,
+    db,
+    org,
+    monkeypatch,
+):
+    from app.db.models import MEMBER_ROLE_ADMIN
+
+    await organizations_q.add_member(
+        db,
+        organization_id=org,
+        user_id="key-admin",
+        role=MEMBER_ROLE_ADMIN,
+    )
+    ordinary, _ = await api_keys_q.create_vma_api_key(
+        db,
+        organization_id=org,
+        name="Ordinary",
+        created_by="someone-else",
+    )
+    management, _ = await api_keys_q.create_vma_api_key(
+        db,
+        organization_id=org,
+        name="Operator",
+        scopes=[
+            api_keys_q.VMA_API_SCOPE,
+            api_keys_q.VMA_API_KEYS_MANAGE_SCOPE,
+        ],
+        created_by="bootstrap",
+    )
+    await db.commit()
+
+    async def authenticated_user(_access_token: str):
+        return human_auth.AuthenticatedUser(id="key-admin", app_metadata={})
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    auth = {
+        "authorization": "Bearer admin-token",
+        "x-organization-id": org,
+    }
+
+    listed = await client.get("/v1/me/api-keys", headers=auth)
+    revoked = await client.delete(f"/v1/me/api-keys/{ordinary.id}", headers=auth)
+    protected = await client.delete(
+        f"/v1/me/api-keys/{management.id}",
+        headers=auth,
+    )
+
+    assert [item["id"] for item in listed.json()["data"]] == [ordinary.id]
+    assert listed.json()["data"][0]["can_revoke"] is True
+    assert revoked.status_code == 200
+    assert protected.status_code == 404
+
+
+async def test_api_key_name_cannot_be_blank(client, db, org, monkeypatch):
+    await organizations_q.add_member(
+        db,
+        organization_id=org,
+        user_id="blank-name-user",
+    )
+    await db.commit()
+
+    async def authenticated_user(_access_token: str):
+        return human_auth.AuthenticatedUser(id="blank-name-user", app_metadata={})
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    response = await client.post(
+        "/v1/me/api-keys",
+        headers={
+            "authorization": "Bearer blank-token",
+            "x-organization-id": org,
+        },
+        json={"name": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_api_key_management_endpoint_is_hidden_from_openapi(client):
+    response = await client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert "/v1/me/api-keys" not in response.json()["paths"]
 
 
 async def test_a_revoked_key_stops_working(client, db, org):
