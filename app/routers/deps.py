@@ -111,7 +111,9 @@ async def get_organization_id(
     the same tenant id consumed by every existing service and query.
     """
     if x_api_key:
-        return (await authenticate(db, x_api_key)).organization_id
+        organization_id = (await authenticate(db, x_api_key)).organization_id
+        await _finish_auth_transaction(db)
+        return organization_id
 
     principal = await _resolve_console_principal(
         db,
@@ -119,6 +121,7 @@ async def get_organization_id(
         x_organization_id=x_organization_id,
         missing_auth_detail="Missing x-api-key",
     )
+    await _finish_auth_transaction(db)
     return principal.organization_id
 
 
@@ -134,12 +137,30 @@ async def get_console_principal(
     ] = None,
 ) -> ConsolePrincipal:
     """Authenticate a human Console user; API keys are never accepted here."""
-    return await _resolve_console_principal(
+    principal = await _resolve_console_principal(
         db,
         authorization=authorization,
         x_organization_id=x_organization_id,
         missing_auth_detail="Missing bearer token",
     )
+    await _finish_auth_transaction(db)
+    return principal
+
+
+async def _finish_auth_transaction(db: AsyncSession) -> None:
+    """Release read locks before the request handler or response stream runs.
+
+    FastAPI keeps yielded dependencies alive until a streaming response ends.
+    Authentication returns primitive values or a detached dataclass, so its
+    read-only transaction has no reason to remain open. A handler sharing this
+    session starts a fresh transaction automatically on its first database
+    operation.
+    """
+    if db.in_transaction():
+        # This session is configured with expire_on_commit=False. Committing a
+        # read-only authentication transaction releases its database locks
+        # without expiring ORM objects another dependency may already hold.
+        await db.commit()
 
 
 async def _resolve_console_principal(
