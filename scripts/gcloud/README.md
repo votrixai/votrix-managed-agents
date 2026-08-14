@@ -361,7 +361,6 @@ set -a
 set +a
 uv run python -m scripts.bootstrap_api_key \
   --organization-id org_votrix \
-  --organization-slug votrix \
   --organization-name "Votrix"
 unset DATABASE_URL
 ```

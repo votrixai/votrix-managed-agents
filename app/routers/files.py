@@ -61,7 +61,22 @@ async def retrieve_file(file_id: str, db: Db, organization_id: OrganizationId):
     return to_file(file)
 
 
-@router.get("/{file_id}/content")
+@router.get(
+    "/{file_id}/content",
+    response_class=RedirectResponse,
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    responses={
+        307: {
+            "description": "Redirect to a short-lived URL for the File bytes.",
+            "headers": {
+                "Location": {
+                    "description": "Short-lived URL for downloading the File.",
+                    "schema": {"type": "string", "format": "uri"},
+                }
+            },
+        }
+    },
+)
 async def download_file(file_id: str, db: Db, organization_id: OrganizationId):
     """Redirect to a short-lived signed URL rather than stream the bytes.
 

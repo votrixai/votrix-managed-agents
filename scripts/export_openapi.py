@@ -89,10 +89,18 @@ AGENT_ID_EXAMPLE = "agent_1234567890abcdef1234567890abcdef"
 ENVIRONMENT_ID_EXAMPLE = "env_1234567890abcdef1234567890abcdef"
 EVENT_ID_EXAMPLE = "evt_1234567890abcdef1234567890abcdef"
 FILE_ID_EXAMPLE = "file_1234567890abcdef1234567890abcdef"
+OUTPUT_FILE_ID_EXAMPLE = "file_2234567890abcdef1234567890abcdef"
 MEMORY_STORE_ID_EXAMPLE = "memstore_1234567890abcdef1234567890abcdef"
 ORGANIZATION_ID_EXAMPLE = "org_1234567890abcdef1234567890abcdef"
 SESSION_ID_EXAMPLE = "sess_1234567890abcdef1234567890abcdef"
 SKILL_ID_EXAMPLE = "skill_1234567890abcdef1234567890abcdef"
+
+CREATED_AT_EXAMPLE = "2026-08-13T14:30:00Z"
+UPDATED_AT_EXAMPLE = "2026-08-13T14:32:00Z"
+ARCHIVED_AT_EXAMPLE = "2026-08-13T15:00:00Z"
+AGENT_VERSION_ID_EXAMPLE = "av_1234567890abcdef1234567890abcdef"
+SESSION_FILE_ID_EXAMPLE = "sfile_1234567890abcdef1234567890abcdef"
+SESSION_MEMORY_ID_EXAMPLE = "sesrsc_1234567890abcdef1234567890abcdef"
 
 PARAMETER_EXAMPLES = {
     "x-api-key": "vma_example_key",
@@ -158,12 +166,12 @@ AGENT_ACTIVE_EXAMPLE = {
     "skills": [],
     "multiagent": None,
     "metadata": {"team": "research"},
-    "created_at": "2026-08-13T14:30:00Z",
-    "updated_at": "2026-08-13T14:30:00Z",
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": CREATED_AT_EXAMPLE,
     "archived_at": None,
 }
 AGENT_VERSION_EXAMPLE = {
-    "id": "av_1234567890abcdef1234567890abcdef",
+    "id": AGENT_VERSION_ID_EXAMPLE,
     "type": "agent_version",
     "agent_id": AGENT_ID_EXAMPLE,
     "version": 1,
@@ -177,7 +185,7 @@ AGENT_VERSION_EXAMPLE = {
     "multiagent": None,
     "metadata": {"team": "research"},
     "runtime": {},
-    "created_at": "2026-08-13T14:30:00Z",
+    "created_at": CREATED_AT_EXAMPLE,
 }
 AGENT_LIST_EXAMPLE = {
     "data": [AGENT_ACTIVE_EXAMPLE],
@@ -190,6 +198,234 @@ AGENT_VERSION_LIST_EXAMPLE = {
     "has_more": False,
     "first_id": AGENT_VERSION_EXAMPLE["id"],
     "last_id": AGENT_VERSION_EXAMPLE["id"],
+}
+
+AGENT_UPDATED_EXAMPLE = {
+    **AGENT_ACTIVE_EXAMPLE,
+    "version": 2,
+    "system": (
+        "Research the topic carefully, cite sources, and save the final brief "
+        "in outputs/brief.md."
+    ),
+    "metadata": {"team": "research", "reviewed": True},
+    "updated_at": UPDATED_AT_EXAMPLE,
+}
+AGENT_ARCHIVED_EXAMPLE = {
+    **AGENT_ACTIVE_EXAMPLE,
+    "updated_at": ARCHIVED_AT_EXAMPLE,
+    "archived_at": ARCHIVED_AT_EXAMPLE,
+}
+
+ENVIRONMENT_READY_EXAMPLE = {
+    "id": ENVIRONMENT_ID_EXAMPLE,
+    "type": "environment",
+    "name": "Data Analysis Workspace",
+    "description": "A sandbox with common data-analysis packages.",
+    "config": {
+        "packages": {
+            "apt": [],
+            "cargo": [],
+            "gem": [],
+            "go": [],
+            "npm": [],
+            "pip": ["pandas==2.2.3", "openpyxl==3.1.5"],
+        },
+        "cpu": 2,
+        "memory_mb": 2048,
+    },
+    "build_state": "ready",
+    "build_error": None,
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": UPDATED_AT_EXAMPLE,
+    "archived_at": None,
+}
+ENVIRONMENT_BUILDING_EXAMPLE = {
+    **ENVIRONMENT_READY_EXAMPLE,
+    "build_state": "building",
+    "updated_at": CREATED_AT_EXAMPLE,
+}
+ENVIRONMENT_UPDATED_EXAMPLE = {
+    **ENVIRONMENT_BUILDING_EXAMPLE,
+    "description": "A larger sandbox for data-analysis workloads.",
+    "config": {
+        **ENVIRONMENT_READY_EXAMPLE["config"],
+        "cpu": 4,
+        "memory_mb": 4096,
+    },
+    "updated_at": UPDATED_AT_EXAMPLE,
+}
+ENVIRONMENT_ARCHIVED_EXAMPLE = {
+    **ENVIRONMENT_READY_EXAMPLE,
+    "updated_at": ARCHIVED_AT_EXAMPLE,
+    "archived_at": ARCHIVED_AT_EXAMPLE,
+}
+
+UPLOADED_FILE_EXAMPLE = {
+    "id": FILE_ID_EXAMPLE,
+    "type": "file",
+    "filename": "source-material.pdf",
+    "mime_type": "application/pdf",
+    "size_bytes": 184320,
+    "sha256": "90b30e2de3a3d4f11f59bc4863f4d80fba129b5f650f85d9d60b24287d6fef27",
+    "scope": None,
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": CREATED_AT_EXAMPLE,
+}
+OUTPUT_FILE_EXAMPLE = {
+    **UPLOADED_FILE_EXAMPLE,
+    "id": OUTPUT_FILE_ID_EXAMPLE,
+    "filename": "brief.pdf",
+    "size_bytes": 96214,
+    "sha256": "f5c4a9b8db604b511a4b284b2405584b4cc919bb626a23deed4045b35f2f1c78",
+    "scope": {"type": "session", "id": SESSION_ID_EXAMPLE},
+    "updated_at": UPDATED_AT_EXAMPLE,
+}
+
+SKILL_ACTIVE_EXAMPLE = {
+    "id": SKILL_ID_EXAMPLE,
+    "type": "skill",
+    "name": "research-brief",
+    "description": "Guidance for producing concise, source-backed briefs.",
+    "size_bytes": 4812,
+    "sha256": "55e500545e0d269b3f775901c2df98b916972d7208936f2e6ff47f1c6cb477d6",
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": UPDATED_AT_EXAMPLE,
+    "archived_at": None,
+}
+
+MEMORY_STORE_ACTIVE_EXAMPLE = {
+    "id": MEMORY_STORE_ID_EXAMPLE,
+    "type": "memory_store",
+    "name": "Content Creator",
+    "description": "Durable brand and project context.",
+    "metadata": {"team": "creative", "region": "global"},
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": UPDATED_AT_EXAMPLE,
+    "archived_at": None,
+}
+MEMORY_STORE_UPDATED_EXAMPLE = {
+    **MEMORY_STORE_ACTIVE_EXAMPLE,
+    "description": "Durable brand, asset, and active-project context.",
+    "metadata": {"team": "content", "region": "global"},
+}
+MEMORY_STORE_ARCHIVED_EXAMPLE = {
+    **MEMORY_STORE_ACTIVE_EXAMPLE,
+    "updated_at": ARCHIVED_AT_EXAMPLE,
+    "archived_at": ARCHIVED_AT_EXAMPLE,
+}
+
+SESSION_FILE_RESOURCE_EXAMPLE = {
+    "id": SESSION_FILE_ID_EXAMPLE,
+    "type": "file",
+    "file_id": FILE_ID_EXAMPLE,
+    "mount_path": "/home/user/uploads/source-material.pdf",
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": CREATED_AT_EXAMPLE,
+}
+SESSION_MEMORY_RESOURCE_EXAMPLE = {
+    "id": SESSION_MEMORY_ID_EXAMPLE,
+    "type": "memory_store",
+    "memory_store_id": MEMORY_STORE_ID_EXAMPLE,
+    "access": "read_write",
+    "instructions": "Use the approved voice and current project context.",
+    "mount_path": "/mnt/memory/content-creator",
+    "name": "Content Creator",
+    "description": "Durable brand and project context.",
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": CREATED_AT_EXAMPLE,
+}
+SESSION_NEW_EXAMPLE = {
+    "id": SESSION_ID_EXAMPLE,
+    "type": "session",
+    "agent_id": AGENT_ID_EXAMPLE,
+    "agent_version": 1,
+    "environment_id": ENVIRONMENT_ID_EXAMPLE,
+    "model": None,
+    "account_id": ACCOUNT_ID_EXAMPLE,
+    "title": "Q3 market research brief",
+    "status": "idle",
+    "stop_reason": None,
+    "last_event_seq": 0,
+    "resources": [],
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": CREATED_AT_EXAMPLE,
+    "archived_at": None,
+}
+SESSION_ACTIVE_EXAMPLE = {
+    **SESSION_NEW_EXAMPLE,
+    "stop_reason": {"type": "end_turn"},
+    "last_event_seq": 4,
+    "resources": [SESSION_FILE_RESOURCE_EXAMPLE, SESSION_MEMORY_RESOURCE_EXAMPLE],
+    "updated_at": UPDATED_AT_EXAMPLE,
+}
+SESSION_UPDATED_EXAMPLE = {
+    **SESSION_ACTIVE_EXAMPLE,
+    "title": "Q3 market research brief — revised",
+}
+SESSION_ARCHIVED_EXAMPLE = {
+    **SESSION_ACTIVE_EXAMPLE,
+    "updated_at": ARCHIVED_AT_EXAMPLE,
+    "archived_at": ARCHIVED_AT_EXAMPLE,
+}
+
+USER_MESSAGE_EVENT_EXAMPLE = {
+    "id": "evt_1234567890abcdef1234567890abc001",
+    "seq": 1,
+    "processed_at": "2026-08-13T14:31:00Z",
+    "type": "user.message",
+    "content": [
+        {
+            "type": "text",
+            "text": "Write a short brief on the future of vertical AI agents.",
+        }
+    ],
+}
+SESSION_RUNNING_EVENT_EXAMPLE = {
+    "id": "evt_1234567890abcdef1234567890abc002",
+    "seq": 2,
+    "processed_at": "2026-08-13T14:31:01Z",
+    "type": "session.status_running",
+}
+AGENT_MESSAGE_EVENT_EXAMPLE = {
+    "id": "evt_1234567890abcdef1234567890abc003",
+    "seq": 3,
+    "processed_at": "2026-08-13T14:31:42Z",
+    "type": "agent.message",
+    "content": [
+        {
+            "type": "text",
+            "text": "The completed brief is ready in outputs/brief.md.",
+        }
+    ],
+}
+SESSION_IDLE_EVENT_EXAMPLE = {
+    "id": "evt_1234567890abcdef1234567890abc004",
+    "seq": 4,
+    "processed_at": "2026-08-13T14:31:43Z",
+    "type": "session.status_idle",
+    "stop_reason": {"type": "end_turn"},
+}
+EVENT_PAGE_EXAMPLE = {
+    "data": [
+        USER_MESSAGE_EVENT_EXAMPLE,
+        SESSION_RUNNING_EVENT_EXAMPLE,
+        AGENT_MESSAGE_EVENT_EXAMPLE,
+        SESSION_IDLE_EVENT_EXAMPLE,
+    ],
+    "has_more": False,
+    "first_id": USER_MESSAGE_EVENT_EXAMPLE["id"],
+    "last_id": SESSION_IDLE_EVENT_EXAMPLE["id"],
+    "last_event_seq": 4,
+}
+
+VALIDATION_ERROR_EXAMPLE = {
+    "detail": [
+        {
+            "loc": ["body", "name"],
+            "msg": "Field required",
+            "type": "missing",
+        }
+    ]
 }
 
 REQUEST_COMPONENT_EXAMPLES = {
@@ -277,10 +513,68 @@ REQUEST_COMPONENT_EXAMPLES = {
 # such as {"model": {"id": "claude-sonnet-5"}} in component schemas can then
 # produce a duplicate-schema-URI crash when the example is repeated.
 RESPONSE_COMPONENT_EXAMPLES = {
+    "AccountResponse": ACCOUNT_ACTIVE_EXAMPLE,
+    "AccountUsageResponse": ACCOUNT_USAGE_EXAMPLE,
+    "ListResponse_AccountResponse_": {
+        "data": [ACCOUNT_ACTIVE_EXAMPLE],
+        "has_more": False,
+        "first_id": ACCOUNT_ID_EXAMPLE,
+        "last_id": ACCOUNT_ID_EXAMPLE,
+    },
     "AgentResponse": AGENT_ACTIVE_EXAMPLE,
     "AgentVersionResponse": AGENT_VERSION_EXAMPLE,
     "ListResponse_AgentResponse_": AGENT_LIST_EXAMPLE,
     "ListResponse_AgentVersionResponse_": AGENT_VERSION_LIST_EXAMPLE,
+    "EnvironmentResponse": ENVIRONMENT_READY_EXAMPLE,
+    "ListResponse_EnvironmentResponse_": {
+        "data": [ENVIRONMENT_READY_EXAMPLE],
+        "has_more": False,
+        "first_id": ENVIRONMENT_ID_EXAMPLE,
+        "last_id": ENVIRONMENT_ID_EXAMPLE,
+    },
+    "FileResponse": UPLOADED_FILE_EXAMPLE,
+    "ListResponse_FileResponse_": {
+        "data": [UPLOADED_FILE_EXAMPLE, OUTPUT_FILE_EXAMPLE],
+        "has_more": False,
+        "first_id": FILE_ID_EXAMPLE,
+        "last_id": OUTPUT_FILE_ID_EXAMPLE,
+    },
+    "SkillResponse": SKILL_ACTIVE_EXAMPLE,
+    "ListResponse_SkillResponse_": {
+        "data": [SKILL_ACTIVE_EXAMPLE],
+        "has_more": False,
+        "first_id": SKILL_ID_EXAMPLE,
+        "last_id": SKILL_ID_EXAMPLE,
+    },
+    "MemoryStoreResponse": MEMORY_STORE_ACTIVE_EXAMPLE,
+    "MemoryStoreListResponse": {
+        "data": [MEMORY_STORE_ACTIVE_EXAMPLE],
+        "next_page": None,
+        "has_more": False,
+        "first_id": MEMORY_STORE_ID_EXAMPLE,
+        "last_id": MEMORY_STORE_ID_EXAMPLE,
+    },
+    "DeletedMemoryStoreResponse": {
+        "id": MEMORY_STORE_ID_EXAMPLE,
+        "type": "memory_store_deleted",
+    },
+    "SessionResponse": SESSION_ACTIVE_EXAMPLE,
+    "ListResponse_SessionResponse_": {
+        "data": [SESSION_ACTIVE_EXAMPLE],
+        "has_more": False,
+        "first_id": SESSION_ID_EXAMPLE,
+        "last_id": SESSION_ID_EXAMPLE,
+    },
+    "SessionFileResourceResponse": SESSION_FILE_RESOURCE_EXAMPLE,
+    "SessionMemoryStoreResourceResponse": SESSION_MEMORY_RESOURCE_EXAMPLE,
+    "DeletedResponse": {"id": SESSION_ID_EXAMPLE, "deleted": True},
+    "SendEventsResponse": {"data": [USER_MESSAGE_EVENT_EXAMPLE]},
+    "ListEventsResponse": EVENT_PAGE_EXAMPLE,
+    "UserMessageEvent": USER_MESSAGE_EVENT_EXAMPLE,
+    "AgentMessageEvent": AGENT_MESSAGE_EVENT_EXAMPLE,
+    "SessionStatusRunningEvent": SESSION_RUNNING_EVENT_EXAMPLE,
+    "SessionStatusIdleEvent": SESSION_IDLE_EVENT_EXAMPLE,
+    "HTTPValidationError": VALIDATION_ERROR_EXAMPLE,
 }
 
 
@@ -472,6 +766,60 @@ OPERATION_SUCCESS_RESPONSES = {
     ),
 }
 
+# A component-level example is enough for most operations. These responses
+# need a more precise lifecycle state or resource identifier than their shared
+# response model can express on its own.
+OPERATION_RESPONSE_EXAMPLES = {
+    ("patch", "/v1/agents/{agent_id}", "200"): AGENT_UPDATED_EXAMPLE,
+    ("post", "/v1/agents/{agent_id}", "200"): AGENT_UPDATED_EXAMPLE,
+    ("post", "/v1/agents/{agent_id}/archive", "200"): AGENT_ARCHIVED_EXAMPLE,
+    ("post", "/v1/sessions", "201"): SESSION_NEW_EXAMPLE,
+    ("post", "/v1/sessions/{session_id}", "200"): SESSION_UPDATED_EXAMPLE,
+    ("delete", "/v1/sessions/{session_id}", "200"): {
+        "id": SESSION_ID_EXAMPLE,
+        "deleted": True,
+    },
+    ("post", "/v1/sessions/{session_id}/archive", "200"): (
+        SESSION_ARCHIVED_EXAMPLE
+    ),
+    (
+        "get",
+        "/v1/sessions/{session_id}/events/{event_id}",
+        "200",
+    ): AGENT_MESSAGE_EVENT_EXAMPLE,
+    ("post", "/v1/sessions/{session_id}/live/files", "200"): (
+        OUTPUT_FILE_EXAMPLE
+    ),
+    ("post", "/v1/sessions/{session_id}/live/uploads", "201"): (
+        SESSION_FILE_RESOURCE_EXAMPLE
+    ),
+    ("post", "/v1/environments", "201"): ENVIRONMENT_BUILDING_EXAMPLE,
+    ("post", "/v1/environments/{environment_id}", "200"): (
+        ENVIRONMENT_UPDATED_EXAMPLE
+    ),
+    ("delete", "/v1/environments/{environment_id}", "200"): {
+        "id": ENVIRONMENT_ID_EXAMPLE,
+        "deleted": True,
+    },
+    ("post", "/v1/environments/{environment_id}/archive", "200"): (
+        ENVIRONMENT_ARCHIVED_EXAMPLE
+    ),
+    ("delete", "/v1/files/{file_id}", "200"): {
+        "id": FILE_ID_EXAMPLE,
+        "deleted": True,
+    },
+    ("delete", "/v1/skills/{skill_id}", "200"): {
+        "id": SKILL_ID_EXAMPLE,
+        "deleted": True,
+    },
+    ("post", "/v1/memory_stores/{memory_store_id}", "200"): (
+        MEMORY_STORE_UPDATED_EXAMPLE
+    ),
+    ("post", "/v1/memory_stores/{memory_store_id}/archive", "200"): (
+        MEMORY_STORE_ARCHIVED_EXAMPLE
+    ),
+}
+
 COMPONENT_DESCRIPTIONS = {
     "AccountCreateRequest": (
         "The public fields accepted when creating an additional Account."
@@ -643,17 +991,36 @@ def _enrich_component_schemas(schema: dict[str, Any]) -> None:
                     property_schema["description"] = description
 
 
+def _component_example_for_schema(
+    schema: dict[str, Any], examples: dict[str, Any]
+) -> Any | None:
+    reference = schema.get("$ref")
+    prefix = "#/components/schemas/"
+    if isinstance(reference, str) and reference.startswith(prefix):
+        return examples.get(reference.removeprefix(prefix))
+
+    # FastAPI uses a union for polymorphic event responses. Pick the first
+    # reviewed example represented by one of the referenced alternatives.
+    for keyword in ("oneOf", "anyOf"):
+        variants = schema.get(keyword)
+        if not isinstance(variants, list):
+            continue
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            example = _component_example_for_schema(variant, examples)
+            if example is not None:
+                return example
+    return None
+
+
 def _component_example_for_media(
     media: dict[str, Any], examples: dict[str, Any]
 ) -> Any | None:
     media_schema = media.get("schema")
     if not isinstance(media_schema, dict):
         return None
-    reference = media_schema.get("$ref")
-    prefix = "#/components/schemas/"
-    if not isinstance(reference, str) or not reference.startswith(prefix):
-        return None
-    return examples.get(reference.removeprefix(prefix))
+    return _component_example_for_schema(media_schema, examples)
 
 
 def _enrich_request_examples(operation: dict[str, Any]) -> None:
@@ -695,17 +1062,31 @@ def _enrich_request_examples(operation: dict[str, Any]) -> None:
         )
 
 
-def _enrich_response_examples(operation: dict[str, Any]) -> None:
+def _enrich_response_examples(
+    *, method: str, path: str, operation: dict[str, Any]
+) -> None:
     """Attach payload examples at the OpenAPI media layer, outside schemas."""
-    for response in operation.get("responses", {}).values():
+    for status_code, response in operation.get("responses", {}).items():
         if not isinstance(response, dict):
             continue
-        media = response.get("content", {}).get("application/json")
-        if not isinstance(media, dict) or "example" in media or "examples" in media:
-            continue
-        example = _component_example_for_media(media, RESPONSE_COMPONENT_EXAMPLES)
-        if example is not None:
-            media["example"] = deepcopy(example)
+        for media_type, media in response.get("content", {}).items():
+            if (
+                not isinstance(media, dict)
+                or "example" in media
+                or "examples" in media
+            ):
+                continue
+            example = None
+            if media_type == "application/json":
+                example = OPERATION_RESPONSE_EXAMPLES.get(
+                    (method, path, str(status_code))
+                )
+            if example is None:
+                example = _component_example_for_media(
+                    media, RESPONSE_COMPONENT_EXAMPLES
+                )
+            if example is not None:
+                media["example"] = deepcopy(example)
 
 
 def _operation_description(operation: dict[str, Any]) -> str:
@@ -740,13 +1121,18 @@ def _enrich_sse_response(*, method: str, path: str, operation: dict[str, Any]) -
         "content": {
             "text/event-stream": {
                 "schema": {"type": "string"},
-                "example": (
-                    "id: 42\n"
-                    "event: agent.message\n"
-                    'data: {"id":"evt_example","type":"agent.message",'
-                    '"session_id":"sess_example","seq":42,'
-                    '"content":"Done."}\n\n'
-                ),
+                "example": "id: 42\n"
+                "event: agent.message\n"
+                "data: "
+                + json.dumps(
+                    {
+                        **AGENT_MESSAGE_EVENT_EXAMPLE,
+                        "id": EVENT_ID_EXAMPLE,
+                        "seq": 42,
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n\n",
             }
         },
     }
@@ -796,7 +1182,11 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
                 path=path,
                 operation=operation,
             )
-            _enrich_response_examples(operation)
+            _enrich_response_examples(
+                method=normalized_method,
+                path=path,
+                operation=operation,
+            )
             _enrich_request_examples(operation)
             for parameter in operation.get("parameters", []):
                 if isinstance(parameter, dict):

@@ -14,8 +14,8 @@ from app.db.models import (
 from app.utils.id_generator import new_id
 
 
-async def create_organization(db: AsyncSession, *, slug: str, name: str) -> Organization:
-    organization = Organization(id=new_id("org"), slug=slug, name=name)
+async def create_organization(db: AsyncSession, *, name: str) -> Organization:
+    organization = Organization(id=new_id("org"), name=name)
     db.add(organization)
     await db.flush()
     return organization
@@ -23,11 +23,6 @@ async def create_organization(db: AsyncSession, *, slug: str, name: str) -> Orga
 
 async def get_organization(db: AsyncSession, *, organization_id: str) -> Organization | None:
     return await db.get(Organization, organization_id)
-
-
-async def get_organization_by_slug(db: AsyncSession, *, slug: str) -> Organization | None:
-    result = await db.execute(select(Organization).where(Organization.slug == slug))
-    return result.scalar_one_or_none()
 
 
 async def list_organizations(
