@@ -114,6 +114,81 @@ def test_every_json_request_body_has_a_copyable_sample_request():
     assert documented
 
 
+def _sample_leaves(value):
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _sample_leaves(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _sample_leaves(child)
+    else:
+        yield value
+
+
+def test_every_response_body_has_a_concrete_sample_response():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    documented: list[str] = []
+
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method not in {"delete", "get", "patch", "post", "put"}:
+                continue
+            for status_code, response in operation.get("responses", {}).items():
+                for media_type, media in response.get("content", {}).items():
+                    label = f"{method.upper()} {path} {status_code} {media_type}"
+                    documented.append(label)
+                    if "example" in media:
+                        samples = [media["example"]]
+                    else:
+                        examples = media.get("examples")
+                        assert examples, label
+                        samples = [
+                            item.get("value") if isinstance(item, dict) else item
+                            for item in examples.values()
+                        ]
+
+                    for sample in samples:
+                        assert sample not in ({}, [], "", "string"), label
+                        assert "string" not in _sample_leaves(sample), label
+
+    assert documented
+
+
+def test_stream_and_download_responses_document_the_actual_transport():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+
+    stream = schema["paths"][
+        "/v1/sessions/{session_id}/events/stream"
+    ]["get"]["responses"]["200"]["content"]["text/event-stream"]
+    frame = stream["example"]
+    assert frame.startswith("id: 42\nevent: agent.message\ndata: ")
+    event = json.loads(
+        next(
+            line.removeprefix("data: ")
+            for line in frame.splitlines()
+            if line.startswith("data: ")
+        )
+    )
+    assert event["type"] == "agent.message"
+    assert event["seq"] == 42
+    assert event["content"][0]["type"] == "text"
+    assert "session_id" not in event
+
+    file_download = schema["paths"]["/v1/files/{file_id}/content"]["get"]
+    assert set(file_download["responses"]) == {"307", "422"}
+    redirect = file_download["responses"]["307"]
+    assert "content" not in redirect
+    assert redirect["headers"]["Location"]["schema"] == {
+        "type": "string",
+        "format": "uri",
+    }
+
+    skill_download = schema["paths"]["/v1/skills/{skill_id}/content"]["get"]
+    package = skill_download["responses"]["200"]["content"]["application/zip"]
+    assert package["schema"] == {"type": "string", "format": "binary"}
+    assert package["example"] == "<binary ZIP data>"
+
+
 def test_required_request_parameters_have_realistic_examples():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
 
