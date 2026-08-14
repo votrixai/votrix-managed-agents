@@ -9,7 +9,6 @@ from app.db.models import MemoryStore
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models.errors import InvalidRequest
 from app.models.memory import (
-    DeletedMemoryStoreResponse,
     MemoryStoreCreateRequest,
     MemoryStoreFileResponse,
     MemoryStoreListResponse,
@@ -114,34 +113,6 @@ async def update_memory_store(
         changes=body.model_dump(exclude_unset=True),
     )
     return to_memory_store(store)
-
-
-@router.post("/{memory_store_id}/archive", response_model=MemoryStoreResponse)
-async def archive_memory_store(
-    memory_store_id: str,
-    db: Db,
-    organization_id: OrganizationId,
-):
-    store = await service.archive_memory_store(
-        db,
-        memory_store_id=memory_store_id,
-        organization_id=organization_id,
-    )
-    return to_memory_store(store)
-
-
-@router.delete("/{memory_store_id}", response_model=DeletedMemoryStoreResponse)
-async def delete_memory_store(
-    memory_store_id: str,
-    db: Db,
-    organization_id: OrganizationId,
-):
-    store = await service.delete_memory_store(
-        db,
-        memory_store_id=memory_store_id,
-        organization_id=organization_id,
-    )
-    return DeletedMemoryStoreResponse(id=store.id)
 
 
 @router.put(

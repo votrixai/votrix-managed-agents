@@ -17,14 +17,12 @@ from scripts.export_openapi import (
 # Store properties stay on the Store resource. File bytes are addressed by
 # their relative provider-filesystem path below the Store.
 MEMORY_OPERATIONS = {
-    "DELETE /v1/memory_stores/{memory_store_id}",
     "DELETE /v1/memory_stores/{memory_store_id}/files/{file_path}",
     "GET /v1/memory_stores",
     "GET /v1/memory_stores/{memory_store_id}",
     "PATCH /v1/memory_stores/{memory_store_id}",
     "POST /v1/memory_stores",
     "POST /v1/memory_stores/{memory_store_id}",
-    "POST /v1/memory_stores/{memory_store_id}/archive",
     "PUT /v1/memory_stores/{memory_store_id}/files/{file_path}",
 }
 
@@ -63,6 +61,14 @@ def test_old_projected_document_api_stays_absent():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
     assert not [path for path in schema["paths"] if "/memories" in path]
     assert not [path for path in schema["paths"] if "memory_versions" in path]
+
+
+def test_store_level_archive_and_delete_stay_out_of_the_public_contract():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    store_path = schema["paths"]["/v1/memory_stores/{memory_store_id}"]
+
+    assert "delete" not in store_path
+    assert "/v1/memory_stores/{memory_store_id}/archive" not in schema["paths"]
 
 
 def test_memory_store_file_write_is_raw_binary_and_delete_has_no_body():

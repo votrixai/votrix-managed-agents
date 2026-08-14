@@ -28,7 +28,7 @@ The active service implements:
 - Sessions, durable events, event retrieval, and resumable SSE;
 - Files and Skill archives;
 - live and end-of-turn output capture;
-- Memory Store lifecycle and path-addressed file writes/deletes;
+- Memory Store create/read/update and path-addressed file writes/deletes;
 - E2B Volume-backed, creation-time Memory Store mounts.
 
 Organization, membership, and model-catalog routes remain placeholders. The

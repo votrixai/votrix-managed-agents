@@ -394,6 +394,8 @@ async def archive_memory_store(
     memory_store_id: str,
     organization_id: str,
 ) -> MemoryStore:
+    """Retire a Store from an operator workflow; not a public API operation."""
+
     store = await get_memory_store(
         db,
         memory_store_id=memory_store_id,
@@ -411,6 +413,8 @@ async def delete_memory_store(
     memory_store_id: str,
     organization_id: str,
 ) -> MemoryStore:
+    """Destroy an unused Store from an operator workflow, never public HTTP."""
+
     store = await get_memory_store(
         db,
         memory_store_id=memory_store_id,

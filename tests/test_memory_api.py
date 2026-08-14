@@ -245,9 +245,15 @@ async def test_store_file_mutation_is_rejected_while_an_attached_session_is_busy
     assert volumes.standalone_writes == []
 
 
-async def test_archived_store_file_mutation_is_rejected(client, headers, volumes):
+async def test_archived_store_file_mutation_is_rejected(
+    client, db, org, headers, volumes
+):
     store = (await create_store(client, headers)).json()
-    await client.post(f"/v1/memory_stores/{store['id']}/archive", headers=headers)
+    await memory_service.archive_memory_store(
+        db,
+        memory_store_id=store["id"],
+        organization_id=org,
+    )
 
     response = await client.put(
         f"/v1/memory_stores/{store['id']}/files/context.md",
@@ -454,10 +460,14 @@ async def test_read_only_is_rejected_instead_of_being_falsely_enforced(
 
 
 async def test_archived_store_cannot_be_attached(
-    client, headers, agent, environment
+    client, db, org, headers, agent, environment
 ):
     store = (await create_store(client, headers)).json()
-    await client.post(f"/v1/memory_stores/{store['id']}/archive", headers=headers)
+    await memory_service.archive_memory_store(
+        db,
+        memory_store_id=store["id"],
+        organization_id=org,
+    )
 
     response = await attach_store(
         client, headers, agent, environment, store["id"]
@@ -466,34 +476,25 @@ async def test_archived_store_cannot_be_attached(
     assert response.status_code == 409
 
 
-async def test_an_attached_store_is_archived_instead_of_destroyed(
-    client, headers, volumes, agent, environment
-):
-    store = (await create_store(client, headers)).json()
-    await attach_store(client, headers, agent, environment, store["id"])
-
-    response = await client.delete(
-        f"/v1/memory_stores/{store['id']}", headers=headers
-    )
-
-    assert response.status_code == 409
-    assert volumes.destroyed == []
-
-
-async def test_an_unused_store_destroys_its_provider_volume(
+async def test_store_level_archive_and_delete_are_not_public(
     client, headers, volumes
 ):
     store = (await create_store(client, headers, name="Temporary")).json()
 
-    response = await client.delete(
+    archived = await client.post(
+        f"/v1/memory_stores/{store['id']}/archive", headers=headers
+    )
+    deleted = await client.delete(
         f"/v1/memory_stores/{store['id']}", headers=headers
     )
 
-    assert response.status_code == 200
-    assert volumes.destroyed[0]["memory_store_id"] == store["id"]
-    assert (
-        await client.get(f"/v1/memory_stores/{store['id']}", headers=headers)
-    ).status_code == 404
+    assert archived.status_code == 404
+    assert deleted.status_code == 405
+    assert volumes.destroyed == []
+    retrieved = await client.get(
+        f"/v1/memory_stores/{store['id']}", headers=headers
+    )
+    assert retrieved.status_code == 200
 
 
 async def test_two_store_names_that_make_one_slug_are_rejected(

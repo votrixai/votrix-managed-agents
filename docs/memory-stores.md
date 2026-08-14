@@ -102,15 +102,17 @@ The optional `instructions` tell the Agent how the Store should be used. Keep
 them specific—for example, what to read before starting and what is worth
 preserving for later.
 
-## Update, archive, and delete
+## Store lifecycle safety
 
-- Updating a Store changes its name, description, or metadata. Existing files
-  are unaffected; use the `/files/` routes to change them.
-- Archiving prevents Store updates, file API mutations, and new attachments
-  while preserving the Store for Sessions that already reference it. An
-  already-mounted read-write Session retains its filesystem access.
-- Deletion permanently removes a Store and is refused with `409 conflict` if
-  any Session references it. Archive an attached Store instead.
+Updating a Store changes its name, description, or metadata. Existing files
+are unaffected; use the `/files/` routes to change them.
+
+The public API deliberately does not expose Store-level archive or delete
+operations. Destroying a Store would destroy its complete persistent Volume,
+and archival is not safe to expose without a corresponding restore and
+retention contract. Operator-controlled lifecycle tooling can be added with
+those safeguards separately. The path-addressed `DELETE` above removes only
+the explicitly named file.
 
 Start with [Create Memory Store](/docs/api/memory-stores/create_memory_store_v1_memory_stores_post),
 then use the Memory Stores section of the [API Reference](/docs/api) for every

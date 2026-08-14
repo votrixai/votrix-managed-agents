@@ -310,12 +310,6 @@ MEMORY_STORE_UPDATED_EXAMPLE = {
     "description": "Durable brand, asset, and active-project context.",
     "metadata": {"team": "content", "region": "global"},
 }
-MEMORY_STORE_ARCHIVED_EXAMPLE = {
-    **MEMORY_STORE_ACTIVE_EXAMPLE,
-    "updated_at": ARCHIVED_AT_EXAMPLE,
-    "archived_at": ARCHIVED_AT_EXAMPLE,
-}
-
 SESSION_FILE_RESOURCE_EXAMPLE = {
     "id": SESSION_FILE_ID_EXAMPLE,
     "type": "file",
@@ -563,10 +557,6 @@ RESPONSE_COMPONENT_EXAMPLES = {
         "has_more": False,
         "first_id": MEMORY_STORE_ID_EXAMPLE,
         "last_id": MEMORY_STORE_ID_EXAMPLE,
-    },
-    "DeletedMemoryStoreResponse": {
-        "id": MEMORY_STORE_ID_EXAMPLE,
-        "type": "memory_store_deleted",
     },
     "SessionResponse": SESSION_ACTIVE_EXAMPLE,
     "ListResponse_SessionResponse_": {
@@ -853,9 +843,6 @@ OPERATION_RESPONSE_EXAMPLES = {
     },
     ("post", "/v1/memory_stores/{memory_store_id}", "200"): (
         MEMORY_STORE_UPDATED_EXAMPLE
-    ),
-    ("post", "/v1/memory_stores/{memory_store_id}/archive", "200"): (
-        MEMORY_STORE_ARCHIVED_EXAMPLE
     ),
 }
 

@@ -15,7 +15,7 @@ MemoryStore row                         E2B Volume
 -------------------------------         -----------------------------
 id, organization_id                     directories and file bytes
 name, description, metadata             persistent filesystem state
-archive/delete lifecycle                provider volume id and name
+provisioning state                       provider volume id and name
 ```
 
 `PATCH /v1/memory_stores/{id}` changes the Store's control-plane properties.
@@ -23,8 +23,8 @@ It does not rename the provider Volume or change file bytes. The Volume name is
 derived from the stable Store ID when the Store is created.
 
 The provider locator is private. E2B uses its volume ID for standalone content
-operations and deletion, and its stable volume name when creating a Sandbox
-mount.
+operations and internal lifecycle cleanup, and its stable volume name when
+creating a Sandbox mount.
 
 ## Session attachment
 
@@ -90,9 +90,8 @@ bytes; a successful `DELETE` returns `204`.
   `E2B_API_KEY`.
 - One file write is limited to 100 MiB; one relative path is limited to 1,024
   UTF-8 bytes and cannot traverse with `.` or `..`.
-- Archived Stores reject file API mutations and new attachments.
-- E2B 2.31.0 does not expose a read-only Volume mount, so an already-mounted
-  Session retains write access after archival.
+- Store-level archive and delete are intentionally absent from the public API;
+  destroying a Store would destroy the complete persistent Volume.
 - VMA serializes its own API writes against its own Agent turns. External E2B
   clients and background processes inside a Sandbox are outside that lock, so
   there is no global compare-and-swap guarantee across every possible writer.
