@@ -25,6 +25,9 @@ function withoutFixedPreviewHeader<T extends { parameters?: unknown[] }>(operati
 }
 
 export const OpenAPIPage = createOpenAPIPage({
+  // The public HTTP contract is language-neutral; generated TypeScript types
+  // add a language-specific panel without adding a second usable example.
+  generateTypeScriptDefinitions: false,
   // Version this prefix whenever persisted Playground defaults become invalid.
   // v2 drops the former server URL cached by browsers.
   storageKeyPrefix: 'votrix-managed-agents-openapi-v2-',

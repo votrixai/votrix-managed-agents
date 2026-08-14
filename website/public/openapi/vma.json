@@ -73,6 +73,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -191,6 +203,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -253,6 +277,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -318,6 +354,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -381,6 +429,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -444,6 +504,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -533,6 +605,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -700,6 +784,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -825,6 +921,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -917,6 +1025,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -987,21 +1107,22 @@
                   "id": "agent_1234567890abcdef1234567890abcdef",
                   "type": "agent",
                   "name": "Research Assistant",
-                  "version": 1,
+                  "version": 2,
                   "model": {
                     "id": "claude-sonnet-5"
                   },
-                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
                   "tools": [],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
                   "metadata": {
-                    "team": "research"
+                    "team": "research",
+                    "reviewed": true
                   },
                   "created_at": "2026-08-13T14:30:00Z",
-                  "updated_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
                   "archived_at": null
                 }
               }
@@ -1013,6 +1134,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1091,21 +1224,22 @@
                   "id": "agent_1234567890abcdef1234567890abcdef",
                   "type": "agent",
                   "name": "Research Assistant",
-                  "version": 1,
+                  "version": 2,
                   "model": {
                     "id": "claude-sonnet-5"
                   },
-                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
                   "tools": [],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
                   "metadata": {
-                    "team": "research"
+                    "team": "research",
+                    "reviewed": true
                   },
                   "created_at": "2026-08-13T14:30:00Z",
-                  "updated_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
                   "archived_at": null
                 }
               }
@@ -1117,6 +1251,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1187,8 +1333,8 @@
                     "team": "research"
                   },
                   "created_at": "2026-08-13T14:30:00Z",
-                  "updated_at": "2026-08-13T14:30:00Z",
-                  "archived_at": null
+                  "updated_at": "2026-08-13T15:00:00Z",
+                  "archived_at": "2026-08-13T15:00:00Z"
                 }
               }
             }
@@ -1199,6 +1345,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1255,6 +1413,23 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionResponse"
+                },
+                "example": {
+                  "id": "sess_1234567890abcdef1234567890abcdef",
+                  "type": "session",
+                  "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                  "agent_version": 1,
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "model": null,
+                  "account_id": "acct_1234567890abcdef1234567890abcdef",
+                  "title": "Q3 market research brief",
+                  "status": "idle",
+                  "stop_reason": null,
+                  "last_event_seq": 0,
+                  "resources": [],
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -1265,6 +1440,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1374,6 +1561,53 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_SessionResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "sess_1234567890abcdef1234567890abcdef",
+                      "type": "session",
+                      "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                      "agent_version": 1,
+                      "environment_id": "env_1234567890abcdef1234567890abcdef",
+                      "model": null,
+                      "account_id": "acct_1234567890abcdef1234567890abcdef",
+                      "title": "Q3 market research brief",
+                      "status": "idle",
+                      "stop_reason": {
+                        "type": "end_turn"
+                      },
+                      "last_event_seq": 4,
+                      "resources": [
+                        {
+                          "id": "sfile_1234567890abcdef1234567890abcdef",
+                          "type": "file",
+                          "file_id": "file_1234567890abcdef1234567890abcdef",
+                          "mount_path": "/home/user/uploads/source-material.pdf",
+                          "created_at": "2026-08-13T14:30:00Z",
+                          "updated_at": "2026-08-13T14:30:00Z"
+                        },
+                        {
+                          "id": "sesrsc_1234567890abcdef1234567890abcdef",
+                          "type": "memory_store",
+                          "memory_store_id": "memstore_1234567890abcdef1234567890abcdef",
+                          "access": "read_write",
+                          "instructions": "Use the approved voice and current project context.",
+                          "mount_path": "/mnt/memory/content-creator",
+                          "name": "Content Creator",
+                          "description": "Durable brand and project context.",
+                          "created_at": "2026-08-13T14:30:00Z",
+                          "updated_at": "2026-08-13T14:30:00Z"
+                        }
+                      ],
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:32:00Z",
+                      "archived_at": null
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "sess_1234567890abcdef1234567890abcdef",
+                  "last_id": "sess_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -1384,6 +1618,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1428,6 +1674,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionResponse"
+                },
+                "example": {
+                  "id": "sess_1234567890abcdef1234567890abcdef",
+                  "type": "session",
+                  "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                  "agent_version": 1,
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "model": null,
+                  "account_id": "acct_1234567890abcdef1234567890abcdef",
+                  "title": "Q3 market research brief",
+                  "status": "idle",
+                  "stop_reason": {
+                    "type": "end_turn"
+                  },
+                  "last_event_seq": 4,
+                  "resources": [
+                    {
+                      "id": "sfile_1234567890abcdef1234567890abcdef",
+                      "type": "file",
+                      "file_id": "file_1234567890abcdef1234567890abcdef",
+                      "mount_path": "/home/user/uploads/source-material.pdf",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    },
+                    {
+                      "id": "sesrsc_1234567890abcdef1234567890abcdef",
+                      "type": "memory_store",
+                      "memory_store_id": "memstore_1234567890abcdef1234567890abcdef",
+                      "access": "read_write",
+                      "instructions": "Use the approved voice and current project context.",
+                      "mount_path": "/mnt/memory/content-creator",
+                      "name": "Content Creator",
+                      "description": "Durable brand and project context.",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    }
+                  ],
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -1438,6 +1724,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1499,6 +1797,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionResponse"
+                },
+                "example": {
+                  "id": "sess_1234567890abcdef1234567890abcdef",
+                  "type": "session",
+                  "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                  "agent_version": 1,
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "model": null,
+                  "account_id": "acct_1234567890abcdef1234567890abcdef",
+                  "title": "Q3 market research brief — revised",
+                  "status": "idle",
+                  "stop_reason": {
+                    "type": "end_turn"
+                  },
+                  "last_event_seq": 4,
+                  "resources": [
+                    {
+                      "id": "sfile_1234567890abcdef1234567890abcdef",
+                      "type": "file",
+                      "file_id": "file_1234567890abcdef1234567890abcdef",
+                      "mount_path": "/home/user/uploads/source-material.pdf",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    },
+                    {
+                      "id": "sesrsc_1234567890abcdef1234567890abcdef",
+                      "type": "memory_store",
+                      "memory_store_id": "memstore_1234567890abcdef1234567890abcdef",
+                      "access": "read_write",
+                      "instructions": "Use the approved voice and current project context.",
+                      "mount_path": "/mnt/memory/content-creator",
+                      "name": "Content Creator",
+                      "description": "Durable brand and project context.",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    }
+                  ],
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -1509,6 +1847,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1559,6 +1909,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeletedResponse"
+                },
+                "example": {
+                  "id": "sess_1234567890abcdef1234567890abcdef",
+                  "deleted": true
                 }
               }
             }
@@ -1569,6 +1923,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1613,6 +1979,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionResponse"
+                },
+                "example": {
+                  "id": "sess_1234567890abcdef1234567890abcdef",
+                  "type": "session",
+                  "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                  "agent_version": 1,
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "model": null,
+                  "account_id": "acct_1234567890abcdef1234567890abcdef",
+                  "title": "Q3 market research brief",
+                  "status": "idle",
+                  "stop_reason": {
+                    "type": "end_turn"
+                  },
+                  "last_event_seq": 4,
+                  "resources": [
+                    {
+                      "id": "sfile_1234567890abcdef1234567890abcdef",
+                      "type": "file",
+                      "file_id": "file_1234567890abcdef1234567890abcdef",
+                      "mount_path": "/home/user/uploads/source-material.pdf",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    },
+                    {
+                      "id": "sesrsc_1234567890abcdef1234567890abcdef",
+                      "type": "memory_store",
+                      "memory_store_id": "memstore_1234567890abcdef1234567890abcdef",
+                      "access": "read_write",
+                      "instructions": "Use the approved voice and current project context.",
+                      "mount_path": "/mnt/memory/content-creator",
+                      "name": "Content Creator",
+                      "description": "Durable brand and project context.",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    }
+                  ],
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T15:00:00Z",
+                  "archived_at": "2026-08-13T15:00:00Z"
                 }
               }
             }
@@ -1623,6 +2029,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1697,6 +2115,22 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SendEventsResponse"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "evt_1234567890abcdef1234567890abc001",
+                      "seq": 1,
+                      "processed_at": "2026-08-13T14:31:00Z",
+                      "type": "user.message",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Write a short brief on the future of vertical AI agents."
+                        }
+                      ]
+                    }
+                  ]
                 }
               }
             }
@@ -1707,6 +2141,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1817,6 +2263,53 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListEventsResponse"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "evt_1234567890abcdef1234567890abc001",
+                      "seq": 1,
+                      "processed_at": "2026-08-13T14:31:00Z",
+                      "type": "user.message",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Write a short brief on the future of vertical AI agents."
+                        }
+                      ]
+                    },
+                    {
+                      "id": "evt_1234567890abcdef1234567890abc002",
+                      "seq": 2,
+                      "processed_at": "2026-08-13T14:31:01Z",
+                      "type": "session.status_running"
+                    },
+                    {
+                      "id": "evt_1234567890abcdef1234567890abc003",
+                      "seq": 3,
+                      "processed_at": "2026-08-13T14:31:42Z",
+                      "type": "agent.message",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "The completed brief is ready in outputs/brief.md."
+                        }
+                      ]
+                    },
+                    {
+                      "id": "evt_1234567890abcdef1234567890abc004",
+                      "seq": 4,
+                      "processed_at": "2026-08-13T14:31:43Z",
+                      "type": "session.status_idle",
+                      "stop_reason": {
+                        "type": "end_turn"
+                      }
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "evt_1234567890abcdef1234567890abc001",
+                  "last_id": "evt_1234567890abcdef1234567890abc004",
+                  "last_event_seq": 4
                 }
               }
             }
@@ -1827,6 +2320,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -1906,7 +2411,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "example": "id: 42\nevent: agent.message\ndata: {\"id\":\"evt_example\",\"type\":\"agent.message\",\"session_id\":\"sess_example\",\"seq\":42,\"content\":\"Done.\"}\n\n"
+                "example": "id: 42\nevent: agent.message\ndata: {\"id\":\"evt_1234567890abcdef1234567890abcdef\",\"seq\":42,\"processed_at\":\"2026-08-13T14:31:42Z\",\"type\":\"agent.message\",\"content\":[{\"type\":\"text\",\"text\":\"The completed brief is ready in outputs/brief.md.\"}]}\n\n"
               }
             }
           },
@@ -1916,6 +2421,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2028,6 +2545,18 @@
                     }
                   },
                   "title": "Response Retrieve Event V1 Sessions  Session Id  Events  Event Id  Get"
+                },
+                "example": {
+                  "id": "evt_1234567890abcdef1234567890abc003",
+                  "seq": 3,
+                  "processed_at": "2026-08-13T14:31:42Z",
+                  "type": "agent.message",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The completed brief is ready in outputs/brief.md."
+                    }
+                  ]
                 }
               }
             }
@@ -2038,6 +2567,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2102,6 +2643,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FileResponse"
+                },
+                "example": {
+                  "id": "file_2234567890abcdef1234567890abcdef",
+                  "type": "file",
+                  "filename": "brief.pdf",
+                  "mime_type": "application/pdf",
+                  "size_bytes": 96214,
+                  "sha256": "f5c4a9b8db604b511a4b284b2405584b4cc919bb626a23deed4045b35f2f1c78",
+                  "scope": {
+                    "type": "session",
+                    "id": "sess_1234567890abcdef1234567890abcdef"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z"
                 }
               }
             }
@@ -2112,6 +2667,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2184,6 +2751,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionFileResourceResponse"
+                },
+                "example": {
+                  "id": "sfile_1234567890abcdef1234567890abcdef",
+                  "type": "file",
+                  "file_id": "file_1234567890abcdef1234567890abcdef",
+                  "mount_path": "/home/user/uploads/source-material.pdf",
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z"
                 }
               }
             }
@@ -2194,6 +2769,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2266,6 +2853,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnvironmentResponse"
+                },
+                "example": {
+                  "id": "env_1234567890abcdef1234567890abcdef",
+                  "type": "environment",
+                  "name": "Data Analysis Workspace",
+                  "description": "A sandbox with common data-analysis packages.",
+                  "config": {
+                    "packages": {
+                      "apt": [],
+                      "cargo": [],
+                      "gem": [],
+                      "go": [],
+                      "npm": [],
+                      "pip": [
+                        "pandas==2.2.3",
+                        "openpyxl==3.1.5"
+                      ]
+                    },
+                    "cpu": 2,
+                    "memory_mb": 2048
+                  },
+                  "build_state": "building",
+                  "build_error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -2276,6 +2889,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2368,6 +2993,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_EnvironmentResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "env_1234567890abcdef1234567890abcdef",
+                      "type": "environment",
+                      "name": "Data Analysis Workspace",
+                      "description": "A sandbox with common data-analysis packages.",
+                      "config": {
+                        "packages": {
+                          "apt": [],
+                          "cargo": [],
+                          "gem": [],
+                          "go": [],
+                          "npm": [],
+                          "pip": [
+                            "pandas==2.2.3",
+                            "openpyxl==3.1.5"
+                          ]
+                        },
+                        "cpu": 2,
+                        "memory_mb": 2048
+                      },
+                      "build_state": "ready",
+                      "build_error": null,
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:32:00Z",
+                      "archived_at": null
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "env_1234567890abcdef1234567890abcdef",
+                  "last_id": "env_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -2378,6 +3036,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2422,6 +3092,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnvironmentResponse"
+                },
+                "example": {
+                  "id": "env_1234567890abcdef1234567890abcdef",
+                  "type": "environment",
+                  "name": "Data Analysis Workspace",
+                  "description": "A sandbox with common data-analysis packages.",
+                  "config": {
+                    "packages": {
+                      "apt": [],
+                      "cargo": [],
+                      "gem": [],
+                      "go": [],
+                      "npm": [],
+                      "pip": [
+                        "pandas==2.2.3",
+                        "openpyxl==3.1.5"
+                      ]
+                    },
+                    "cpu": 2,
+                    "memory_mb": 2048
+                  },
+                  "build_state": "ready",
+                  "build_error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -2432,6 +3128,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2504,6 +3212,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnvironmentResponse"
+                },
+                "example": {
+                  "id": "env_1234567890abcdef1234567890abcdef",
+                  "type": "environment",
+                  "name": "Data Analysis Workspace",
+                  "description": "A larger sandbox for data-analysis workloads.",
+                  "config": {
+                    "packages": {
+                      "apt": [],
+                      "cargo": [],
+                      "gem": [],
+                      "go": [],
+                      "npm": [],
+                      "pip": [
+                        "pandas==2.2.3",
+                        "openpyxl==3.1.5"
+                      ]
+                    },
+                    "cpu": 4,
+                    "memory_mb": 4096
+                  },
+                  "build_state": "building",
+                  "build_error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -2514,6 +3248,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2564,6 +3310,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeletedResponse"
+                },
+                "example": {
+                  "id": "env_1234567890abcdef1234567890abcdef",
+                  "deleted": true
                 }
               }
             }
@@ -2574,6 +3324,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2618,6 +3380,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnvironmentResponse"
+                },
+                "example": {
+                  "id": "env_1234567890abcdef1234567890abcdef",
+                  "type": "environment",
+                  "name": "Data Analysis Workspace",
+                  "description": "A sandbox with common data-analysis packages.",
+                  "config": {
+                    "packages": {
+                      "apt": [],
+                      "cargo": [],
+                      "gem": [],
+                      "go": [],
+                      "npm": [],
+                      "pip": [
+                        "pandas==2.2.3",
+                        "openpyxl==3.1.5"
+                      ]
+                    },
+                    "cpu": 2,
+                    "memory_mb": 2048
+                  },
+                  "build_state": "ready",
+                  "build_error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T15:00:00Z",
+                  "archived_at": "2026-08-13T15:00:00Z"
                 }
               }
             }
@@ -2628,6 +3416,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2672,6 +3472,17 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FileResponse"
+                },
+                "example": {
+                  "id": "file_1234567890abcdef1234567890abcdef",
+                  "type": "file",
+                  "filename": "source-material.pdf",
+                  "mime_type": "application/pdf",
+                  "size_bytes": 184320,
+                  "sha256": "90b30e2de3a3d4f11f59bc4863f4d80fba129b5f650f85d9d60b24287d6fef27",
+                  "scope": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z"
                 }
               }
             }
@@ -2682,6 +3493,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2773,6 +3596,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_FileResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "file_1234567890abcdef1234567890abcdef",
+                      "type": "file",
+                      "filename": "source-material.pdf",
+                      "mime_type": "application/pdf",
+                      "size_bytes": 184320,
+                      "sha256": "90b30e2de3a3d4f11f59bc4863f4d80fba129b5f650f85d9d60b24287d6fef27",
+                      "scope": null,
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z"
+                    },
+                    {
+                      "id": "file_2234567890abcdef1234567890abcdef",
+                      "type": "file",
+                      "filename": "brief.pdf",
+                      "mime_type": "application/pdf",
+                      "size_bytes": 96214,
+                      "sha256": "f5c4a9b8db604b511a4b284b2405584b4cc919bb626a23deed4045b35f2f1c78",
+                      "scope": {
+                        "type": "session",
+                        "id": "sess_1234567890abcdef1234567890abcdef"
+                      },
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:32:00Z"
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "file_1234567890abcdef1234567890abcdef",
+                  "last_id": "file_2234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -2783,6 +3638,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2827,6 +3694,17 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FileResponse"
+                },
+                "example": {
+                  "id": "file_1234567890abcdef1234567890abcdef",
+                  "type": "file",
+                  "filename": "source-material.pdf",
+                  "mime_type": "application/pdf",
+                  "size_bytes": 184320,
+                  "sha256": "90b30e2de3a3d4f11f59bc4863f4d80fba129b5f650f85d9d60b24287d6fef27",
+                  "scope": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z"
                 }
               }
             }
@@ -2837,6 +3715,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2878,6 +3768,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeletedResponse"
+                },
+                "example": {
+                  "id": "file_1234567890abcdef1234567890abcdef",
+                  "deleted": true
                 }
               }
             }
@@ -2888,6 +3782,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2927,11 +3833,15 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
+          "307": {
+            "description": "Redirect to a short-lived URL for the File bytes.",
+            "headers": {
+              "Location": {
+                "description": "Short-lived URL for downloading the File.",
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
               }
             }
           },
@@ -2941,6 +3851,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -2985,6 +3907,17 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SkillResponse"
+                },
+                "example": {
+                  "id": "skill_1234567890abcdef1234567890abcdef",
+                  "type": "skill",
+                  "name": "research-brief",
+                  "description": "Guidance for producing concise, source-backed briefs.",
+                  "size_bytes": 4812,
+                  "sha256": "55e500545e0d269b3f775901c2df98b916972d7208936f2e6ff47f1c6cb477d6",
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -2995,6 +3928,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3079,6 +4024,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_SkillResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "skill_1234567890abcdef1234567890abcdef",
+                      "type": "skill",
+                      "name": "research-brief",
+                      "description": "Guidance for producing concise, source-backed briefs.",
+                      "size_bytes": 4812,
+                      "sha256": "55e500545e0d269b3f775901c2df98b916972d7208936f2e6ff47f1c6cb477d6",
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:32:00Z",
+                      "archived_at": null
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "skill_1234567890abcdef1234567890abcdef",
+                  "last_id": "skill_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -3089,6 +4052,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3133,6 +4108,17 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SkillResponse"
+                },
+                "example": {
+                  "id": "skill_1234567890abcdef1234567890abcdef",
+                  "type": "skill",
+                  "name": "research-brief",
+                  "description": "Guidance for producing concise, source-backed briefs.",
+                  "size_bytes": 4812,
+                  "sha256": "55e500545e0d269b3f775901c2df98b916972d7208936f2e6ff47f1c6cb477d6",
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -3143,6 +4129,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3195,6 +4193,17 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SkillResponse"
+                },
+                "example": {
+                  "id": "skill_1234567890abcdef1234567890abcdef",
+                  "type": "skill",
+                  "name": "research-brief",
+                  "description": "Guidance for producing concise, source-backed briefs.",
+                  "size_bytes": 4812,
+                  "sha256": "55e500545e0d269b3f775901c2df98b916972d7208936f2e6ff47f1c6cb477d6",
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -3205,6 +4214,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3246,6 +4267,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeletedResponse"
+                },
+                "example": {
+                  "id": "skill_1234567890abcdef1234567890abcdef",
+                  "deleted": true
                 }
               }
             }
@@ -3256,6 +4281,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3295,10 +4332,22 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The Skill package as a ZIP archive.",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename for the Skill package.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                },
+                "example": "<binary ZIP data>"
               }
             }
           },
@@ -3308,6 +4357,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3365,6 +4426,19 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryStoreResponse"
+                },
+                "example": {
+                  "id": "memstore_1234567890abcdef1234567890abcdef",
+                  "type": "memory_store",
+                  "name": "Content Creator",
+                  "description": "Durable brand and project context.",
+                  "metadata": {
+                    "team": "creative",
+                    "region": "global"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -3375,6 +4449,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3521,6 +4607,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryStoreListResponse"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "memstore_1234567890abcdef1234567890abcdef",
+                      "type": "memory_store",
+                      "name": "Content Creator",
+                      "description": "Durable brand and project context.",
+                      "metadata": {
+                        "team": "creative",
+                        "region": "global"
+                      },
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:32:00Z",
+                      "archived_at": null
+                    }
+                  ],
+                  "next_page": null,
+                  "has_more": false,
+                  "first_id": "memstore_1234567890abcdef1234567890abcdef",
+                  "last_id": "memstore_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -3531,6 +4638,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3575,6 +4694,19 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryStoreResponse"
+                },
+                "example": {
+                  "id": "memstore_1234567890abcdef1234567890abcdef",
+                  "type": "memory_store",
+                  "name": "Content Creator",
+                  "description": "Durable brand and project context.",
+                  "metadata": {
+                    "team": "creative",
+                    "region": "global"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -3585,6 +4717,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3649,6 +4793,19 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryStoreResponse"
+                },
+                "example": {
+                  "id": "memstore_1234567890abcdef1234567890abcdef",
+                  "type": "memory_store",
+                  "name": "Content Creator",
+                  "description": "Durable brand, asset, and active-project context.",
+                  "metadata": {
+                    "team": "content",
+                    "region": "global"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -3659,6 +4816,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3709,6 +4878,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeletedMemoryStoreResponse"
+                },
+                "example": {
+                  "id": "memstore_1234567890abcdef1234567890abcdef",
+                  "type": "memory_store_deleted"
                 }
               }
             }
@@ -3719,6 +4892,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }
@@ -3763,6 +4948,19 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryStoreResponse"
+                },
+                "example": {
+                  "id": "memstore_1234567890abcdef1234567890abcdef",
+                  "type": "memory_store",
+                  "name": "Content Creator",
+                  "description": "Durable brand and project context.",
+                  "metadata": {
+                    "team": "creative",
+                    "region": "global"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T15:00:00Z",
+                  "archived_at": "2026-08-13T15:00:00Z"
                 }
               }
             }
@@ -3773,6 +4971,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
                 }
               }
             }

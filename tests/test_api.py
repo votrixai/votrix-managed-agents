@@ -94,12 +94,11 @@ async def test_an_unknown_key_is_refused(client, org):
 
 
 async def test_naming_a_tenant_does_not_reach_it(client, org):
-    """The header is gone, and sending it anyway changes nothing.
+    """The first-party tenant header does not authenticate by itself.
 
-    Which tenant a request reaches comes off the key. A caller that could
-    state its own tenant could state anyone's, and checking the key afterwards
-    only turns that into a comparison — the same answer with one more way to
-    get it wrong.
+    API-key callers derive their tenant from the key. First-party callers must
+    pair the selected Organization with a verified bearer identity and live
+    membership.
     """
     response = await client.get(
         "/v1/sessions", headers={"x-organization-id": org}
@@ -119,11 +118,7 @@ async def test_member_user_token_reaches_only_its_organization(
         user_id="user-a",
         email="a@example.com",
     )
-    other = await organizations_q.create_organization(
-        db,
-        slug="other",
-        name="Other",
-    )
+    other = await organizations_q.create_organization(db, name="Other")
     await db.commit()
 
     async def authenticated_user(access_token: str):
@@ -220,7 +215,6 @@ async def test_api_key_tenant_wins_over_user_selected_organization(
     )
 
     assert response.status_code == 200
-
 
 async def test_a_revoked_key_stops_working(client, db, org):
     from app.db.queries import vma_api_keys as keys_q

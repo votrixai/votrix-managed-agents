@@ -82,7 +82,9 @@ async def test_provider_failure_is_persisted_for_a_retry(db, org):
 
 
 async def test_a_store_can_only_be_read_inside_its_organization(db, org):
-    other = await organizations_service.create_organization(db, keys=FakeKeys(), slug="other", name="Other")
+    other = await organizations_service.create_organization(
+        db, keys=FakeKeys(), name="Other"
+    )
     store = await memory_q.create_memory_store(
         db, organization_id=org, name="Private memory"
     )

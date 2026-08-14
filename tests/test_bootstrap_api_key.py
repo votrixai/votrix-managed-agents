@@ -25,7 +25,6 @@ async def test_bootstrap_creates_and_idempotently_reuses_management_key(
 ):
     created = await bootstrap.bootstrap_api_key(
         organization_id="org_bootstrap",
-        organization_slug="bootstrap",
         organization_name="Bootstrap",
     )
 
@@ -61,7 +60,6 @@ async def test_bootstrap_accepts_preprovisioned_key(
 
     imported = await bootstrap.bootstrap_api_key(
         organization_id="org_unified_bootstrap",
-        organization_slug="unified-bootstrap",
         organization_name="Unified bootstrap",
         api_key=secret,
     )

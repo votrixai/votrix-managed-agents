@@ -99,7 +99,27 @@ async def update_skill(
     return to_skill(skill)
 
 
-@router.get("/{skill_id}/content")
+@router.get(
+    "/{skill_id}/content",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "The Skill package as a ZIP archive.",
+            "headers": {
+                "Content-Disposition": {
+                    "description": "Attachment filename for the Skill package.",
+                    "schema": {"type": "string"},
+                }
+            },
+            "content": {
+                "application/zip": {
+                    "schema": {"type": "string", "format": "binary"},
+                    "example": "<binary ZIP data>",
+                }
+            },
+        }
+    },
+)
 async def download_skill(skill_id: str, db: Db, organization_id: OrganizationId) -> Response:
     content, content_type = await service.download_skill(
         db, skill_id=skill_id, organization_id=organization_id
