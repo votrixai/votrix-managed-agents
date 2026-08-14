@@ -6,9 +6,11 @@ from typing import Annotated, AsyncIterator
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import human_auth
 from app.config import get_settings
 from app.db.engine import get_session_factory
 from app.db.models import VmaApiKey
+from app.db.queries import organizations as organizations_q
 from app.db.queries import vma_api_keys as api_keys_q
 
 
@@ -71,9 +73,57 @@ async def authenticate(
 AuthenticatedKey = Annotated[VmaApiKey, Depends(authenticate)]
 
 
-async def get_organization_id(api_key: AuthenticatedKey) -> str:
-    """The tenant this key belongs to, which is the only tenant it can reach."""
-    return api_key.organization_id
+async def get_organization_id(
+    db: Db,
+    x_api_key: Annotated[str | None, Header()] = None,
+    authorization: Annotated[
+        str | None,
+        Header(include_in_schema=False),
+    ] = None,
+    x_organization_id: Annotated[
+        str | None,
+        Header(include_in_schema=False),
+    ] = None,
+) -> str:
+    """Resolve one trusted tenant from either supported caller identity.
+
+    API clients continue to derive their Organization exclusively from their
+    key. A first-party Console user may select an Organization only when their
+    verified Supabase user id has a matching membership row. Both paths return
+    the same tenant id consumed by every existing service and query.
+    """
+    if x_api_key:
+        return (await authenticate(db, x_api_key)).organization_id
+
+    scheme, _, access_token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not access_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing x-api-key")
+
+    organization_id = (x_organization_id or "").strip()
+    if not organization_id or len(organization_id) > 64:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Missing or invalid x-organization-id",
+        )
+
+    user = await human_auth.authenticate_user(access_token)
+    organization = await organizations_q.get_organization(
+        db,
+        organization_id=organization_id,
+    )
+    if organization is None or organization.archived_at is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Organization access denied")
+    if user.is_super_admin:
+        return organization.id
+
+    membership = await organizations_q.get_member(
+        db,
+        organization_id=organization.id,
+        user_id=user.id,
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Organization access denied")
+    return organization.id
 
 
 async def get_api_key_id(api_key: AuthenticatedKey) -> str:

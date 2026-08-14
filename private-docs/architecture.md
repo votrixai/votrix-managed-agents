@@ -107,7 +107,7 @@ repository does not imply shared authorization.
 | Tier | Paths | Audience | Authentication | Visibility and contract |
 |---|---|---|---|---|
 | Public product API | `/v1/...` on the GA allowlist in `app/public_surface.py` | SDK and API integrations | Organization API key | Filtered OpenAPI and Fumadocs; public fields, status codes, errors, IDs, and event shapes are compatibility surfaces pinned by tests |
-| First-party builder | `/v1/me/organizations` today; future first-party routes stay below `/v1/me/...` | VMA builder browser | Supabase user JWT | Excluded from OpenAPI; may evolve with `vma-developer-app` |
+| First-party builder | The same `/v1/...` resource handlers, called through the same-origin Developer Console BFF | VMA builder users | Supabase user JWT plus selected Organization, verified against live membership | User-auth headers are hidden from OpenAPI and are not an SDK contract; the browser never receives an Organization API key |
 | Hosted operator | `/internal/organizations/...` | VMA operators | Supabase superadmin JWT through `require_super_admin` | Private SOPs only; never an SDK surface |
 | Infrastructure M2M | `/internal/sessions/.../process` on the private worker service | Cloud Tasks | Cloud Run IAM/OIDC plus Session generation fencing | No public schema; changes with deployment infrastructure |
 
@@ -131,10 +131,11 @@ Rules:
 
 - Every new non-public endpoint goes under `/internal/...` or is explicitly
   excluded from OpenAPI as a first-party route.
-- Authentication tiers never cross: an Organization API key does not
-  authenticate `/internal/...` or `/v1/me/...`; a user JWT does not
-  authenticate Organization API resources under `/v1/...`; superadmin JWTs do
-  not replace worker IAM/OIDC.
+- Authentication boundaries remain explicit: an Organization API key never
+  authenticates `/internal/...`; `/v1/...` derives its tenant either from the
+  key record or from a verified Supabase user with live membership, and
+  `x-organization-id` never overrides a key tenant. Hosted operator superadmin
+  authentication and worker IAM/OIDC remain separate boundaries.
 - SDKs are generated and validated only against the filtered public OpenAPI.
 - `/internal/...` is not versioned and is never documented as a public API.
 - The public Worker's broad `/v1/...` edge allowlist does not override the
