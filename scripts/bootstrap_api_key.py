@@ -39,18 +39,12 @@ class BootstrapResult:
 async def bootstrap_api_key(
     *,
     organization_id: str,
-    organization_slug: str | None = None,
     organization_name: str | None = None,
     key_name: str = "Bootstrap admin",
     allow_additional_admin_key: bool = False,
     api_key: str | None = None,
 ) -> BootstrapResult:
     organization_id = _organization_id(organization_id)
-    organization_slug = _required_text(
-        organization_slug or organization_id,
-        "organization_slug",
-        max_length=64,
-    )
     organization_name = _required_text(
         organization_name or organization_id,
         "organization_name",
@@ -70,7 +64,6 @@ async def bootstrap_api_key(
         if organization is None:
             organization = Organization(
                 id=organization_id,
-                slug=organization_slug,
                 name=organization_name,
             )
             db.add(organization)
@@ -161,7 +154,6 @@ def _parser() -> argparse.ArgumentParser:
         description="Create the first database-backed administrator API key for one Organization."
     )
     parser.add_argument("--organization-id", required=True)
-    parser.add_argument("--organization-slug")
     parser.add_argument("--organization-name")
     parser.add_argument("--key-name", default="Bootstrap admin")
     parser.add_argument(
@@ -192,7 +184,6 @@ async def _run(args: argparse.Namespace) -> BootstrapResult:
         api_key = sys.stdin.read().strip()
     return await bootstrap_api_key(
         organization_id=args.organization_id,
-        organization_slug=args.organization_slug,
         organization_name=args.organization_name,
         key_name=args.key_name,
         allow_additional_admin_key=args.allow_additional_admin_key,

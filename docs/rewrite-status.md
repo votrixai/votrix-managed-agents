@@ -62,10 +62,11 @@ The service uses:
 
 ## Security boundary
 
-The active app is not ready for direct untrusted multi-tenant traffic.
-`x-organization-id` scopes queries but is trusted caller input. `x-api-key` is
-accepted for attribution and is not validated. Cloud Tasks callbacks are the
-exception: cloud mode verifies Google OIDC audience and service-account email.
+Public resource requests authenticate a database-backed `x-api-key`. The key
+record supplies `organization_id`, and every tenant-owned query is scoped with
+that server-derived value; callers do not submit a separate Organization ID.
+Cloud Tasks callbacks use a separate boundary: cloud mode verifies the Google
+OIDC audience and service-account email.
 
 ## Validation boundary
 
@@ -75,6 +76,6 @@ models, and PostgreSQL where required. The generated OpenAPI snapshot is
 compared against the active FastAPI app in CI, and the documentation site is
 type-checked, linted, and statically built on every pull request.
 
-Known production gaps include authentication/authorization, atomic external
-provider/database sagas, Cloud Tasks enqueue outbox recovery, complete worker
-fencing after lease expiry, and filesystem-level read-only Volume enforcement.
+Known production gaps include atomic external provider/database sagas, Cloud
+Tasks enqueue outbox recovery, complete worker fencing after lease expiry, and
+filesystem-level read-only Volume enforcement.
