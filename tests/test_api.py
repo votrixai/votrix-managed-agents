@@ -18,7 +18,7 @@ from app.main import app
 from app.db.queries import organizations as organizations_q
 from app.db.queries import vma_api_keys as api_keys_q
 from app.routers import health as health_router
-from app.routers.deps import get_db
+from app.routers.deps import get_console_principal, get_db, get_organization_id
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
 
@@ -216,6 +216,46 @@ async def test_api_key_tenant_wins_over_user_selected_organization(
     )
 
     assert response.status_code == 200
+
+
+async def test_api_key_auth_releases_its_read_transaction(db, headers, org):
+    organization_id = await get_organization_id(
+        db,
+        x_api_key=headers["x-api-key"],
+        authorization=None,
+        x_organization_id=None,
+    )
+
+    assert organization_id == org
+    assert not db.in_transaction()
+
+
+async def test_console_auth_releases_its_read_transaction(
+    db,
+    org,
+    monkeypatch,
+):
+    await organizations_q.add_member(
+        db,
+        organization_id=org,
+        user_id="stream-user",
+    )
+    await db.commit()
+
+    async def authenticated_user(_access_token: str):
+        return human_auth.AuthenticatedUser(id="stream-user", app_metadata={})
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    principal = await get_console_principal(
+        db,
+        authorization="Bearer stream-token",
+        x_organization_id=org,
+    )
+
+    assert principal.organization_id == org
+    assert principal.user_id == "stream-user"
+    assert not db.in_transaction()
+
 
 async def test_member_creates_an_api_key_that_is_returned_only_once(
     client,
