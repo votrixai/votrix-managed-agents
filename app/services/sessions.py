@@ -1135,7 +1135,13 @@ async def _attach_memory_stores(
     mounts: list[SandboxVolumeMount] = []
     seen_stores: set[str] = set()
     seen_paths: set[str] = set()
-    for resource in resources:
+    # Store rows are locked while attachment is resolved. A deterministic
+    # order prevents two multi-Store Session creations from deadlocking when
+    # callers list the same Stores in opposite orders.
+    for resource in sorted(
+        resources,
+        key=lambda item: str(item.get("memory_store_id") or ""),
+    ):
         memory_store_id = str(resource.get("memory_store_id") or "")
         if memory_store_id in seen_stores:
             raise Conflict(f"Memory Store {memory_store_id} was attached more than once")

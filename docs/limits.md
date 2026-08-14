@@ -34,6 +34,8 @@ field range returns `400` or `422`; an oversized upload returns `413`.
 | Metadata keys | 16 |
 | Metadata key | 64 characters |
 | Metadata value | 512 characters |
+| One path-addressed Memory Store file write | 100 MiB |
+| Memory Store file path | 1,024 UTF-8 bytes |
 
 ## Environments and turns
 

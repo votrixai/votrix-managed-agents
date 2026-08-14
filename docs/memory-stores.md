@@ -22,9 +22,58 @@ project state that should outlive one Session.
 }
 ```
 
-The API manages the Store itself: create, list, retrieve, update, archive, and
-delete. Its contents are read and written by an Agent from a Session sandbox;
-there are no separate HTTP endpoints for individual documents inside a Store.
+The API manages the Store itself separately from the files inside it. Store
+properties use the Store URL; path-addressed file writes use `/files/` below
+that Store.
+
+## Update Store properties
+
+Use `PATCH /v1/memory_stores/{memory_store_id}` to change the Store's display
+properties without touching its files:
+
+```json
+{
+  "name": "Editorial context",
+  "description": "Voice, audience, and current campaign facts"
+}
+```
+
+The existing `POST` form remains accepted for client compatibility. Renaming a
+Store changes the mount path derived for future Sessions; existing Sessions
+keep the name and mount path captured when they were created.
+
+## Write and delete files
+
+The part after `/files/` is the relative path inside the Store. `PUT` creates
+the file or replaces all of its bytes, creating parent directories when needed:
+
+```bash
+curl --request PUT \
+  --header "x-api-key: $VMA_API_KEY" \
+  --header "content-type: application/octet-stream" \
+  --data-binary @context.md \
+  "$VMA_API_URL/v1/memory_stores/memstore_.../files/brand/context.md"
+```
+
+The response reports the relative path, byte size, and SHA-256 digest that were
+written. Delete the same path with:
+
+```text
+DELETE /v1/memory_stores/{memory_store_id}/files/brand/context.md
+```
+
+Deletion is idempotent and returns `204`, including when the file is already
+absent. Paths must be normalized relative paths: empty, absolute, `.` and `..`
+segments, empty segments, and control characters are rejected. One file may be
+at most 100 MiB.
+
+When the Store has no live mount, VMA writes through its Volume. When it is
+already mounted, VMA writes through one idle Session's exact mount path. A file
+mutation returns `409 conflict` while any attached Session is working, avoiding
+a control-plane write racing the Agent.
+
+File listing and download are intentionally not part of this first surface.
+Agents read files through the mounted filesystem.
 
 ## Attach it to a Session
 
@@ -55,10 +104,11 @@ preserving for later.
 
 ## Update, archive, and delete
 
-- Updating a Store changes its name, description, or metadata. Existing
-  contents are unaffected.
-- Archiving prevents updates and new attachments while preserving the Store
-  for Sessions that already reference it.
+- Updating a Store changes its name, description, or metadata. Existing files
+  are unaffected; use the `/files/` routes to change them.
+- Archiving prevents Store updates, file API mutations, and new attachments
+  while preserving the Store for Sessions that already reference it. An
+  already-mounted read-write Session retains its filesystem access.
 - Deletion permanently removes a Store and is refused with `409 conflict` if
   any Session references it. Archive an attached Store instead.
 

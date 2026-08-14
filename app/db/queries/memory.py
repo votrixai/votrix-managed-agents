@@ -8,7 +8,7 @@ from typing import Any, cast
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import MemoryStore, SessionMemoryStore
+from app.db.models import MemoryStore, Session, SessionMemoryStore, SessionSandbox
 from app.db.models.memory import (
     MEMORY_VERSION_OPERATIONS,
     VOLUME_DELETED,
@@ -189,6 +189,37 @@ async def count_memory_store_attachments(
         .where(SessionMemoryStore.memory_store_id == memory_store_id)
     )
     return int(result.scalar_one())
+
+
+async def list_memory_store_mounts_for_update(
+    db: AsyncSession,
+    *,
+    memory_store_id: str,
+    organization_id: str,
+) -> list[tuple[SessionMemoryStore, Session, SessionSandbox | None]]:
+    """Lock Sessions that may currently have one Store mounted.
+
+    File mutations use a mounted Sandbox when one exists. Locking the Session
+    rows makes an idle check meaningful: a new turn cannot claim one of those
+    Sessions until the provider write has finished. The Store row is locked by
+    the service before this query, which also serializes these mutations with
+    creation-time attachment.
+    """
+
+    stmt = (
+        select(SessionMemoryStore, Session, SessionSandbox)
+        .join(Session, Session.id == SessionMemoryStore.session_id)
+        .outerjoin(SessionSandbox, SessionSandbox.session_id == Session.id)
+        .where(
+            SessionMemoryStore.memory_store_id == memory_store_id,
+            SessionMemoryStore.organization_id == organization_id,
+            Session.organization_id == organization_id,
+        )
+        .order_by(Session.id)
+        .with_for_update(of=Session)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [(row[0], row[1], row[2]) for row in rows]
 
 
 # --- Memories -------------------------------------------------------------

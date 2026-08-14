@@ -230,9 +230,7 @@ migration built from Git history. The active lineage owns:
 | `session_events` | Append-only client-visible transcript |
 | `session_files` | Fixed input File paths attached to a Session |
 | `session_sandboxes` | The one E2B sandbox bound to a Session |
-| `memory_stores` | Persistent Store metadata and provider Volume binding |
-| `memories` | Current path-addressed Memory heads |
-| `memory_versions` | Immutable Memory change history and attribution |
+| `memory_stores` | Persistent Store properties and provider Volume binding |
 | `session_memory_stores` | Creation-time Session mount snapshots |
 | `files` | File metadata and private object key |
 | `skills` | Validated Skill metadata and private archive key |

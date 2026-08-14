@@ -85,3 +85,13 @@ class MemoryStoreListResponse(ApiModel):
 class DeletedMemoryStoreResponse(ApiModel):
     id: str
     type: Literal["memory_store_deleted"] = "memory_store_deleted"
+
+
+class MemoryStoreFileResponse(ApiModel):
+    """One path-addressed file written into a Memory Store."""
+
+    type: Literal["memory_store_file"] = "memory_store_file"
+    memory_store_id: str
+    path: str
+    size_bytes: int
+    sha256: str

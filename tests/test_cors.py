@@ -120,7 +120,7 @@ async def test_an_allowed_origin_may_send_any_request_header(
 
 
 async def test_every_documented_write_method_is_preflightable(configured, http):
-    for method in ("POST", "PATCH", "DELETE"):
+    for method in ("POST", "PATCH", "PUT", "DELETE"):
         response = await _preflight(http, ALLOWED, method=method)
         assert response.status_code == 200, method
         assert method in response.headers["access-control-allow-methods"], method

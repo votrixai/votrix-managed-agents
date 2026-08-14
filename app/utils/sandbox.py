@@ -35,7 +35,7 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
-from e2b import AsyncSandbox, AsyncTemplate, CommandExitException
+from e2b import AsyncSandbox, AsyncTemplate, CommandExitException, NotFoundException
 from httpcore import LocalProtocolError
 from langchain_e2b import AsyncE2BSandbox
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -879,6 +879,15 @@ class Sandbox:
         await self.run(f"mkdir -p {shlex.quote(parent)}")
         await self.ensure_connected()
         await self._native.files.write(path, data, user=GUEST_USER)
+
+    async def remove_file(self, path: str) -> None:
+        """Remove one file through a mounted Sandbox, idempotently."""
+
+        await self.ensure_connected()
+        try:
+            await self._native.files.remove(path, user=GUEST_USER)
+        except NotFoundException:
+            return
 
     async def list_files(
         self,

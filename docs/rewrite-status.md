@@ -28,8 +28,7 @@ The active service implements:
 - Sessions, durable events, event retrieval, and resumable SSE;
 - Files and Skill archives;
 - live and end-of-turn output capture;
-- Memory Store lifecycle;
-- CMA-compatible Memories and immutable Memory Versions;
+- Memory Store lifecycle and path-addressed file writes/deletes;
 - E2B Volume-backed, creation-time Memory Store mounts.
 
 Organization, membership, and model-catalog routes remain placeholders. The
@@ -40,9 +39,10 @@ quotas, and audit/usage ledgers are not implemented.
 ## Memory runtime
 
 Each ready Memory Store owns one E2B Volume. A Session attaches the Store at
-creation and receives a native mount below `/mnt/memory/<slug>`. API writes are
-mirrored to the Volume; successful filesystem mutations and final-turn
-reconciliation index Sandbox changes into Memory heads and immutable Versions.
+creation and receives a native mount below `/mnt/memory/<slug>`. Path-addressed
+API writes use the standalone Volume API before attachment and an idle mounted
+Sandbox afterwards. The Volume is the content source of truth; there is no
+parallel relational file index or final-turn tree reconciliation.
 
 The pinned E2B SDK cannot enforce a read-only Volume mount, so the service
 rejects `read_only` attachments. See [Memory Stores](./memory-stores.md) and

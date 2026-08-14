@@ -369,6 +369,8 @@ def volumes(monkeypatch):
             self.destroy_error = None
             self.write_error = None
             self.remove_error = None
+            self.standalone_writes = []
+            self.standalone_removes = []
 
     provider = Provider()
 
@@ -394,6 +396,20 @@ def volumes(monkeypatch):
         )
         provider.files.pop(store.id, None)
 
+    async def _write_file(cls, store, path, content):
+        if provider.write_error is not None:
+            raise provider.write_error
+        provider.files[store.id][path] = bytes(content)
+        provider.standalone_writes.append((store.id, path, bytes(content)))
+
+    async def _remove_file(cls, store, path):
+        if provider.remove_error is not None:
+            raise provider.remove_error
+        provider.files[store.id].pop(path, None)
+        provider.standalone_removes.append((store.id, path))
+
     monkeypatch.setattr(Volume, "provision", classmethod(_provision))
     monkeypatch.setattr(Volume, "destroy", classmethod(_destroy))
+    monkeypatch.setattr(Volume, "write_file", classmethod(_write_file))
+    monkeypatch.setattr(Volume, "remove_file", classmethod(_remove_file))
     return provider

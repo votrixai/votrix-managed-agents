@@ -3,26 +3,54 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import MemoryStore
+from app.db.models import MemoryStore, SessionMemoryStore, SessionSandbox
 from app.db.models.memory import (
     VOLUME_DELETING,
     VOLUME_FAILED,
     VOLUME_PROVIDER_E2B,
     VOLUME_READY,
 )
+from app.db.models.sessions import (
+    IDLE,
+    SANDBOX_PAUSED,
+    SANDBOX_RUNNING,
+    TERMINATED,
+    Session,
+)
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.db.queries import memory as memory_q
-from app.models.errors import Conflict, InvalidRequest, MemoryStoreUnavailable, NotFound
+from app.models.errors import (
+    Conflict,
+    InvalidRequest,
+    MemoryStoreUnavailable,
+    NotFound,
+    PayloadTooLarge,
+)
+from app.utils.sandbox import Sandbox
 from app.utils.volume import Volume
 
 logger = structlog.get_logger(__name__)
+
+MAX_MEMORY_STORE_FILE_BYTES = 100 * 1024 * 1024
+MAX_MEMORY_STORE_FILE_PATH_BYTES = 1024
+
+
+@dataclass(frozen=True)
+class MemoryStoreFile:
+    memory_store_id: str
+    path: str
+    size_bytes: int
+    sha256: str
 
 
 def encode_page_cursor(value: str, *, kind: str) -> str:
@@ -181,6 +209,185 @@ async def update_memory_store(
     return store
 
 
+async def put_memory_store_file(
+    db: AsyncSession,
+    *,
+    memory_store_id: str,
+    organization_id: str,
+    path: str,
+    content: bytes,
+) -> MemoryStoreFile:
+    """Create or replace one file in the Store's provider filesystem."""
+
+    normalized_path = normalize_memory_store_file_path(path)
+    if len(content) > MAX_MEMORY_STORE_FILE_BYTES:
+        raise PayloadTooLarge(
+            f"Memory Store files may be at most {MAX_MEMORY_STORE_FILE_BYTES} bytes"
+        )
+    store, mounted = await _file_mutation_target(
+        db,
+        memory_store_id=memory_store_id,
+        organization_id=organization_id,
+    )
+    provider_path = f"/{normalized_path}"
+    try:
+        if mounted is None:
+            await Volume.write_file(store, provider_path, content)
+        else:
+            attachment, sandbox = mounted
+            container = Sandbox.from_id(
+                sandbox.external_sandbox_id,
+                attachment.session_id,
+                organization_id,
+            )
+            await container.write_bytes(
+                f"{attachment.mount_path}{provider_path}",
+                content,
+            )
+    except Exception as exc:
+        logger.exception(
+            "memory_store_file_write_failed",
+            memory_store_id=store.id,
+            path=normalized_path,
+        )
+        raise MemoryStoreUnavailable(
+            f"Memory Store {store.id} could not persist {normalized_path}"
+        ) from exc
+
+    # This also releases the Store and Session row locks. There is no file
+    # projection to update: the provider filesystem is the source of truth.
+    await db.commit()
+    return MemoryStoreFile(
+        memory_store_id=store.id,
+        path=normalized_path,
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+
+async def delete_memory_store_file(
+    db: AsyncSession,
+    *,
+    memory_store_id: str,
+    organization_id: str,
+    path: str,
+) -> None:
+    """Delete one file, treating an already absent path as success."""
+
+    normalized_path = normalize_memory_store_file_path(path)
+    store, mounted = await _file_mutation_target(
+        db,
+        memory_store_id=memory_store_id,
+        organization_id=organization_id,
+    )
+    provider_path = f"/{normalized_path}"
+    try:
+        if mounted is None:
+            await Volume.remove_file(store, provider_path)
+        else:
+            attachment, sandbox = mounted
+            container = Sandbox.from_id(
+                sandbox.external_sandbox_id,
+                attachment.session_id,
+                organization_id,
+            )
+            await container.remove_file(f"{attachment.mount_path}{provider_path}")
+    except Exception as exc:
+        logger.exception(
+            "memory_store_file_remove_failed",
+            memory_store_id=store.id,
+            path=normalized_path,
+        )
+        raise MemoryStoreUnavailable(
+            f"Memory Store {store.id} could not remove {normalized_path}"
+        ) from exc
+
+    await db.commit()
+
+
+def normalize_memory_store_file_path(value: str) -> str:
+    """Validate the relative path exposed after ``/files/`` in the URL."""
+
+    if not isinstance(value, str) or not value:
+        raise InvalidRequest("Memory Store file path must not be empty")
+    if value.startswith("/"):
+        raise InvalidRequest("Memory Store file path must be relative")
+    if len(value.encode("utf-8")) > MAX_MEMORY_STORE_FILE_PATH_BYTES:
+        raise InvalidRequest(
+            f"Memory Store file path must be at most {MAX_MEMORY_STORE_FILE_PATH_BYTES} bytes"
+        )
+    if unicodedata.normalize("NFC", value) != value:
+        raise InvalidRequest("Memory Store file path must be NFC-normalized")
+
+    parts = value.split("/")
+    if any(part == "" for part in parts):
+        raise InvalidRequest("Memory Store file path must not contain empty segments")
+    if any(part in {".", ".."} for part in parts):
+        raise InvalidRequest("Memory Store file path must not contain '.' or '..' segments")
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf"}
+        for part in parts
+        for character in part
+    ):
+        raise InvalidRequest(
+            "Memory Store file path must not contain control or format characters"
+        )
+    return value
+
+
+async def _file_mutation_target(
+    db: AsyncSession,
+    *,
+    memory_store_id: str,
+    organization_id: str,
+) -> tuple[
+    MemoryStore,
+    tuple[SessionMemoryStore, SessionSandbox] | None,
+]:
+    """Choose the provider API that is valid for the Store's mount state.
+
+    E2B's standalone Volume content API is for unmounted Volumes. If a usable
+    mount exists, mutate through that Sandbox instead. Session rows stay locked
+    through the provider call so an idle Session cannot begin a turn midway
+    through the external write.
+    """
+
+    store = await memory_q.get_memory_store(
+        db,
+        memory_store_id=memory_store_id,
+        organization_id=organization_id,
+        for_update=True,
+    )
+    if store is None or store.provisioning_status != VOLUME_READY:
+        raise NotFound(f"Memory Store {memory_store_id} not found")
+    if store.archived_at is not None:
+        raise Conflict("Archived Memory Stores are read-only")
+
+    mounts = await memory_q.list_memory_store_mounts_for_update(
+        db,
+        memory_store_id=store.id,
+        organization_id=organization_id,
+    )
+    busy = [
+        session.id
+        for _, session, _ in mounts
+        if session.status not in (IDLE, TERMINATED)
+    ]
+    if busy:
+        raise Conflict(
+            f"Memory Store {store.id} is mounted by a busy Session; retry when it is idle"
+        )
+
+    for attachment, _, sandbox in mounts:
+        if (
+            sandbox is not None
+            and sandbox.external_sandbox_id
+            and sandbox.state in (SANDBOX_RUNNING, SANDBOX_PAUSED)
+        ):
+            return store, (attachment, sandbox)
+    return store, None
+
+
 async def archive_memory_store(
     db: AsyncSession,
     *,
@@ -245,11 +452,17 @@ async def require_attachable(
     memory_store_id: str,
     organization_id: str,
 ) -> MemoryStore:
-    store = await get_memory_store(
+    # This lock serializes first attachment with standalone Volume file
+    # mutations. Once the attachment row commits, later mutations go through
+    # the mounted Sandbox instead.
+    store = await memory_q.get_memory_store(
         db,
         memory_store_id=memory_store_id,
         organization_id=organization_id,
+        for_update=True,
     )
+    if store is None or store.provisioning_status != VOLUME_READY:
+        raise NotFound(f"Memory Store {memory_store_id} not found")
     if store.archived_at is not None:
         raise Conflict(f"Memory Store {store.id} is archived")
     if store.volume_provider != VOLUME_PROVIDER_E2B:
@@ -264,11 +477,17 @@ def _provider_error(exc: Exception) -> str:
 
 
 __all__ = [
+    "MAX_MEMORY_STORE_FILE_BYTES",
+    "MAX_MEMORY_STORE_FILE_PATH_BYTES",
+    "MemoryStoreFile",
     "archive_memory_store",
     "create_memory_store",
+    "delete_memory_store_file",
     "delete_memory_store",
     "get_memory_store",
     "list_memory_stores",
+    "normalize_memory_store_file_path",
+    "put_memory_store_file",
     "require_attachable",
     "update_memory_store",
 ]

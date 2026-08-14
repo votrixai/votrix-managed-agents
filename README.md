@@ -210,7 +210,8 @@ The rewrite owns these relational tables:
 - `agents` and `agent_versions`
 - `environments`
 - `sessions`, `session_events`, `session_files`, and `session_sandboxes`
-- `memory_stores`, `memories`, `memory_versions`, and `session_memory_stores`
+- `memory_stores` and `session_memory_stores`; file bytes live in provider
+  Volumes rather than a parallel relational projection
 - `files`
 - `skills`
 

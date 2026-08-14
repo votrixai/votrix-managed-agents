@@ -72,6 +72,7 @@ PARAMETER_DESCRIPTIONS = {
     "expected_content_sha256": (
         "Expected current SHA-256 digest used as the Memory delete precondition."
     ),
+    "file_path": "Relative path of one file inside the Memory Store.",
     "include_archived": "Include archived resources in the result.",
     "limit": "Maximum number of records returned in this page.",
     "memory_id": "Only return Versions belonging to this Memory.",
@@ -115,6 +116,7 @@ PARAMETER_EXAMPLES = {
     "environment_id": ENVIRONMENT_ID_EXAMPLE,
     "event_id": EVENT_ID_EXAMPLE,
     "file_id": FILE_ID_EXAMPLE,
+    "file_path": "brand/context.md",
     "limit": 20,
     "memory_id": "mem_1234567890abcdef1234567890abcdef",
     "memory_store_id": MEMORY_STORE_ID_EXAMPLE,
@@ -428,6 +430,14 @@ VALIDATION_ERROR_EXAMPLE = {
     ]
 }
 
+MEMORY_STORE_FILE_EXAMPLE = {
+    "type": "memory_store_file",
+    "memory_store_id": MEMORY_STORE_ID_EXAMPLE,
+    "path": "brand/context.md",
+    "size_bytes": 42,
+    "sha256": "9d5e3ecdeb4cdb7acfd63075ae046672f75a0a756c9fe6dc6e7af54d719949f3",
+}
+
 REQUEST_COMPONENT_EXAMPLES = {
     "AccountCreateRequest": {
         "name": "Website Builder",
@@ -574,6 +584,7 @@ RESPONSE_COMPONENT_EXAMPLES = {
     "AgentMessageEvent": AGENT_MESSAGE_EVENT_EXAMPLE,
     "SessionStatusRunningEvent": SESSION_RUNNING_EVENT_EXAMPLE,
     "SessionStatusIdleEvent": SESSION_IDLE_EVENT_EXAMPLE,
+    "MemoryStoreFileResponse": MEMORY_STORE_FILE_EXAMPLE,
     "HTTPValidationError": VALIDATION_ERROR_EXAMPLE,
 }
 
@@ -664,6 +675,24 @@ OPERATION_DESCRIPTIONS = {
     ("post", "/v1/agents/{agent_id}"): (
         "Change only the supplied Agent fields and return the resulting version."
     ),
+    ("patch", "/v1/memory_stores/{memory_store_id}"): (
+        "Change only the supplied Memory Store name, description, or custom "
+        "metadata. Existing files are unchanged."
+    ),
+    ("post", "/v1/memory_stores/{memory_store_id}"): (
+        "Compatibility form of the Memory Store property update. Existing "
+        "files are unchanged."
+    ),
+    ("put", "/v1/memory_stores/{memory_store_id}/files/{file_path}"): (
+        "Create or replace one path-addressed Memory Store file with the raw "
+        "request bytes. Parent directories are created when needed. The "
+        "request returns `409` while an attached Session is working."
+    ),
+    ("delete", "/v1/memory_stores/{memory_store_id}/files/{file_path}"): (
+        "Delete one path-addressed Memory Store file. Deletion is idempotent, "
+        "so an already absent file also returns `204`. The request returns "
+        "`409` while an attached Session is working."
+    ),
     ("post", "/v1/sessions/{session_id}/events"): (
         "Add client events to a Session. A new message is refused with `409` "
         "while the Agent is working; an interrupt is accepted during a turn."
@@ -718,6 +747,16 @@ OPERATION_DESCRIPTIONS = {
 }
 
 OPERATION_SUCCESS_RESPONSES = {
+    ("put", "/v1/memory_stores/{memory_store_id}/files/{file_path}"): (
+        "200",
+        "The path, measured byte size, and SHA-256 digest that were written.",
+        MEMORY_STORE_FILE_EXAMPLE,
+    ),
+    ("delete", "/v1/memory_stores/{memory_store_id}/files/{file_path}"): (
+        "204",
+        "The file is absent. The response has no body.",
+        None,
+    ),
     ("post", "/v1/accounts"): (
         "201",
         "The new Account, active and ready to be assigned to a Session.",
@@ -848,6 +887,9 @@ COMPONENT_DESCRIPTIONS = {
     "MemoryStoreResource": (
         "A Memory Store attached when a Session is created."
     ),
+    "MemoryStoreFileResponse": (
+        "The measured result of creating or replacing one Memory Store file."
+    ),
     "UserCustomToolResultInput": (
         "The result returned by your application for a custom tool request."
     ),
@@ -866,6 +908,21 @@ PROPERTY_DESCRIPTIONS = {
     ("AccountResponse", "type"): "Resource type. Always `account`.",
     ("AccountResponse", "organization_id"): (
         "The Organization that owns this Account."
+    ),
+    ("MemoryStoreFileResponse", "type"): (
+        "Resource type. Always `memory_store_file`."
+    ),
+    ("MemoryStoreFileResponse", "memory_store_id"): (
+        "The Memory Store whose filesystem contains this path."
+    ),
+    ("MemoryStoreFileResponse", "path"): (
+        "Normalized relative path inside the Memory Store."
+    ),
+    ("MemoryStoreFileResponse", "size_bytes"): (
+        "Number of bytes accepted by the successful write."
+    ),
+    ("MemoryStoreFileResponse", "sha256"): (
+        "Lowercase SHA-256 digest of the accepted bytes."
     ),
     ("AccountResponse", "name"): "The Account's display name.",
     ("AccountResponse", "status"): (

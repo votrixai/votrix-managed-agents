@@ -13,6 +13,9 @@ operator-provisioned Organization platform funding.
 
 ### Added
 
+- Path-addressed Memory Store file mutation endpoints: raw-byte `PUT` creates
+  or replaces a file and idempotent `DELETE` removes it. Writes use an idle
+  mounted Session when present and the standalone Volume API otherwise.
 - Database-backed Organization API keys with one-time plaintext create/rotate
   responses, hashes at rest, expiration, independent revocation, last-used
   tracking, replacement links, and `api`, `api_keys:manage`, and `worker`

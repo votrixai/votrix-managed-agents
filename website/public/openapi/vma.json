@@ -4736,6 +4736,113 @@
         },
         "description": "Retrieve Memory Store for your Organization."
       },
+      "patch": {
+        "tags": [
+          "memory-stores"
+        ],
+        "summary": "Update Memory Store",
+        "operationId": "update_memory_store_v1_memory_stores__memory_store_id__patch",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryStoreUpdateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "description": "Durable brand, asset, and active-project context.",
+                    "metadata": {
+                      "team": "content"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreResponse"
+                },
+                "example": {
+                  "id": "memstore_1234567890abcdef1234567890abcdef",
+                  "type": "memory_store",
+                  "name": "Content Creator",
+                  "description": "Durable brand and project context.",
+                  "metadata": {
+                    "team": "creative",
+                    "region": "global"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z",
+                  "archived_at": null
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Change only the supplied Memory Store name, description, or custom metadata. Existing files are unchanged.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"description\": \"Durable brand, asset, and active-project context.\",\n  \"metadata\": {\n    \"team\": \"content\"\n  }\n}"
+          }
+        ]
+      },
       "post": {
         "tags": [
           "memory-stores"
@@ -4833,7 +4940,7 @@
             }
           }
         },
-        "description": "Update Memory Store for your Organization.",
+        "description": "Compatibility form of the Memory Store property update. Existing files are unchanged.",
         "x-codeSamples": [
           {
             "id": "request-json",
@@ -4989,6 +5096,173 @@
           }
         },
         "description": "Archive Memory Store for your Organization."
+      }
+    },
+    "/v1/memory_stores/{memory_store_id}/files/{file_path}": {
+      "put": {
+        "tags": [
+          "memory-stores"
+        ],
+        "summary": "Put Memory Store File",
+        "operationId": "put_memory_store_file_v1_memory_stores__memory_store_id__files__file_path__put",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "file_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Relative path of the file inside the Memory Store."
+            },
+            "description": "Relative path of the file inside the Memory Store.",
+            "example": "brand/context.md"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "application/octet-stream",
+                "description": "Raw bytes that create or replace the file.",
+                "title": "Content"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The path, measured byte size, and SHA-256 digest that were written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryStoreFileResponse"
+                },
+                "example": {
+                  "type": "memory_store_file",
+                  "memory_store_id": "memstore_1234567890abcdef1234567890abcdef",
+                  "path": "brand/context.md",
+                  "size_bytes": 42,
+                  "sha256": "9d5e3ecdeb4cdb7acfd63075ae046672f75a0a756c9fe6dc6e7af54d719949f3"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Create or replace one path-addressed Memory Store file with the raw request bytes. Parent directories are created when needed. The request returns `409` while an attached Session is working."
+      },
+      "delete": {
+        "tags": [
+          "memory-stores"
+        ],
+        "summary": "Delete Memory Store File",
+        "operationId": "delete_memory_store_file_v1_memory_stores__memory_store_id__files__file_path__delete",
+        "parameters": [
+          {
+            "name": "memory_store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the memory store addressed by this request.",
+            "example": "memstore_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "file_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Relative path of the file inside the Memory Store."
+            },
+            "description": "Relative path of the file inside the Memory Store.",
+            "example": "brand/context.md"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The file is absent. The response has no body."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Delete one path-addressed Memory Store file. Deletion is idempotent, so an already absent file also returns `204`. The request returns `409` while an attached Session is working."
       }
     }
   },
@@ -6676,6 +6950,42 @@
           "name"
         ],
         "title": "MemoryStoreCreateRequest"
+      },
+      "MemoryStoreFileResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "memory_store_file",
+            "default": "memory_store_file",
+            "description": "Resource type. Always `memory_store_file`."
+          },
+          "memory_store_id": {
+            "type": "string",
+            "description": "The Memory Store whose filesystem contains this path."
+          },
+          "path": {
+            "type": "string",
+            "description": "Normalized relative path inside the Memory Store."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "description": "Number of bytes accepted by the successful write."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Lowercase SHA-256 digest of the accepted bytes."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "memory_store_id",
+          "path",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "MemoryStoreFileResponse",
+        "description": "The measured result of creating or replacing one Memory Store file."
       },
       "MemoryStoreListResponse": {
         "properties": {

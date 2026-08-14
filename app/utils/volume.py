@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
-from e2b import AsyncVolume
+from e2b import AsyncVolume, NotFoundException
 
 from app.config import get_settings
 from app.db.models import MemoryStore
 from app.db.models.memory import VOLUME_PROVIDER_E2B
+
+# E2B's base Sandbox runs application code as ``user`` (1000:1000), while
+# standalone Volume writes default to root ownership. Keep API-created paths
+# writable after the same Volume is mounted into a Sandbox.
+E2B_GUEST_UID = 1000
+E2B_GUEST_GID = 1000
 
 
 class InvalidVolumeBinding(ValueError):
@@ -63,6 +70,43 @@ class Volume:
         # our delete saga: retrying a completed provider side effect must be a
         # no-op rather than a new failure.
         await AsyncVolume.destroy(volume_id, api_key=settings.e2b_api_key)
+
+    @classmethod
+    async def write_file(cls, store: MemoryStore, path: str, content: bytes) -> None:
+        """Write bytes through E2B's standalone Volume content API.
+
+        The service layer calls this only when no usable Sandbox mount exists.
+        E2B documents standalone content methods for unmounted Volumes.
+        """
+
+        native = await cls._connect(store)
+        parent = str(PurePosixPath(path).parent)
+        if parent != "/":
+            await native.make_dir(
+                parent,
+                uid=E2B_GUEST_UID,
+                gid=E2B_GUEST_GID,
+                mode=0o755,
+                force=True,
+            )
+        await native.write_file(
+            path,
+            content,
+            uid=E2B_GUEST_UID,
+            gid=E2B_GUEST_GID,
+            mode=0o644,
+            force=True,
+        )
+
+    @classmethod
+    async def remove_file(cls, store: MemoryStore, path: str) -> None:
+        """Remove one Volume file; an absent path is already the desired state."""
+
+        native = await cls._connect(store)
+        try:
+            await native.remove(path)
+        except NotFoundException:
+            return
 
     @classmethod
     def mount(cls, store: MemoryStore, mount_path: str) -> SandboxVolumeMount:

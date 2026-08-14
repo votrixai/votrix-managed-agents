@@ -64,6 +64,59 @@ async def test_volume_lifecycle_uses_a_deterministic_name_and_stable_id(
         ("create", "vma-staging-us-memstore-abc123", "e2b-test-key"),
         ("destroy", "vol_123", "e2b-test-key"),
     ]
+
+
+async def test_unmounted_file_mutations_connect_by_stable_volume_id(
+    monkeypatch, e2b_settings
+):
+    calls = []
+
+    class NativeVolume:
+        @staticmethod
+        async def connect(volume_id, **options):
+            calls.append(("connect", volume_id, options["api_key"]))
+            return NativeVolume()
+
+        async def make_dir(self, path, **options):
+            calls.append(("make_dir", path, options))
+
+        async def write_file(self, path, content, **options):
+            calls.append(("write_file", path, bytes(content), options))
+
+        async def remove(self, path):
+            calls.append(("remove", path))
+
+    monkeypatch.setattr(volume_utils, "AsyncVolume", NativeVolume)
+    store = SimpleNamespace(
+        id="memstore_abc123",
+        volume_provider="e2b",
+        volume_locator={
+            "volume_id": "vol_123",
+            "volume_name": "vma-staging-us-memstore-abc123",
+        },
+    )
+
+    await Volume.write_file(store, "/notes/context.md", b"durable")
+    await Volume.remove_file(store, "/notes/context.md")
+
+    assert calls == [
+        ("connect", "vol_123", "e2b-test-key"),
+        (
+            "make_dir",
+            "/notes",
+            {"uid": 1000, "gid": 1000, "mode": 0o755, "force": True},
+        ),
+        (
+            "write_file",
+            "/notes/context.md",
+            b"durable",
+            {"uid": 1000, "gid": 1000, "mode": 0o644, "force": True},
+        ),
+        ("connect", "vol_123", "e2b-test-key"),
+        ("remove", "/notes/context.md"),
+    ]
+
+
 async def test_sandbox_creation_passes_native_mount_path_to_volume_name_mapping(
     db, session, monkeypatch, e2b_settings
 ):
