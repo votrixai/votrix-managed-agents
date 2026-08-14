@@ -142,15 +142,62 @@ ACCOUNT_USAGE_EXAMPLE = {
     "limit_usd": "20.00",
     "limit_remaining_usd": "11.60",
 }
+AGENT_ACTIVE_EXAMPLE = {
+    "id": AGENT_ID_EXAMPLE,
+    "type": "agent",
+    "name": "Research Assistant",
+    "version": 1,
+    "model": {"id": "claude-sonnet-5"},
+    "system": (
+        "Research the topic carefully and save the final brief in "
+        "outputs/brief.md."
+    ),
+    "description": "Creates concise, source-backed research briefs.",
+    "tools": [],
+    "mcp_servers": [],
+    "skills": [],
+    "multiagent": None,
+    "metadata": {"team": "research"},
+    "created_at": "2026-08-13T14:30:00Z",
+    "updated_at": "2026-08-13T14:30:00Z",
+    "archived_at": None,
+}
+AGENT_VERSION_EXAMPLE = {
+    "id": "av_1234567890abcdef1234567890abcdef",
+    "type": "agent_version",
+    "agent_id": AGENT_ID_EXAMPLE,
+    "version": 1,
+    "name": "Research Assistant",
+    "model": {"id": "claude-sonnet-5"},
+    "system": AGENT_ACTIVE_EXAMPLE["system"],
+    "description": AGENT_ACTIVE_EXAMPLE["description"],
+    "tools": [],
+    "mcp_servers": [],
+    "skills": [],
+    "multiagent": None,
+    "metadata": {"team": "research"},
+    "runtime": {},
+    "created_at": "2026-08-13T14:30:00Z",
+}
+AGENT_LIST_EXAMPLE = {
+    "data": [AGENT_ACTIVE_EXAMPLE],
+    "has_more": False,
+    "first_id": AGENT_ID_EXAMPLE,
+    "last_id": AGENT_ID_EXAMPLE,
+}
+AGENT_VERSION_LIST_EXAMPLE = {
+    "data": [AGENT_VERSION_EXAMPLE],
+    "has_more": False,
+    "first_id": AGENT_VERSION_EXAMPLE["id"],
+    "last_id": AGENT_VERSION_EXAMPLE["id"],
+}
 
-COMPONENT_EXAMPLES = {
+REQUEST_COMPONENT_EXAMPLES = {
     "AccountCreateRequest": {
         "name": "Website Builder",
         "limit_usd": "20.00",
         "idempotency_key": "create-website-builder-account",
     },
-    "AccountResponse": ACCOUNT_ACTIVE_EXAMPLE,
-    "AccountUsageResponse": ACCOUNT_USAGE_EXAMPLE,
     "AgentCreateRequest": {
         "name": "Research Assistant",
         "model": "claude-sonnet-5",
@@ -222,6 +269,18 @@ COMPONENT_EXAMPLES = {
         "title": "Q3 market research brief",
     },
     "SessionUpdateRequest": {"title": "Q3 market research brief — revised"},
+}
+
+# Response examples belong to the response Media Type Object, not inside a
+# reusable JSON Schema. Some browser-side schema resolvers interpret an `id`
+# key anywhere below a Schema Object as a schema URI. Embedding API payloads
+# such as {"model": {"id": "claude-sonnet-5"}} in component schemas can then
+# produce a duplicate-schema-URI crash when the example is repeated.
+RESPONSE_COMPONENT_EXAMPLES = {
+    "AgentResponse": AGENT_ACTIVE_EXAMPLE,
+    "AgentVersionResponse": AGENT_VERSION_EXAMPLE,
+    "ListResponse_AgentResponse_": AGENT_LIST_EXAMPLE,
+    "ListResponse_AgentVersionResponse_": AGENT_VERSION_LIST_EXAMPLE,
 }
 
 
@@ -552,8 +611,15 @@ def _enrich_parameter(parameter: dict[str, Any]) -> None:
 def _remove_descriptions(value: Any) -> None:
     if isinstance(value, dict):
         value.pop("description", None)
-        for child in value.values():
-            _remove_descriptions(child)
+        for key, child in value.items():
+            if key == "properties" and isinstance(child, dict):
+                # `description` may be a real API field name. Only remove the
+                # JSON Schema annotation from each property's schema; never
+                # remove an entry from the properties map itself.
+                for property_schema in child.values():
+                    _remove_descriptions(property_schema)
+            else:
+                _remove_descriptions(child)
     elif isinstance(value, list):
         for child in value:
             _remove_descriptions(child)
@@ -567,13 +633,6 @@ def _enrich_component_schemas(schema: dict[str, Any]) -> None:
         _remove_descriptions(component)
         if name in COMPONENT_DESCRIPTIONS:
             component["description"] = COMPONENT_DESCRIPTIONS[name]
-        if name in COMPONENT_EXAMPLES:
-            example = COMPONENT_EXAMPLES[name]
-            # OpenAPI 3.1 Schema Objects use the JSON Schema `examples` array.
-            # Keep the singular form as well for viewers that still implement
-            # the older OpenAPI convention.
-            component.setdefault("example", deepcopy(example))
-            component.setdefault("examples", [deepcopy(example)])
         for property_name, property_schema in component.get("properties", {}).items():
             if isinstance(property_schema, dict):
                 # The field name is already visible in Fumadocs. Repeating the
@@ -584,7 +643,9 @@ def _enrich_component_schemas(schema: dict[str, Any]) -> None:
                     property_schema["description"] = description
 
 
-def _component_example_for_media(media: dict[str, Any]) -> Any | None:
+def _component_example_for_media(
+    media: dict[str, Any], examples: dict[str, Any]
+) -> Any | None:
     media_schema = media.get("schema")
     if not isinstance(media_schema, dict):
         return None
@@ -592,7 +653,7 @@ def _component_example_for_media(media: dict[str, Any]) -> Any | None:
     prefix = "#/components/schemas/"
     if not isinstance(reference, str) or not reference.startswith(prefix):
         return None
-    return COMPONENT_EXAMPLES.get(reference.removeprefix(prefix))
+    return examples.get(reference.removeprefix(prefix))
 
 
 def _enrich_request_examples(operation: dict[str, Any]) -> None:
@@ -603,7 +664,7 @@ def _enrich_request_examples(operation: dict[str, Any]) -> None:
     media = request_body.get("content", {}).get("application/json")
     if not isinstance(media, dict):
         return
-    example = _component_example_for_media(media)
+    example = _component_example_for_media(media, REQUEST_COMPONENT_EXAMPLES)
     if example is None:
         return
 
@@ -632,6 +693,19 @@ def _enrich_request_examples(operation: dict[str, Any]) -> None:
                 "source": json.dumps(example, indent=2, ensure_ascii=False),
             }
         )
+
+
+def _enrich_response_examples(operation: dict[str, Any]) -> None:
+    """Attach payload examples at the OpenAPI media layer, outside schemas."""
+    for response in operation.get("responses", {}).values():
+        if not isinstance(response, dict):
+            continue
+        media = response.get("content", {}).get("application/json")
+        if not isinstance(media, dict) or "example" in media or "examples" in media:
+            continue
+        example = _component_example_for_media(media, RESPONSE_COMPONENT_EXAMPLES)
+        if example is not None:
+            media["example"] = deepcopy(example)
 
 
 def _operation_description(operation: dict[str, Any]) -> str:
@@ -722,6 +796,7 @@ def build_documentation_schema(*, server_url: str) -> dict[str, Any]:
                 path=path,
                 operation=operation,
             )
+            _enrich_response_examples(operation)
             _enrich_request_examples(operation)
             for parameter in operation.get("parameters", []):
                 if isinstance(parameter, dict):

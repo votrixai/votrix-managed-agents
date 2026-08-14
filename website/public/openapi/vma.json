@@ -502,6 +502,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentResponse"
+                },
+                "example": {
+                  "id": "agent_1234567890abcdef1234567890abcdef",
+                  "type": "agent",
+                  "name": "Research Assistant",
+                  "version": 1,
+                  "model": {
+                    "id": "claude-sonnet-5"
+                  },
+                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "description": "Creates concise, source-backed research briefs.",
+                  "tools": [],
+                  "mcp_servers": [],
+                  "skills": [],
+                  "multiagent": null,
+                  "metadata": {
+                    "team": "research"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -641,6 +662,34 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_AgentResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "agent_1234567890abcdef1234567890abcdef",
+                      "type": "agent",
+                      "name": "Research Assistant",
+                      "version": 1,
+                      "model": {
+                        "id": "claude-sonnet-5"
+                      },
+                      "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                      "description": "Creates concise, source-backed research briefs.",
+                      "tools": [],
+                      "mcp_servers": [],
+                      "skills": [],
+                      "multiagent": null,
+                      "metadata": {
+                        "team": "research"
+                      },
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:30:00Z",
+                      "archived_at": null
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "agent_1234567890abcdef1234567890abcdef",
+                  "last_id": "agent_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -738,6 +787,34 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse_AgentVersionResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "av_1234567890abcdef1234567890abcdef",
+                      "type": "agent_version",
+                      "agent_id": "agent_1234567890abcdef1234567890abcdef",
+                      "version": 1,
+                      "name": "Research Assistant",
+                      "model": {
+                        "id": "claude-sonnet-5"
+                      },
+                      "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                      "description": "Creates concise, source-backed research briefs.",
+                      "tools": [],
+                      "mcp_servers": [],
+                      "skills": [],
+                      "multiagent": null,
+                      "metadata": {
+                        "team": "research"
+                      },
+                      "runtime": {},
+                      "created_at": "2026-08-13T14:30:00Z"
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "av_1234567890abcdef1234567890abcdef",
+                  "last_id": "av_1234567890abcdef1234567890abcdef"
                 }
               }
             }
@@ -809,6 +886,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentResponse"
+                },
+                "example": {
+                  "id": "agent_1234567890abcdef1234567890abcdef",
+                  "type": "agent",
+                  "name": "Research Assistant",
+                  "version": 1,
+                  "model": {
+                    "id": "claude-sonnet-5"
+                  },
+                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "description": "Creates concise, source-backed research briefs.",
+                  "tools": [],
+                  "mcp_servers": [],
+                  "skills": [],
+                  "multiagent": null,
+                  "metadata": {
+                    "team": "research"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -884,6 +982,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentResponse"
+                },
+                "example": {
+                  "id": "agent_1234567890abcdef1234567890abcdef",
+                  "type": "agent",
+                  "name": "Research Assistant",
+                  "version": 1,
+                  "model": {
+                    "id": "claude-sonnet-5"
+                  },
+                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "description": "Creates concise, source-backed research briefs.",
+                  "tools": [],
+                  "mcp_servers": [],
+                  "skills": [],
+                  "multiagent": null,
+                  "metadata": {
+                    "team": "research"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -967,6 +1086,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentResponse"
+                },
+                "example": {
+                  "id": "agent_1234567890abcdef1234567890abcdef",
+                  "type": "agent",
+                  "name": "Research Assistant",
+                  "version": 1,
+                  "model": {
+                    "id": "claude-sonnet-5"
+                  },
+                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "description": "Creates concise, source-backed research briefs.",
+                  "tools": [],
+                  "mcp_servers": [],
+                  "skills": [],
+                  "multiagent": null,
+                  "metadata": {
+                    "team": "research"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -1028,6 +1168,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentResponse"
+                },
+                "example": {
+                  "id": "agent_1234567890abcdef1234567890abcdef",
+                  "type": "agent",
+                  "name": "Research Assistant",
+                  "version": 1,
+                  "model": {
+                    "id": "claude-sonnet-5"
+                  },
+                  "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+                  "description": "Creates concise, source-backed research briefs.",
+                  "tools": [],
+                  "mcp_servers": [],
+                  "skills": [],
+                  "multiagent": null,
+                  "metadata": {
+                    "team": "research"
+                  },
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z",
+                  "archived_at": null
                 }
               }
             }
@@ -3665,19 +3826,7 @@
           "name"
         ],
         "title": "AccountCreateRequest",
-        "description": "The public fields accepted when creating an additional Account.",
-        "example": {
-          "name": "Website Builder",
-          "limit_usd": "20.00",
-          "idempotency_key": "create-website-builder-account"
-        },
-        "examples": [
-          {
-            "name": "Website Builder",
-            "limit_usd": "20.00",
-            "idempotency_key": "create-website-builder-account"
-          }
-        ]
+        "description": "The public fields accepted when creating an additional Account."
       },
       "AccountResponse": {
         "properties": {
@@ -3735,27 +3884,7 @@
           "is_default"
         ],
         "title": "AccountResponse",
-        "description": "An Account's identity, readiness, default role, and optional spending limit.",
-        "example": {
-          "id": "acct_1234567890abcdef1234567890abcdef",
-          "type": "account",
-          "organization_id": "org_1234567890abcdef1234567890abcdef",
-          "name": "Website Builder",
-          "status": "active",
-          "is_default": false,
-          "limit_usd": "20.00"
-        },
-        "examples": [
-          {
-            "id": "acct_1234567890abcdef1234567890abcdef",
-            "type": "account",
-            "organization_id": "org_1234567890abcdef1234567890abcdef",
-            "name": "Website Builder",
-            "status": "active",
-            "is_default": false,
-            "limit_usd": "20.00"
-          }
-        ]
+        "description": "An Account's identity, readiness, default role, and optional spending limit."
       },
       "AccountUsageResponse": {
         "properties": {
@@ -3824,29 +3953,7 @@
           "usage_monthly_usd"
         ],
         "title": "AccountUsageResponse",
-        "description": "A current USD usage snapshot for one Account.",
-        "example": {
-          "account_id": "acct_1234567890abcdef1234567890abcdef",
-          "type": "account_usage",
-          "usage_usd": "8.40",
-          "usage_daily_usd": "0.75",
-          "usage_weekly_usd": "3.10",
-          "usage_monthly_usd": "8.40",
-          "limit_usd": "20.00",
-          "limit_remaining_usd": "11.60"
-        },
-        "examples": [
-          {
-            "account_id": "acct_1234567890abcdef1234567890abcdef",
-            "type": "account_usage",
-            "usage_usd": "8.40",
-            "usage_daily_usd": "0.75",
-            "usage_weekly_usd": "3.10",
-            "usage_monthly_usd": "8.40",
-            "limit_usd": "20.00",
-            "limit_remaining_usd": "11.60"
-          }
-        ]
+        "description": "A current USD usage snapshot for one Account."
       },
       "AgentCreateRequest": {
         "properties": {
@@ -3867,6 +3974,16 @@
             ]
           },
           "system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -3923,27 +4040,7 @@
           "name",
           "model"
         ],
-        "title": "AgentCreateRequest",
-        "example": {
-          "name": "Research Assistant",
-          "model": "claude-sonnet-5",
-          "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
-          "description": "Creates concise, source-backed research briefs.",
-          "metadata": {
-            "team": "research"
-          }
-        },
-        "examples": [
-          {
-            "name": "Research Assistant",
-            "model": "claude-sonnet-5",
-            "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
-            "description": "Creates concise, source-backed research briefs.",
-            "metadata": {
-              "team": "research"
-            }
-          }
-        ]
+        "title": "AgentCreateRequest"
       },
       "AgentCustomToolUseEvent": {
         "properties": {
@@ -4039,6 +4136,16 @@
             "type": "object"
           },
           "system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4276,6 +4383,16 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tools": {
             "anyOf": [
               {
@@ -4354,23 +4471,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "AgentUpdateRequest",
-        "example": {
-          "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
-          "metadata": {
-            "team": "research",
-            "reviewed": true
-          }
-        },
-        "examples": [
-          {
-            "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
-            "metadata": {
-              "team": "research",
-              "reviewed": true
-            }
-          }
-        ]
+        "title": "AgentUpdateRequest"
       },
       "AgentVersionResponse": {
         "properties": {
@@ -4396,6 +4497,16 @@
             "type": "object"
           },
           "system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4467,6 +4578,16 @@
           "file": {
             "type": "string",
             "contentMediaType": "application/octet-stream"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -4489,6 +4610,16 @@
             ]
           },
           "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -4592,6 +4723,16 @@
             "maxLength": 255,
             "minLength": 1
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "config": {
             "$ref": "#/components/schemas/EnvironmentConfig"
           }
@@ -4601,37 +4742,7 @@
         "required": [
           "name"
         ],
-        "title": "EnvironmentCreateRequest",
-        "example": {
-          "name": "Data Analysis Workspace",
-          "description": "A sandbox with common data-analysis packages.",
-          "config": {
-            "packages": {
-              "pip": [
-                "pandas==2.2.3",
-                "openpyxl==3.1.5"
-              ]
-            },
-            "cpu": 2,
-            "memory_mb": 2048
-          }
-        },
-        "examples": [
-          {
-            "name": "Data Analysis Workspace",
-            "description": "A sandbox with common data-analysis packages.",
-            "config": {
-              "packages": {
-                "pip": [
-                  "pandas==2.2.3",
-                  "openpyxl==3.1.5"
-                ]
-              },
-              "cpu": 2,
-              "memory_mb": 2048
-            }
-          }
-        ]
+        "title": "EnvironmentCreateRequest"
       },
       "EnvironmentResponse": {
         "properties": {
@@ -4645,6 +4756,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "config": {
             "$ref": "#/components/schemas/EnvironmentConfig"
@@ -4708,6 +4829,16 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "config": {
             "anyOf": [
               {
@@ -4721,35 +4852,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "EnvironmentUpdateRequest",
-        "example": {
-          "description": "A larger sandbox for data-analysis workloads.",
-          "config": {
-            "packages": {
-              "pip": [
-                "pandas==2.2.3",
-                "openpyxl==3.1.5"
-              ]
-            },
-            "cpu": 4,
-            "memory_mb": 4096
-          }
-        },
-        "examples": [
-          {
-            "description": "A larger sandbox for data-analysis workloads.",
-            "config": {
-              "packages": {
-                "pip": [
-                  "pandas==2.2.3",
-                  "openpyxl==3.1.5"
-                ]
-              },
-              "cpu": 4,
-              "memory_mb": 4096
-            }
-          }
-        ]
+        "title": "EnvironmentUpdateRequest"
       },
       "Failed": {
         "properties": {
@@ -5309,15 +5412,7 @@
           "path"
         ],
         "title": "LiveFileRequest",
-        "description": "A file to capture from `outputs/` in an active Session sandbox.",
-        "example": {
-          "path": "brief.pdf"
-        },
-        "examples": [
-          {
-            "path": "brief.pdf"
-          }
-        ]
+        "description": "A file to capture from `outputs/` in an active Session sandbox."
       },
       "LiveUploadRequest": {
         "properties": {
@@ -5344,17 +5439,7 @@
           "file_id"
         ],
         "title": "LiveUploadRequest",
-        "description": "An existing File to attach under `uploads/` in an idle Session sandbox.",
-        "example": {
-          "file_id": "file_1234567890abcdef1234567890abcdef",
-          "path": "source-material.pdf"
-        },
-        "examples": [
-          {
-            "file_id": "file_1234567890abcdef1234567890abcdef",
-            "path": "source-material.pdf"
-          }
-        ]
+        "description": "An existing File to attach under `uploads/` in an idle Session sandbox."
       },
       "MemoryStoreCreateRequest": {
         "properties": {
@@ -5362,6 +5447,11 @@
             "type": "string",
             "maxLength": 255,
             "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1024,
+            "default": ""
           },
           "metadata": {
             "additionalProperties": {
@@ -5375,23 +5465,7 @@
         "required": [
           "name"
         ],
-        "title": "MemoryStoreCreateRequest",
-        "example": {
-          "name": "Content Creator",
-          "description": "Durable brand and project context.",
-          "metadata": {
-            "team": "creative"
-          }
-        },
-        "examples": [
-          {
-            "name": "Content Creator",
-            "description": "Durable brand and project context.",
-            "metadata": {
-              "team": "creative"
-            }
-          }
-        ]
+        "title": "MemoryStoreCreateRequest"
       },
       "MemoryStoreListResponse": {
         "properties": {
@@ -5494,6 +5568,10 @@
           "name": {
             "type": "string"
           },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -5544,6 +5622,17 @@
               }
             ]
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "metadata": {
             "anyOf": [
               {
@@ -5567,21 +5656,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "MemoryStoreUpdateRequest",
-        "example": {
-          "description": "Durable brand, asset, and active-project context.",
-          "metadata": {
-            "team": "content"
-          }
-        },
-        "examples": [
-          {
-            "description": "Durable brand, asset, and active-project context.",
-            "metadata": {
-              "team": "content"
-            }
-          }
-        ]
+        "title": "MemoryStoreUpdateRequest"
       },
       "PackagesConfig": {
         "properties": {
@@ -5684,35 +5759,7 @@
         "required": [
           "events"
         ],
-        "title": "SendEventsRequest",
-        "example": {
-          "events": [
-            {
-              "type": "user.message",
-              "content": [
-                {
-                  "type": "text",
-                  "text": "Write a short brief on the future of vertical AI agents."
-                }
-              ]
-            }
-          ]
-        },
-        "examples": [
-          {
-            "events": [
-              {
-                "type": "user.message",
-                "content": [
-                  {
-                    "type": "text",
-                    "text": "Write a short brief on the future of vertical AI agents."
-                  }
-                ]
-              }
-            ]
-          }
-        ]
+        "title": "SendEventsRequest"
       },
       "SendEventsResponse": {
         "properties": {
@@ -5864,21 +5911,7 @@
           "agent_id",
           "environment_id"
         ],
-        "title": "SessionCreateRequest",
-        "example": {
-          "agent_id": "agent_1234567890abcdef1234567890abcdef",
-          "environment_id": "env_1234567890abcdef1234567890abcdef",
-          "account_id": "acct_1234567890abcdef1234567890abcdef",
-          "title": "Q3 market research brief"
-        },
-        "examples": [
-          {
-            "agent_id": "agent_1234567890abcdef1234567890abcdef",
-            "environment_id": "env_1234567890abcdef1234567890abcdef",
-            "account_id": "acct_1234567890abcdef1234567890abcdef",
-            "title": "Q3 market research brief"
-          }
-        ]
+        "title": "SessionCreateRequest"
       },
       "SessionErrorEvent": {
         "properties": {
@@ -5982,6 +6015,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "default": ""
           },
           "created_at": {
             "type": "string",
@@ -6243,15 +6280,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "SessionUpdateRequest",
-        "example": {
-          "title": "Q3 market research brief — revised"
-        },
-        "examples": [
-          {
-            "title": "Q3 market research brief — revised"
-          }
-        ]
+        "title": "SessionUpdateRequest"
       },
       "SkillResponse": {
         "properties": {
@@ -6265,6 +6294,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "size_bytes": {
             "type": "integer"

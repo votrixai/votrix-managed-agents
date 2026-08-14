@@ -8,6 +8,8 @@ from pathlib import Path
 from scripts.export_openapi import (
     DEFAULT_OUTPUT,
     DEFAULT_SERVER_URL,
+    REQUEST_COMPONENT_EXAMPLES,
+    RESPONSE_COMPONENT_EXAMPLES,
     build_documentation_schema,
 )
 
@@ -100,10 +102,6 @@ def test_every_json_request_body_has_a_copyable_sample_request():
             assert sample["summary"] == "Sample request"
             assert sample["value"]
 
-            component_name = media["schema"]["$ref"].rsplit("/", 1)[-1]
-            component = schema["components"]["schemas"][component_name]
-            assert component["examples"][0] == sample["value"]
-
             request_json = next(
                 item
                 for item in operation["x-codeSamples"]
@@ -129,6 +127,52 @@ def test_required_request_parameters_have_realistic_examples():
                     "path",
                 }:
                     assert parameter.get("example"), parameter
+
+
+def test_agent_examples_do_not_invent_empty_configuration_items():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    create = schema["paths"]["/v1/agents"]["post"]
+    request = create["requestBody"]["content"]["application/json"]["examples"][
+        "sample_request"
+    ]["value"]
+
+    for field in ("tools", "mcp_servers", "skills"):
+        assert field not in request
+
+    schemas = schema["components"]["schemas"]
+    response = create["responses"]["201"]["content"]["application/json"]["example"]
+    version = schema["paths"]["/v1/agents/{agent_id}/versions"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["example"]["data"][0]
+    for field in ("tools", "mcp_servers", "skills"):
+        assert response[field] == []
+        assert version[field] == []
+
+    # `description` is an API field, not merely a JSON Schema annotation. The
+    # presentation cleanup must preserve it so every example remains valid for
+    # the schema it documents.
+    for component_name in (
+        "AgentCreateRequest",
+        "AgentUpdateRequest",
+        "AgentResponse",
+        "AgentVersionResponse",
+    ):
+        component = schemas[component_name]
+        assert "description" in component["properties"]
+
+    assert set(response) <= set(schemas["AgentResponse"]["properties"])
+    assert set(version) <= set(schemas["AgentVersionResponse"]["properties"])
+
+
+def test_payload_examples_are_never_embedded_in_component_schemas():
+    """Prevent Fumadocs from compiling payload `id` fields as schema URIs."""
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    schemas = schema["components"]["schemas"]
+
+    for component_name in REQUEST_COMPONENT_EXAMPLES | RESPONSE_COMPONENT_EXAMPLES:
+        component = schemas[component_name]
+        assert "example" not in component
+        assert "examples" not in component
 
 
 def test_documentation_openapi_publishes_complete_memory_surface():

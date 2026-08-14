@@ -176,7 +176,11 @@ Every implemented public resource is scoped by an Organization:
 
 ```text
 request
-  -> x-api-key lookup
+  -> x-api-key lookup -> key.organization_id
+     OR
+  -> Supabase bearer verification
+     + x-organization-id
+     + user.id membership lookup
   -> service organization_id argument
   -> query predicate
 ```
@@ -187,11 +191,16 @@ Object storage adds the same partition to each key:
 organizations/{organization_id}/{category}/{date}/{object}
 ```
 
-The dependency in `app/routers/deps.py` requires `x-api-key`, hashes it, and
-loads an active database record. That record supplies `organization_id`; a
-caller-supplied Organization header is neither required nor trusted. Revoked,
-expired, malformed, and unknown keys all fail authentication before a resource
-query runs.
+The dependency in `app/routers/deps.py` resolves exactly one trusted tenant by
+one of two identity paths. API consumers send `x-api-key`; VMA hashes the key,
+loads its active database record, and takes `organization_id` only from that
+record. The first-party Console BFF sends a Supabase bearer token and selected
+Organization; VMA resolves the live Supabase user and requires a matching
+`organization_members.user_id` row in that active Organization. A superadmin
+may select any active Organization. When an API key is present, its tenant wins
+and a caller-supplied Organization header cannot override it. Revoked, expired,
+malformed, and unknown keys, invalid user tokens, and missing memberships all
+fail before a resource query runs.
 
 The internal turn-processing endpoint has a different boundary. In cloud mode
 it validates a Google OIDC token for:
@@ -212,8 +221,8 @@ migration built from Git history. The active lineage owns:
 | Table | Purpose |
 | --- | --- |
 | `organizations` | Organization identity data |
-| `organization_members` | User membership and `owner`, `admin`, or `member` role; API handlers are not implemented yet |
-| `vma_api_keys` | Organization VMA credentials stored as hashes; request authentication is not wired yet |
+| `organization_members` | User membership and `owner`, `admin`, or `member` role; first-party access is resolved by exact `user_id` |
+| `vma_api_keys` | Hashed Organization credentials; API-key authentication derives the request tenant from the key record |
 | `agents` | Stable Agent handle and active version pointer |
 | `agent_versions` | Immutable Agent configuration snapshots |
 | `environments` | E2B image recipe and build state |

@@ -25,11 +25,18 @@ class Settings(BaseSettings):
     # Comma-separated browser origins allowed to call the API from a page.
     #
     # This is not an authorization boundary. CORS only governs what a browser
-    # will let one site's JavaScript read from another; every request still has
-    # to present a VMA API key, and a server-side caller is unaffected by this
-    # list entirely. Empty means no browser origin is allowed, which is the
-    # right default for an API whose credential belongs on a server.
+    # will let one site's JavaScript read from another, and a server-side caller
+    # is unaffected by this list entirely. Empty means no browser origin is
+    # allowed. Authentication still happens independently through an
+    # Organization API key or the first-party Console's verified user identity
+    # and membership.
     vma_cors_origins: str = ""
+
+    # First-party Console identity. Public API consumers still authenticate
+    # with Organization API keys; these values let VMA independently verify a
+    # Console user's Supabase access token before resolving their membership.
+    vma_supabase_url: str = ""
+    vma_supabase_publishable_key: str = ""
 
     database_url: str = "sqlite+aiosqlite:///./votrix_managed_agents.db"
     database_schema: str = ""

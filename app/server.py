@@ -106,8 +106,9 @@ def create_app() -> FastAPI:
 #
 # This is not a loosened boundary. The origin list is unchanged and still
 # explicit, credentials are still off, and every request still has to present
-# a VMA API key. What a trusted origin puts in its own request headers was
-# never the thing CORS was protecting.
+# either an Organization API key or a verified first-party user token plus a
+# membership-scoped Organization. What a trusted origin puts in its own request
+# headers was never the thing CORS was protecting.
 CORS_REQUEST_HEADERS = ("*",)
 # Correlation ids are attached by the edge router. Listing them here is what
 # lets page JavaScript read the id it needs to quote in a support request.
@@ -118,10 +119,11 @@ CORS_PREFLIGHT_MAX_AGE_SECONDS = 600
 def _install_cors(app: FastAPI) -> None:
     """Allow the configured browser origins, and no others.
 
-    Credentials stay off: VMA authenticates with the `x-api-key` header rather
-    than cookies, so no response ever needs to be readable by a page that did
-    not already hold the key. Keeping it off also removes the wildcard-origin
-    footgun, since the browser refuses `*` alongside credentials.
+    Credentials stay off: VMA authenticates with explicit request headers, not
+    cookies. API consumers send `x-api-key`; the first-party Console BFF sends
+    a Supabase bearer token and an Organization that VMA verifies against the
+    user's membership. Keeping browser credentials off also removes the
+    wildcard-origin footgun, since browsers refuse `*` alongside credentials.
     """
     origins = get_settings().cors_origins
     if not origins:
