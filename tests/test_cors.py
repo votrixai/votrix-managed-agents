@@ -86,7 +86,7 @@ async def test_an_unlisted_origin_gets_no_grant(configured, http):
         # What the browser attaches by itself for `fetch(…, {cache: "no-cache"})`.
         "cache-control,pragma",
         # What the API contract needs.
-        "x-api-key,x-organization-id",
+        "x-api-key",
         "idempotency-key",
         # Anything else a trusted origin decides to send.
         "authorization",

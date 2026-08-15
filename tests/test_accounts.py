@@ -197,7 +197,7 @@ async def test_an_account_belonging_to_another_organization_is_not_found(db, org
     keys = FakeKeys()
     from app.db.queries import organizations as organizations_query
 
-    other = await organizations_query.create_organization(db, slug="other", name="Other")
+    other = await organizations_query.create_organization(db, name="Other")
     await db.commit()
     account = await service.create_account(
         db, organization_id=other.id, name="Theirs", keys=keys
@@ -232,7 +232,7 @@ async def test_a_new_organization_comes_with_a_default_account(db):
     keys = FakeKeys()
 
     organization = await organizations_service.create_organization(
-        db, slug="fresh", name="Fresh", keys=keys
+        db, name="Fresh", keys=keys
     )
     await db.commit()
 
@@ -323,7 +323,7 @@ async def test_the_default_account_cannot_be_suspended(db):
     """
     keys = FakeKeys()
     organization = await organizations_service.create_organization(
-        db, slug="guarded", name="Guarded", keys=keys
+        db, name="Guarded", keys=keys
     )
     await db.commit()
     default = await accounts_q.get_default_account(

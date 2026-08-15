@@ -6,24 +6,19 @@ from app.services import organizations as organizations_service
 from tests.conftest import FakeKeys
 from sqlalchemy.exc import IntegrityError
 
-from app.config import clear_settings_cache
 from app.db.queries import organizations
 from app.db.queries import vma_api_keys as keys
 
 
-def test_vma_api_key_generation_uses_environment_prefix(monkeypatch):
-    assert keys.generate_vma_api_key(app_env="staging").startswith("vma_test_")
-    assert keys.generate_vma_api_key(app_env="production").startswith("vma_live_")
+def test_vma_api_key_generation_uses_one_exact_format():
+    generated = keys.generate_vma_api_key()
 
-    monkeypatch.setenv("APP_ENV", "production")
-    clear_settings_cache()
-    try:
-        assert keys.generate_vma_api_key().startswith("vma_live_")
-    finally:
-        clear_settings_cache()
+    assert generated.startswith(keys.VMA_API_KEY_PREFIX)
+    assert len(generated) == len(keys.VMA_API_KEY_PREFIX) + keys.VMA_API_KEY_RANDOM_LENGTH
+    keys.validate_vma_api_key(generated)
 
 
-def test_vma_api_key_scope_and_prefix_validation():
+def test_vma_api_key_scope_and_format_validation():
     assert keys.normalize_vma_api_key_scopes(
         [keys.VMA_WORKER_SCOPE, keys.VMA_API_SCOPE, keys.VMA_API_SCOPE]
     ) == (keys.VMA_API_SCOPE, keys.VMA_WORKER_SCOPE)
@@ -34,13 +29,15 @@ def test_vma_api_key_scope_and_prefix_validation():
         keys.normalize_vma_api_key_scopes(["root"])
     with pytest.raises(ValueError, match="collection"):
         keys.normalize_vma_api_key_scopes("api")
-    with pytest.raises(ValueError, match="vma_test_"):
-        keys.validate_vma_api_key_prefix(
-            "vma_live_" + "x" * 32,
-            app_env="staging",
-        )
-    with pytest.raises(ValueError, match="at least 32"):
-        keys.validate_legacy_vma_api_key("vma_too_short")
+    keys.validate_vma_api_key("vma_" + "x" * keys.VMA_API_KEY_RANDOM_LENGTH)
+    with pytest.raises(ValueError, match="vma_ prefix"):
+        keys.validate_vma_api_key("key_" + "x" * keys.VMA_API_KEY_RANDOM_LENGTH)
+    with pytest.raises(ValueError, match="exactly 43"):
+        keys.validate_vma_api_key("vma_" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH - 1))
+    with pytest.raises(ValueError, match="exactly 43"):
+        keys.validate_vma_api_key("vma_" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH + 1))
+    with pytest.raises(ValueError, match="URL-safe"):
+        keys.validate_vma_api_key("vma_" + "+" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH - 1))
 
 
 async def test_create_vma_api_key_only_persists_hash(db, org):
@@ -54,7 +51,7 @@ async def test_create_vma_api_key_only_persists_hash(db, org):
     )
     await db.commit()
 
-    assert plaintext.startswith("vma_test_")
+    keys.validate_vma_api_key(plaintext)
     assert api_key.key_hash == keys.hash_vma_api_key(plaintext)
     assert api_key.prefix == plaintext[: keys.DISPLAYED_VMA_API_KEY_PREFIX_LENGTH]
     assert api_key.scopes == [keys.VMA_API_SCOPE, keys.VMA_API_KEYS_MANAGE_SCOPE]
@@ -66,8 +63,23 @@ async def test_create_vma_api_key_only_persists_hash(db, org):
     assert resolved is api_key
 
 
+async def test_lookup_rejects_tokens_outside_the_exact_format(db, org):
+    malformed = "vma_" + "x" * (keys.VMA_API_KEY_RANDOM_LENGTH + 1)
+    api_key, _ = await keys.create_vma_api_key(
+        db,
+        organization_id=org,
+        name="Unreachable malformed row",
+    )
+    api_key.key_hash = keys.hash_vma_api_key(malformed)
+    await db.commit()
+
+    assert await keys.get_vma_api_key_by_token(db, malformed) is None
+
+
 async def test_vma_api_key_queries_are_tenant_scoped(db, org):
-    other = await organizations_service.create_organization(db, keys=FakeKeys(), slug="other-keys", name="Other")
+    other = await organizations_service.create_organization(
+        db, keys=FakeKeys(), name="Other"
+    )
     first, _ = await keys.create_vma_api_key(
         db,
         organization_id=org,
@@ -207,7 +219,6 @@ async def test_replacement_lineage_cannot_cross_organizations(db, org):
     other = await organizations_service.create_organization(
         db,
         keys=FakeKeys(),
-        slug="other-lineage",
         name="Other lineage",
     )
     original, _ = await keys.create_vma_api_key(

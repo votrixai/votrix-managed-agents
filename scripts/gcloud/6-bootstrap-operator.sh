@@ -15,14 +15,12 @@ case "$TARGET" in
   staging)
     SECRET_SUFFIX="-staging"
     DEFAULT_ORGANIZATION_ID="org_019fda5a22b2725cb1360e7f8ee6f0e7"
-    DEFAULT_ORGANIZATION_SLUG="votrix-ai"
     DEFAULT_ORGANIZATION_NAME="Votrix AI"
     DEFAULT_DATABASE_SCHEMA="vma_rewrite_staging"
     ;;
   production)
     SECRET_SUFFIX=""
     DEFAULT_ORGANIZATION_ID="org_votrix"
-    DEFAULT_ORGANIZATION_SLUG="votrix"
     DEFAULT_ORGANIZATION_NAME="Votrix"
     DEFAULT_DATABASE_SCHEMA="vma_rewrite_production"
     ;;
@@ -35,7 +33,6 @@ esac
 DATABASE_SECRET="vma-database-url${SECRET_SUFFIX}"
 OPERATOR_SECRET="vma-operator-api-key${SECRET_SUFFIX}"
 ORGANIZATION_ID=${VMA_BOOTSTRAP_ORGANIZATION_ID:-$DEFAULT_ORGANIZATION_ID}
-ORGANIZATION_SLUG=${VMA_BOOTSTRAP_ORGANIZATION_SLUG:-$DEFAULT_ORGANIZATION_SLUG}
 ORGANIZATION_NAME=${VMA_BOOTSTRAP_ORGANIZATION_NAME:-$DEFAULT_ORGANIZATION_NAME}
 DATABASE_SCHEMA=${VMA_BOOTSTRAP_DATABASE_SCHEMA:-$DEFAULT_DATABASE_SCHEMA}
 
@@ -83,11 +80,9 @@ gcloud secrets versions access "$ENABLED_VERSION" \
   --project="$PROJECT_ID" | \
   APP_ENV="$TARGET" uv run --project "$REPO_ROOT" python -m scripts.bootstrap_api_key \
     --organization-id "$ORGANIZATION_ID" \
-    --organization-slug "$ORGANIZATION_SLUG" \
     --organization-name "$ORGANIZATION_NAME" \
     --key-name "GCP operator bootstrap" \
     --api-key-stdin \
-    --allow-legacy-import \
     --redact-secret
 
 unset DATABASE_URL DATABASE_SCHEMA

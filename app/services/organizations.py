@@ -18,7 +18,6 @@ from app.services import accounts as accounts_service
 async def create_organization(
     db: AsyncSession,
     *,
-    slug: str,
     name: str,
     keys: OpenRouterKeyAdmin | None = None,
 ) -> Organization:
@@ -28,7 +27,7 @@ async def create_organization(
     another service, and doing that lazily would put a provider round-trip in
     front of somebody's first session instead of in front of a setup step.
     """
-    organization = await organizations_q.create_organization(db, slug=slug, name=name)
+    organization = await organizations_q.create_organization(db, name=name)
     await accounts_service.create_default_account(
         db,
         organization_id=organization.id,

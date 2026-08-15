@@ -89,12 +89,15 @@ Everything else returns 404 at the edge without an origin fetch. This rejects
 `/internal`, `/internal/...`, `/docs`, `/redoc`, `/healthz`, `/v10`, and
 arbitrary paths. The application-level GA filter remains narrower than the
 edge `/v1/...` door and continues to return 404 for unavailable product routes.
-`/v1/me/...` is intentionally admitted by the edge because the builder runs in
-the browser and authenticates those requests with a user JWT.
+The same `/v1/...` resource handlers serve both API-key consumers and the
+first-party builder; the authenticator resolves exactly one tenant before any
+resource query runs.
 
-The builder is external traffic: its API URL and requests are visible in each
-user's browser. It therefore calls the public API door and never receives the
-Cloud Run origin or an origin-only credential.
+The builder browser calls only its same-origin
+`/api/vma/{organization_id}/v1/...` bridge. That BFF validates the Supabase
+session and membership, then calls the public API door with the verified user
+token and selected Organization. VMA independently verifies both. The browser
+receives neither the Cloud Run origin nor an Organization API key.
 
 ## Conditional admin host and origin cloaking
 

@@ -39,31 +39,21 @@ class BootstrapResult:
 async def bootstrap_api_key(
     *,
     organization_id: str,
-    organization_slug: str | None = None,
     organization_name: str | None = None,
     key_name: str = "Bootstrap admin",
     allow_additional_admin_key: bool = False,
-    allow_legacy_import: bool = False,
     api_key: str | None = None,
 ) -> BootstrapResult:
     organization_id = _organization_id(organization_id)
-    organization_slug = _required_text(
-        organization_slug or organization_id,
-        "organization_slug",
-        max_length=64,
-    )
     organization_name = _required_text(
         organization_name or organization_id,
         "organization_name",
         max_length=255,
     )
     key_name = _required_text(key_name, "key_name", max_length=255)
-    legacy_api_key = False
     if api_key is not None:
         api_key = _required_text(api_key, "api_key", max_length=512)
-        legacy_api_key = api_keys_q.is_legacy_vma_api_key(api_key)
-        if not legacy_api_key:
-            api_keys_q.validate_vma_api_key_prefix(api_key)
+        api_keys_q.validate_vma_api_key(api_key)
 
     async with session_scope() as db:
         result = await db.execute(
@@ -74,7 +64,6 @@ async def bootstrap_api_key(
         if organization is None:
             organization = Organization(
                 id=organization_id,
-                slug=organization_slug,
                 name=organization_name,
             )
             db.add(organization)
@@ -112,17 +101,6 @@ async def bootstrap_api_key(
                     secret=api_key,
                     organization_created=False,
                 )
-        if legacy_api_key:
-            if not allow_legacy_import:
-                raise ValueError(
-                    "legacy vma_ api_key may only reuse an existing active management "
-                    "key unless --allow-legacy-import is explicitly set"
-                )
-            if existing:
-                raise BootstrapConflict(
-                    "legacy VMA API keys can only be imported before the Organization "
-                    "has any key rows"
-                )
         if active_admins and not allow_additional_admin_key:
             prefixes = ", ".join(item.prefix for item in active_admins)
             raise BootstrapConflict(
@@ -136,7 +114,6 @@ async def bootstrap_api_key(
             organization_id=organization_id,
             name=key_name,
             token=api_key,
-            allow_legacy_token=legacy_api_key and allow_legacy_import,
             scopes=[
                 api_keys_q.VMA_API_SCOPE,
                 api_keys_q.VMA_API_KEYS_MANAGE_SCOPE,
@@ -177,7 +154,6 @@ def _parser() -> argparse.ArgumentParser:
         description="Create the first database-backed administrator API key for one Organization."
     )
     parser.add_argument("--organization-id", required=True)
-    parser.add_argument("--organization-slug")
     parser.add_argument("--organization-name")
     parser.add_argument("--key-name", default="Bootstrap admin")
     parser.add_argument(
@@ -186,18 +162,10 @@ def _parser() -> argparse.ArgumentParser:
         help="Explicitly allow another active management key in the same Organization.",
     )
     parser.add_argument(
-        "--allow-legacy-import",
-        action="store_true",
-        help=(
-            "Allow a trusted, existing legacy vma_* secret to seed an Organization "
-            "that has no API-key rows. This is a one-time migration escape hatch."
-        ),
-    )
-    parser.add_argument(
         "--api-key-stdin",
         action="store_true",
         help=(
-            "Read a pre-generated environment-specific VMA API key from stdin. "
+            "Read a pre-generated VMA API key from stdin. "
             "This makes bootstrap idempotent when an operator secret is provisioned "
             "before the database row."
         ),
@@ -216,11 +184,9 @@ async def _run(args: argparse.Namespace) -> BootstrapResult:
         api_key = sys.stdin.read().strip()
     return await bootstrap_api_key(
         organization_id=args.organization_id,
-        organization_slug=args.organization_slug,
         organization_name=args.organization_name,
         key_name=args.key_name,
         allow_additional_admin_key=args.allow_additional_admin_key,
-        allow_legacy_import=args.allow_legacy_import,
         api_key=api_key,
     )
 

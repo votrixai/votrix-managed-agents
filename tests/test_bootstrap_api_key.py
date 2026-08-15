@@ -25,12 +25,11 @@ async def test_bootstrap_creates_and_idempotently_reuses_management_key(
 ):
     created = await bootstrap.bootstrap_api_key(
         organization_id="org_bootstrap",
-        organization_slug="bootstrap",
         organization_name="Bootstrap",
     )
 
     assert created.organization_created
-    assert created.secret.startswith("vma_test_")
+    keys.validate_vma_api_key(created.secret)
     rows = await keys.list_vma_api_keys(db, organization_id="org_bootstrap")
     assert len(rows) == 1
     assert rows[0].id == created.key_id
@@ -53,35 +52,17 @@ async def test_bootstrap_creates_and_idempotently_reuses_management_key(
         )
 
 
-async def test_legacy_bootstrap_requires_explicit_empty_org_import(
+async def test_bootstrap_accepts_preprovisioned_key(
     db,
-    org,
     bootstrap_with_test_db,
 ):
-    legacy_secret = "vma_legacy_" + "x" * 32
-
-    with pytest.raises(ValueError, match="allow-legacy-import"):
-        await bootstrap.bootstrap_api_key(
-            organization_id=org,
-            api_key=legacy_secret,
-        )
+    secret = "vma_" + "x" * keys.VMA_API_KEY_RANDOM_LENGTH
 
     imported = await bootstrap.bootstrap_api_key(
-        organization_id=org,
-        api_key=legacy_secret,
-        allow_legacy_import=True,
+        organization_id="org_unified_bootstrap",
+        organization_name="Unified bootstrap",
+        api_key=secret,
     )
-    assert imported.secret == legacy_secret
-    stored = await keys.get_vma_api_key_by_token(db, legacy_secret)
-    assert stored is not None
-    assert stored.key_hash == keys.hash_vma_api_key(legacy_secret)
-    assert stored.prefix != legacy_secret
 
-    await keys.revoke_vma_api_key(db, stored, reason="test")
-    await db.commit()
-    with pytest.raises(bootstrap.BootstrapConflict, match="before the Organization"):
-        await bootstrap.bootstrap_api_key(
-            organization_id=org,
-            api_key="vma_legacy_" + "y" * 32,
-            allow_legacy_import=True,
-        )
+    assert imported.secret == secret
+    assert await keys.get_vma_api_key_by_token(db, secret) is not None

@@ -1,104 +1,54 @@
 ---
 title: Agent Versioning
-description: Agent snapshots, optimistic updates, and Session pinning in the active rewrite.
+description: How Agent changes affect new and existing Sessions.
 ---
 
-Snapshot: 2026-07-30
+An Agent keeps one stable `id` while its definition changes through numbered
+versions. This lets you improve an Agent without unexpectedly changing work
+that has already started.
 
-An Agent is a stable public handle whose executable definition lives in
-immutable versions.
+## Creating an Agent
 
-```text
-agents
-  id
-  active_version ───────┐
-                       v
-agent_versions (agent_id, version)
-```
+`POST /v1/agents` creates version `1`. The response includes the stable Agent
+`id` and its current `version`.
 
-## Stored fields
+## Updating an Agent
 
-Each Agent version snapshots:
+Use `PATCH /v1/agents/{agent_id}` or `POST /v1/agents/{agent_id}` and send only
+the fields you want to change.
 
-- name and description;
-- model;
-- system prompt;
-- tools;
-- MCP server definitions;
-- Skill references;
-- multi-agent configuration;
-- runtime configuration;
-- metadata.
+- Omitted fields keep their current values.
+- A provided list or object replaces the previous value for that field.
+- An update that produces no change returns the current version instead of
+  adding a duplicate.
+- A successful change returns the new version number.
 
-The stable `agents` row duplicates the active name, description, and metadata
-for efficient listing, and points to the current version number.
+The request does not require a version number. If two requests change the same
+field, the last accepted update is the value used by later Sessions.
 
-The active runtime currently consumes the model, system prompt, tools, and
-Skill references. MCP server definitions, the stored multi-agent roster, and
-the generic runtime object are persisted for contract evolution but are not
-consumed yet. Deep Agents' built-in general-purpose `task` delegation is
-separate from that stored roster and remains available.
+## Choosing a version for a Session
 
-## Create
+Session creation accepts an optional `agent_version`:
 
-`POST /v1/agents` creates the stable row and version `1` in one transaction.
-A bare model string is normalized to:
+- Omit it to use the Agent's active version at the time the Session is created.
+- Supply it to use that exact version.
+
+The resolved version is returned as `session.agent_version` and stays fixed for
+the Session. Updating the Agent later affects new Sessions, not existing ones.
 
 ```json
-{"id": "claude-opus-5"}
+{
+  "agent_id": "agent_...",
+  "agent_version": 3,
+  "environment_id": "env_..."
+}
 ```
 
-The same shape is stored when the caller supplies the object explicitly.
+Use `GET /v1/agents/{agent_id}/versions` to list available versions and
+`GET /v1/agents/{agent_id}?version=3` to retrieve one.
 
-## Update
+## Archiving
 
-`POST` or `PATCH /v1/agents/{agent_id}` takes only the fields that change.
-
-There is no `version` in the request. Numbering versions is the service's job,
-and a caller that had to name one first would have to read the Agent before
-every write to supply a number it has no opinion about. The edit lands on
-whatever is active when it arrives, and the response's `version` says which
-version it became.
-
-Update behavior:
-
-- omitted fields keep the active version's value;
-- provided list and object fields replace the complete previous value;
-- metadata is replaced as a whole; it is not merged by key;
-- the next version number is `active_version + 1`;
-- an edit whose resulting snapshot is identical returns the existing active
-  version and does not create a duplicate.
-
-Two edits racing therefore both apply, and the later one wins on any field they
-both set. Nothing is lost that was not overwritten deliberately: the merge base
-is the live active version, so a field one caller never mentioned keeps the
-other's change.
-
-The comparison covers every versioned field, including runtime configuration
-and metadata.
-
-## Session pinning
-
-Session creation accepts an optional `agent_version`.
-
-- When omitted, the service reads the Agent's current active version.
-- When supplied, that exact Organization-scoped version must exist.
-- The Session stores both `agent_id` and the resolved version number.
-
-Every turn reloads that pinned snapshot. Updating the Agent later does not
-change the model, prompt, tools, or Skills of an existing Session.
-
-## Archive behavior
-
-Archiving records `archived_at` on the stable Agent row. Archived Agents are
-hidden from ordinary list responses and cannot be updated.
-
-The rewrite does not yet reject an archived Agent during Session creation. That
-is a current gap, not a promise that archived Agents are intentionally reusable.
-Existing Sessions remain pinned to their version either way.
-
-## Version listing
-
-`GET /v1/agents/{agent_id}/versions` orders versions by their numeric version,
-using the shared `before_id` and `after_id` cursor envelope. Version responses
-include the stored `runtime` object in addition to the public Agent fields.
+Archiving retires an Agent from new work without changing the version held by
+an existing Session. Archived Agents are hidden from ordinary lists unless
+`include_archived=true` is supplied.

@@ -18,7 +18,7 @@ export VMA_BASE_URL="https://<private-or-production-vma-host>"
 
 ## 1. Create the Organization
 
-Organization IDs must begin with `org_`. IDs and slugs are permanent identifiers; choose them deliberately.
+Organization IDs must begin with `org_` and are permanent identifiers; choose them deliberately.
 
 ```bash
 curl -sS -X POST "$VMA_BASE_URL/internal/organizations" \
@@ -26,13 +26,12 @@ curl -sS -X POST "$VMA_BASE_URL/internal/organizations" \
   -H "Content-Type: application/json" \
   -d '{
     "id": "org_acme",
-    "slug": "acme",
     "name": "Acme, Inc.",
     "metadata": {"organization_tier": "pilot"}
   }'
 ```
 
-A `409` means the ID or slug already exists. Inspect the existing record rather than retrying with altered identifiers blindly.
+A `409` means the ID already exists. Inspect the existing record rather than retrying with an altered identifier blindly.
 
 ## 2. Grant one or more memberships
 
@@ -120,15 +119,6 @@ Ask the owner to sign into the VMA Developer Console. Expected behavior:
 - The new Organization appears in the switcher.
 - The owner can manage Agents, Environments, Vaults, Skills, Files, and Sessions.
 - API key management returns `403` for owner credentials.
-
-The equivalent API verification uses the owner's Supabase access token:
-
-```bash
-curl -sS "$VMA_BASE_URL/v1/agents" \
-  -H "Authorization: Bearer <owner access token>" \
-  -H "X-Organization-Id: org_acme" \
-  -H "votrix-managed-agents-beta: votrix-managed-agents-2026-04-01"
-```
 
 ## 5. Remove member access
 

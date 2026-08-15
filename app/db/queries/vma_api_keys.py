@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
@@ -9,7 +10,6 @@ import structlog
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import VMA_API_SCOPE, VmaApiKey
 from app.utils.id_generator import new_id
 
@@ -27,51 +27,24 @@ KNOWN_VMA_API_KEY_SCOPES = frozenset(
 )
 DEFAULT_VMA_API_KEY_SCOPES = (VMA_API_SCOPE,)
 
-LIVE_VMA_API_KEY_PREFIX = "vma_live_"
-TEST_VMA_API_KEY_PREFIX = "vma_test_"
-KNOWN_VMA_API_KEY_PREFIXES = (
-    LIVE_VMA_API_KEY_PREFIX,
-    TEST_VMA_API_KEY_PREFIX,
+VMA_API_KEY_PREFIX = "vma_"
+VMA_API_KEY_SECRET_BYTES = 32
+VMA_API_KEY_RANDOM_LENGTH = 43
+VMA_API_KEY_PATTERN = re.compile(
+    rf"{re.escape(VMA_API_KEY_PREFIX)}[A-Za-z0-9_-]{{{VMA_API_KEY_RANDOM_LENGTH}}}"
 )
 DISPLAYED_VMA_API_KEY_PREFIX_LENGTH = 17
-MINIMUM_VMA_API_KEY_RANDOM_LENGTH = 32
 
 
-def vma_api_key_prefix(*, app_env: str | None = None) -> str:
-    environment = app_env if app_env is not None else get_settings().app_env
-    if str(environment).strip().lower() == "production":
-        return LIVE_VMA_API_KEY_PREFIX
-    return TEST_VMA_API_KEY_PREFIX
+def generate_vma_api_key() -> str:
+    return f"{VMA_API_KEY_PREFIX}{secrets.token_urlsafe(VMA_API_KEY_SECRET_BYTES)}"
 
 
-def generate_vma_api_key(*, app_env: str | None = None) -> str:
-    return f"{vma_api_key_prefix(app_env=app_env)}{secrets.token_urlsafe(32)}"
-
-
-def validate_vma_api_key_prefix(token: str, *, app_env: str | None = None) -> None:
-    expected_prefix = vma_api_key_prefix(app_env=app_env)
-    if not token.startswith(KNOWN_VMA_API_KEY_PREFIXES):
-        raise ValueError("api_key must use the vma_live_ or vma_test_ prefix")
-    if not token.startswith(expected_prefix):
-        raise ValueError(f"api_key must use the {expected_prefix} prefix for this environment")
-    if len(token) < len(expected_prefix) + MINIMUM_VMA_API_KEY_RANDOM_LENGTH:
+def validate_vma_api_key(token: str) -> None:
+    if VMA_API_KEY_PATTERN.fullmatch(token) is None:
         raise ValueError(
-            "api_key must contain at least "
-            f"{MINIMUM_VMA_API_KEY_RANDOM_LENGTH} characters after the prefix"
-        )
-
-
-def is_legacy_vma_api_key(token: str) -> bool:
-    return token.startswith("vma_") and not token.startswith(KNOWN_VMA_API_KEY_PREFIXES)
-
-
-def validate_legacy_vma_api_key(token: str) -> None:
-    if not is_legacy_vma_api_key(token):
-        raise ValueError("legacy api_key must use the vma_ prefix")
-    if len(token) < len("vma_") + MINIMUM_VMA_API_KEY_RANDOM_LENGTH:
-        raise ValueError(
-            "legacy api_key must contain at least "
-            f"{MINIMUM_VMA_API_KEY_RANDOM_LENGTH} characters after the prefix"
+            f"api_key must use the {VMA_API_KEY_PREFIX} prefix followed by exactly "
+            f"{VMA_API_KEY_RANDOM_LENGTH} URL-safe characters"
         )
 
 
@@ -110,7 +83,6 @@ async def create_vma_api_key(
     organization_id: str,
     name: str,
     token: str | None = None,
-    allow_legacy_token: bool = False,
     scopes: Iterable[str] = DEFAULT_VMA_API_KEY_SCOPES,
     expires_at: datetime | None = None,
     created_by: str | None = None,
@@ -125,10 +97,7 @@ async def create_vma_api_key(
 
     plaintext = token or generate_vma_api_key()
     if token is not None:
-        if allow_legacy_token and is_legacy_vma_api_key(plaintext):
-            validate_legacy_vma_api_key(plaintext)
-        else:
-            validate_vma_api_key_prefix(plaintext)
+        validate_vma_api_key(plaintext)
 
     if replaces_key_id is not None:
         replaced = await get_vma_api_key(
@@ -165,6 +134,8 @@ async def get_vma_api_key_by_token(
     *,
     include_inactive: bool = False,
 ) -> VmaApiKey | None:
+    if VMA_API_KEY_PATTERN.fullmatch(token) is None:
+        return None
     stmt = select(VmaApiKey).where(VmaApiKey.key_hash == hash_vma_api_key(token))
     if not include_inactive:
         now = datetime.now(timezone.utc)

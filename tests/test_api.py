@@ -10,9 +10,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest_asyncio
+from fastapi import HTTPException, status
 from httpx import ASGITransport, AsyncClient
 
+from app import human_auth
 from app.main import app
+from app.db.queries import organizations as organizations_q
 from app.routers import health as health_router
 from app.routers.deps import get_db
 
@@ -91,18 +94,127 @@ async def test_an_unknown_key_is_refused(client, org):
 
 
 async def test_naming_a_tenant_does_not_reach_it(client, org):
-    """The header is gone, and sending it anyway changes nothing.
+    """The first-party tenant header does not authenticate by itself.
 
-    Which tenant a request reaches comes off the key. A caller that could
-    state its own tenant could state anyone's, and checking the key afterwards
-    only turns that into a comparison — the same answer with one more way to
-    get it wrong.
+    API-key callers derive their tenant from the key. First-party callers must
+    pair the selected Organization with a verified bearer identity and live
+    membership.
     """
     response = await client.get(
         "/v1/sessions", headers={"x-organization-id": org}
     )
     assert response.status_code == 401
 
+
+async def test_member_user_token_reaches_only_its_organization(
+    client,
+    db,
+    org,
+    monkeypatch,
+):
+    await organizations_q.add_member(
+        db,
+        organization_id=org,
+        user_id="user-a",
+        email="a@example.com",
+    )
+    other = await organizations_q.create_organization(db, name="Other")
+    await db.commit()
+
+    async def authenticated_user(access_token: str):
+        assert access_token == "user-a-token"
+        return human_auth.AuthenticatedUser(id="user-a", app_metadata={})
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    auth = {"authorization": "Bearer user-a-token"}
+
+    own = await client.get(
+        "/v1/sessions",
+        headers={**auth, "x-organization-id": org},
+    )
+    denied = await client.get(
+        "/v1/sessions",
+        headers={**auth, "x-organization-id": other.id},
+    )
+
+    assert own.status_code == 200
+    assert denied.status_code == 403
+
+
+async def test_super_admin_user_token_reaches_an_active_organization(
+    client,
+    org,
+    monkeypatch,
+):
+    async def authenticated_user(_access_token: str):
+        return human_auth.AuthenticatedUser(
+            id="platform-admin",
+            app_metadata={"super_admin": True},
+        )
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    response = await client.get(
+        "/v1/sessions",
+        headers={
+            "authorization": "Bearer admin-token",
+            "x-organization-id": org,
+        },
+    )
+
+    assert response.status_code == 200
+
+
+async def test_user_token_requires_an_organization(client, monkeypatch):
+    async def authenticated_user(_access_token: str):
+        raise AssertionError("identity must not be resolved without an Organization")
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    response = await client.get(
+        "/v1/sessions",
+        headers={"authorization": "Bearer user-token"},
+    )
+
+    assert response.status_code == 400
+
+
+async def test_invalid_user_token_is_refused(client, org, monkeypatch):
+    async def authenticated_user(_access_token: str):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid user access token")
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    response = await client.get(
+        "/v1/sessions",
+        headers={
+            "authorization": "Bearer invalid",
+            "x-organization-id": org,
+        },
+    )
+
+    assert response.status_code == 401
+
+
+async def test_api_key_tenant_wins_over_user_selected_organization(
+    client,
+    headers,
+    other_tenant,
+    monkeypatch,
+):
+    other_id, _ = other_tenant
+
+    async def authenticated_user(_access_token: str):
+        raise AssertionError("bearer auth must not run when an API key is present")
+
+    monkeypatch.setattr(human_auth, "authenticate_user", authenticated_user)
+    response = await client.get(
+        "/v1/sessions",
+        headers={
+            **headers,
+            "authorization": "Bearer user-token",
+            "x-organization-id": other_id,
+        },
+    )
+
+    assert response.status_code == 200
 
 async def test_a_revoked_key_stops_working(client, db, org):
     from app.db.queries import vma_api_keys as keys_q

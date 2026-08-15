@@ -88,9 +88,9 @@ operator-provisioned Organization platform funding.
   `us-central1`.
 - The external product contract is now explicitly Votrix Managed Agents (VMA):
   the TypeScript package is `@votrix/managed-agents`, client credentials use
-  `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use
-  `vma_live_` in production or `vma_test_` everywhere else. Generic main-product
-  Votrix SDK and credential names are no longer consumed by VMA clients.
+  `VMA_API_KEY` or `VOTRIX_VMA_API_KEY`, and newly generated keys use the unified
+  `vma_` prefix in every environment. Generic main-product Votrix SDK and
+  credential names are no longer consumed by VMA clients.
 - **Pre-launch breaking reset:** the top-level tenant is now Organization,
   identified by `organization_id` and `org_*` IDs. Legacy tenant names,
   fields, CLI flags, defaults, and compatibility aliases were removed. Existing
@@ -143,7 +143,8 @@ operator-provisioned Organization platform funding.
   deployment inputs no longer contain model-provider keys.
 - Hosted staging and production now receive environment-isolated Supabase URL
   and publishable-key Secret Manager bindings. Browser CORS explicitly admits
-  `X-Organization-Id` from the configured Votrix app and documentation origins.
+  the authenticated API headers from configured Votrix app and documentation
+  origins.
 - Cloud Build ignores Cloudflare-router-only changes as well as documentation
   and SDK-only changes, so an edge routing update cannot unnecessarily rebuild
   the API image or run database migrations.

@@ -25,19 +25,21 @@ removed from the main branch and remains recoverable from Git history.
   deployed environments.
 - Async SQLAlchemy persistence on SQLite or PostgreSQL.
 
-The rewrite does **not** currently implement production authentication. Every
-implemented resource route trusts `x-organization-id`; `x-api-key` is accepted
-but not validated. Organization and model-catalog routes are placeholders and
-do not yet use that resource dependency. MCP servers are stored but not loaded
-by the runtime, and `app.worker` is only a lease sweeper. See
-[Current gaps](#current-gaps).
+Implemented resource routes authenticate a database-backed `x-api-key` and
+derive the Organization from that credential. A caller cannot select a tenant
+with a separate header. Organization routes remain placeholders. MCP servers
+are stored but not loaded by the runtime, and `app.worker` also owns the lease
+sweeper. See [Current gaps](#current-gaps).
 
 ## Architecture
 
 ```text
 HTTP client
     |
-    | x-organization-id
+    | x-api-key
+    v
+API-key lookup ── organization_id
+    |
     v
 FastAPI routers ── Pydantic wire models
     |
@@ -98,16 +100,21 @@ it against a fresh database. It does not upgrade a database stamped with the
 superseded lineage or reconcile its `alembic_version`; preserving such data
 requires a separately designed migration using the repository's Git history.
 
-The database defaults to a local SQLite file. Resource routes require an
-Organization header:
+The database defaults to a local SQLite file. Resource routes require a
+database-backed Organization API key. Bootstrap one for local development and
+capture the one-time plaintext from the command output:
 
 ```bash
+uv run python -m scripts.bootstrap_api_key \
+  --organization-id org_local \
+  --organization-name "Local"
+
 curl http://127.0.0.1:8000/v1/agents \
-  --header "x-organization-id: org_local"
+  --header "x-api-key: vma_..."
 ```
 
-The header is currently trusted and does not prove membership in the named
-Organization. Do not expose this branch directly to untrusted traffic.
+The key itself chooses the Organization; do not send a separate Organization
+header.
 
 ### Runtime credentials
 
@@ -226,6 +233,21 @@ It uses an in-memory SQLite database and stubs E2B, storage, models, and Cloud
 Tasks where needed. `tests_live/` is the explicit external-service suite and is
 not part of the default pytest path.
 
+GitHub Actions is reserved for documentation deployment. Run the former CI
+checks locally before merging:
+
+```bash
+./scripts/validate-local.sh
+```
+
+The script validates the backend on Python 3.12 and 3.13, the documentation
+site, and the Cloudflare API router. Pass `backend`, `docs`, or `router` to run
+only selected groups, for example:
+
+```bash
+./scripts/validate-local.sh backend docs
+```
+
 ## Documentation
 
 Current rewrite documentation:
@@ -255,14 +277,12 @@ CI fails when the snapshot drifts from the active application.
 
 ## Current gaps
 
-- `x-organization-id` is trusted; API-key authentication and authorization are
-  not implemented in the active app.
 - Organization/owner and model endpoints are registered placeholders.
 - MCP definitions are persisted but not loaded. The stored `multiagent` roster
   is not consumed; Deep Agents' built-in general-purpose `task` delegation is
   still available independently.
-- Vaults, deployments, webhooks, quotas, audit/usage ledgers, and production
-  authentication have not been implemented in the active service.
+- Vaults, deployments, webhooks, quotas, and audit/usage ledgers have not been
+  implemented in the active service.
 - E2B is the only active sandbox backend; there is no no-shell local fallback.
 - Event streaming polls durable rows; the old in-process/PostgreSQL preview bus
   is not part of the rewrite.

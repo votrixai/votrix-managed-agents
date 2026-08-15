@@ -25,6 +25,9 @@ function withoutFixedPreviewHeader<T extends { parameters?: unknown[] }>(operati
 }
 
 export const OpenAPIPage = createOpenAPIPage({
+  // The public HTTP contract is language-neutral; generated TypeScript types
+  // add a language-specific panel without adding a second usable example.
+  generateTypeScriptDefinitions: false,
   // Version this prefix whenever persisted Playground defaults become invalid.
   // v2 drops the former server URL cached by browsers.
   storageKeyPrefix: 'votrix-managed-agents-openapi-v2-',
@@ -32,6 +35,29 @@ export const OpenAPIPage = createOpenAPIPage({
     themes: {
       light: 'github-light',
       dark: 'vesper',
+    },
+  },
+  schemaUI: {
+    // Request components carry reviewed OpenAPI examples. Render them beside
+    // the field schema so readers can copy the JSON without first translating
+    // a generated TypeScript type or a cURL command.
+    showExample: true,
+  },
+  content: {
+    renderAPIExampleLayout({ selector, usageTabs, responseTabs }) {
+      return (
+        <div className="prose-no-margin">
+          <section>
+            <p className="mb-2 font-semibold text-fd-card-foreground">Sample request</p>
+            {selector}
+            {usageTabs}
+          </section>
+          <section>
+            <p className="mb-2 mt-4 font-semibold text-fd-card-foreground">Sample response</p>
+            {responseTabs}
+          </section>
+        </div>
+      );
     },
   },
   playground: {

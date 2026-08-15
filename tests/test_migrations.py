@@ -12,7 +12,7 @@ from app.config import clear_settings_cache
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PREVIOUS_HEAD = "b7e1c4d9a620"
 REWIRED_RELEASE_HEAD = "b7f2d4a91c53"
-CURRENT_HEAD = "e3a14b7c9d52"
+CURRENT_HEAD = "f6c8d2a91e74"
 
 
 def test_member_migration_preserves_existing_owner_and_has_one_head(
@@ -86,6 +86,10 @@ def test_member_migration_preserves_existing_owner_and_has_one_head(
                     """
                 )
             }
+            organization_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(organizations)")
+            }
         assert member == (
             "owner_cc5829abf6074f59a8af4347cbe90a8d",
             "org_votrix_staging",
@@ -97,6 +101,7 @@ def test_member_migration_preserves_existing_owner_and_has_one_head(
         )
         assert "organization_owners" not in tables
         assert {"organization_members", "vma_api_keys"} <= tables
+        assert "slug" not in organization_columns
 
         command.downgrade(config, PREVIOUS_HEAD)
         with sqlite3.connect(database_path) as connection:
@@ -107,7 +112,12 @@ def test_member_migration_preserves_existing_owner_and_has_one_head(
                 FROM organization_owners
                 """
             ).fetchone()
+            restored_slug = connection.execute(
+                "SELECT slug FROM organizations WHERE id = ?",
+                ("org_votrix_staging",),
+            ).fetchone()
         assert restored_owner == member[:4] + member[5:]
+        assert restored_slug == ("org_votrix_staging",)
     finally:
         clear_settings_cache()
 

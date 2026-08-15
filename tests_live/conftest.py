@@ -165,16 +165,15 @@ async def server(settings, pinned_search) -> AsyncIterator[str]:
 async def organization(server) -> str:
     """Written straight to the database: `/v1/organizations` is still stubs.
 
-    A fresh slug per run keeps one run's rows from being mistaken for another's
+    The generated Organization ID keeps one run's rows distinct from another's
     when something has to be looked at by hand afterwards.
     """
     from app.db.engine import session_scope
     from app.db.queries import organizations
     from app.services import accounts
 
-    slug = f"live-{uuid.uuid4().hex[:10]}"
     async with session_scope() as db:
-        created = await organizations.create_organization(db, slug=slug, name="Live tests")
+        created = await organizations.create_organization(db, name="Live tests")
         # Nothing runs on an Organization that cannot spend: opening a session
         # checks for a default Account and refuses with 409 without one. Real
         # rather than stubbed, because what it provisions is the per-Account
@@ -186,7 +185,7 @@ async def organization(server) -> str:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def api_key(organization) -> str:
+async def api_key(server, organization) -> str:
     """A real key for the run's own organization.
 
     Written straight to the database for the same reason the organization is:
@@ -199,7 +198,9 @@ async def api_key(organization) -> str:
 
     async with session_scope() as db:
         _, token = await vma_api_keys.create_vma_api_key(
-            db, organization_id=organization, name="live tests"
+            db,
+            organization_id=organization,
+            name="Live tests",
         )
         await db.commit()
         return token

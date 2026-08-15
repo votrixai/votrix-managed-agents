@@ -22,12 +22,13 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
-        text: 'Documentation',
+        text: 'Overview',
         url: '/docs',
         active: 'url',
         on: 'nav',
       },
       {
+        type: 'button',
         text: 'API Reference',
         url: '/docs/api',
         active: 'nested-url',
