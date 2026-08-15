@@ -100,8 +100,11 @@ async def execute_agent(
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
     tool_completed: ToolCompleted | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Run one turn to completion, or to the next point it needs the user.
+
+    Returns why it stopped, in the shape the `session.status_idle` event
+    carries it.
 
     `events` is the batch that triggered this turn. Whether it starts a turn or
     answers a paused one is decided from the first event's type, not by asking
@@ -232,10 +235,13 @@ async def execute_agent(
         # Read the graph again rather than infer: whether it stopped for a human
         # is a fact it records, and deciding for ourselves would be a second
         # opinion that can disagree with it.
-        await emit(
-            event_types.SESSION_STATUS_IDLE,
-            {"stop_reason": _stop_reason(await graph.aget_state(config), interrupt_on)},
-        )
+        stop_reason = _stop_reason(await graph.aget_state(config), interrupt_on)
+        await emit(event_types.SESSION_STATUS_IDLE, {"stop_reason": stop_reason})
+        # Handed back as well as emitted. The event tells the client why the
+        # turn ended; the caller puts the same answer on the session row, where
+        # the gate can see it — a turn that stopped to ask leaves the session
+        # idle, and only the row says it is not free.
+        return stop_reason
 
 
 # --- turning the trigger event into graph input -----------------------------

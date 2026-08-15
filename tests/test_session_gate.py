@@ -9,12 +9,23 @@ from __future__ import annotations
 import pytest
 
 from app.db.queries import sessions as sessions_q
-from app.models.sessions import IDLE, RUNNING, STOP_INTERRUPTED, TERMINATED
+from app.models.sessions import (
+    IDLE,
+    RUNNING,
+    STOP_INTERRUPTED,
+    STOP_REQUIRES_ACTION,
+    TERMINATED,
+)
 from app.services import sessions as service
 from app.models.errors import Conflict, NotFound, SessionBusy, SessionCancelled
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
 INTERRUPT = {"type": "user.interrupt"}
+ACTION_RESULT = {
+    "type": "user.custom_tool_result",
+    "tool_use_id": "call_1",
+    "content": [{"type": "text", "text": "30 rows"}],
+}
 
 # Captured before any fixture runs, because `never_dispatch` replaces it.
 REAL_DISPATCH = service._dispatch_turn
@@ -150,6 +161,109 @@ async def test_interrupting_twice_is_harmless(db, session):
 
     await db.refresh(session)
     assert session.status == IDLE
+
+
+# --- a turn that stopped to ask ----------------------------------------------
+#
+# The gap the gate used to leave open. A turn that pauses on a tool the client
+# has to answer *ends* — the session goes idle, the lease is dropped — and yet
+# the graph is still holding that call open. Anything else claiming the session
+# restarts the agent from the top and the call is cancelled on the way past, so
+# for as long as the answer is owed, only the answer gets in.
+
+
+async def park(db, session):
+    """Leave the session where a turn that stopped to ask leaves it."""
+    await sessions_q.release_session(
+        db, session, status=IDLE, stop_reason={"type": STOP_REQUIRES_ACTION}
+    )
+    await db.commit()
+
+
+async def test_a_parked_session_refuses_an_ordinary_message(db, session):
+    await park(db, session)
+
+    with pytest.raises(SessionBusy):
+        await send(db, session)
+
+
+async def test_a_parked_session_accepts_the_answer_it_is_waiting_for(db, session):
+    await park(db, session)
+
+    events = await send(db, session, ACTION_RESULT)
+
+    await db.refresh(session)
+    assert [e.type for e in events] == ["user.custom_tool_result"]
+    assert session.status == RUNNING
+
+
+async def test_claiming_clears_the_parking(db, session):
+    """`stop_reason` describes the last turn that finished, so a turn that has
+    just started must not be found still wearing the previous one's."""
+    await park(db, session)
+
+    await send(db, session, ACTION_RESULT)
+
+    await db.refresh(session)
+    assert session.stop_reason is None
+
+
+async def test_a_message_refused_by_the_parking_writes_nothing(db, session):
+    await park(db, session)
+
+    with pytest.raises(SessionBusy):
+        await send(db, session)
+
+    events = (await sessions_q.list_events(
+        db, session_id=session.id, organization_id=session.organization_id
+    )).items
+    assert events == []
+
+
+async def test_interrupt_unparks_a_session_nobody_is_going_to_answer(db, session):
+    """The only way out. Without it a client that dies owing an answer leaves
+    the session refusing every message forever."""
+    await park(db, session)
+
+    await send(db, session, INTERRUPT)
+
+    await db.refresh(session)
+    assert session.stop_reason == {"type": STOP_INTERRUPTED}
+
+
+async def test_an_unparked_session_takes_messages_again(db, session):
+    await park(db, session)
+    await send(db, session, INTERRUPT)
+
+    events = await send(db, session)
+
+    await db.refresh(session)
+    assert [e.type for e in events] == ["user.message"]
+    assert session.status == RUNNING
+
+
+async def test_unparking_says_so_rather_than_leaving_the_client_waiting(db, session):
+    """The client was told `requires_action` and is holding a spinner on it."""
+    await park(db, session)
+
+    await send(db, session, INTERRUPT)
+
+    events = (await sessions_q.list_events(
+        db, session_id=session.id, organization_id=session.organization_id
+    )).items
+    assert [e.type for e in events] == ["user.interrupt", "session.status_idle"]
+    assert events[-1].payload["stop_reason"] == {"type": STOP_INTERRUPTED}
+
+
+async def test_a_finished_turn_does_not_park_the_session(db, session):
+    """Only `requires_action` closes the gate — an ordinary ending must not."""
+    await sessions_q.release_session(
+        db, session, status=IDLE, stop_reason={"type": "end_turn"}
+    )
+    await db.commit()
+
+    events = await send(db, session)
+    assert [e.type for e in events] == ["user.message"]
 
 
 async def test_interrupt_must_be_sent_alone(db, session):

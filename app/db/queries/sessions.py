@@ -18,6 +18,7 @@ from app.db.models import (
 )
 from app.db.models.sessions import IDLE, RUNNING, SANDBOX_PROVISIONING
 from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
+from app.models.sessions import STOP_REQUIRES_ACTION
 from app.utils.id_generator import new_id
 
 
@@ -284,6 +285,7 @@ async def claim_session(
     *,
     session_id: str,
     lease_seconds: int = 300,
+    answering: bool = False,
 ) -> bool:
     """Try to take the session. True if we got it, False if it was busy.
 
@@ -295,29 +297,50 @@ async def claim_session(
     A session whose lease has lapsed is up for grabs again, which is what stops
     a worker that died mid-reply from locking the session out forever.
 
+    `answering` says this batch is the answer a paused graph is waiting for. A
+    session parked on `requires_action` is idle but not free: its turn is over,
+    and yet a tool call is still open and the client owes us the result. Anyone
+    else claiming it restarts the agent from the top, which cancels that call —
+    so the parking is a closed gate to everything except the answer, and the
+    rest are told the session is busy and come back. `user.interrupt` is the way
+    out of a parking nobody ever answers, and it does not come through here.
+
+    The parking is cleared on the way in, because `stop_reason` describes the
+    last turn that finished and this one has just started.
+
     The row is changed behind the ORM's back, so load the session *after*
     claiming it, never before.
     """
     now = _now()
-    result = await db.execute(
-        update(Session)
-        .where(
-            Session.id == session_id,
-            Session.deleted_at.is_(None),
-            or_(
-                Session.status == IDLE,
-                and_(
-                    Session.status == RUNNING,
-                    or_(
-                        Session.lease_expires_at.is_(None),
-                        Session.lease_expires_at <= now,
-                    ),
+    free = [
+        Session.id == session_id,
+        Session.deleted_at.is_(None),
+        or_(
+            Session.status == IDLE,
+            and_(
+                Session.status == RUNNING,
+                or_(
+                    Session.lease_expires_at.is_(None),
+                    Session.lease_expires_at <= now,
                 ),
             ),
-        )
+        ),
+    ]
+    if not answering:
+        # Asked of the extracted type rather than of the column: a cleared
+        # `stop_reason` reaches the database as SQL NULL from one direction and
+        # as JSON `null` from the other, and both of those extract to NULL while
+        # only one of them `IS NULL`. Reading through the arrow costs nothing
+        # and stops a stored `null` from shutting the gate on everybody.
+        parked = Session.stop_reason["type"].as_string()
+        free.append(or_(parked.is_(None), parked != STOP_REQUIRES_ACTION))
+    result = await db.execute(
+        update(Session)
+        .where(*free)
         .values(
             status=RUNNING,
             lease_expires_at=now + timedelta(seconds=lease_seconds),
+            stop_reason=None,
         )
         .execution_options(synchronize_session=False)
     )
