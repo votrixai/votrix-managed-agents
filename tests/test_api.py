@@ -376,7 +376,7 @@ async def test_member_revokes_only_a_key_they_created(
     )
 
 
-async def test_admin_can_revoke_any_api_only_key_but_management_keys_are_hidden(
+async def test_admin_can_manage_keys_regardless_of_legacy_scopes(
     client,
     db,
     org,
@@ -419,15 +419,16 @@ async def test_admin_can_revoke_any_api_only_key_but_management_keys_are_hidden(
 
     listed = await client.get("/v1/me/api-keys", headers=auth)
     revoked = await client.delete(f"/v1/me/api-keys/{ordinary.id}", headers=auth)
-    protected = await client.delete(
+    management_revoked = await client.delete(
         f"/v1/me/api-keys/{management.id}",
         headers=auth,
     )
 
-    assert [item["id"] for item in listed.json()["data"]] == [ordinary.id]
-    assert listed.json()["data"][0]["can_revoke"] is True
+    listed_by_id = {item["id"]: item for item in listed.json()["data"]}
+    assert set(listed_by_id) == {ordinary.id, management.id}
+    assert all(item["can_revoke"] is True for item in listed_by_id.values())
     assert revoked.status_code == 200
-    assert protected.status_code == 404
+    assert management_revoked.status_code == 200
 
 
 async def test_api_key_name_cannot_be_blank(client, db, org, monkeypatch):

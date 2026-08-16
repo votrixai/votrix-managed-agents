@@ -1,4 +1,4 @@
-"""One-time Organization API-key creation for the first-party Console."""
+"""Organization API-key management for the first-party Console."""
 
 from __future__ import annotations
 
@@ -34,11 +34,10 @@ def _mark_private(response: Response) -> None:
     response.headers.update(PRIVATE_RESPONSE_HEADERS)
 
 
-def _is_active_api_only_key(api_key: VmaApiKey) -> bool:
+def _is_active_key(api_key: VmaApiKey) -> bool:
     return (
         api_key.revoked_at is None
         and not api_keys_q.vma_api_key_is_expired(api_key)
-        and set(api_key.scopes or []) == {VMA_API_SCOPE}
     )
 
 
@@ -78,7 +77,7 @@ async def list_organization_api_keys(
         data=[
             _metadata(api_key, principal)
             for api_key in keys
-            if _is_active_api_only_key(api_key)
+            if _is_active_key(api_key)
         ]
     )
 
@@ -128,7 +127,7 @@ async def revoke_organization_api_key(
         organization_id=principal.organization_id,
         key_id=api_key_id,
     )
-    if api_key is None or set(api_key.scopes or []) != {VMA_API_SCOPE}:
+    if api_key is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found")
     if not _can_revoke(api_key, principal):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "API key access denied")
