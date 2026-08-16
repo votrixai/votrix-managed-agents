@@ -49,7 +49,14 @@ from app.models.errors import (
     SessionBusy,
     SessionCancelled,
 )
-from app.models.sessions import IDLE, RUNNING, STOP_ERROR, STOP_INTERRUPTED, TERMINATED
+from app.models.sessions import (
+    IDLE,
+    RUNNING,
+    STOP_ERROR,
+    STOP_INTERRUPTED,
+    STOP_REQUIRES_ACTION,
+    TERMINATED,
+)
 from app.services import agents as agents_service
 from app.services import environments as environments_service
 from app.services import event_broker
@@ -322,6 +329,13 @@ async def send_events(
     status and then writing it would let two requests both see an idle session,
     both accept a message, and leave the second one with nobody to run it.
 
+    "One turn at a time" has to cover the pause in the middle of one, too. A
+    turn that stopped to ask ends here as far as this service is concerned, and
+    the session goes idle — but the graph is still holding the tool call open,
+    so the gate stays shut to everyone but the client that owes the answer.
+    Which kind of batch this is comes off the first event, the same way the
+    engine decides whether it is resuming or starting.
+
     Nothing is written unless the claim succeeds.
     """
     session = await get_session(db, session_id=session_id, organization_id=organization_id)
@@ -335,6 +349,7 @@ async def send_events(
         db,
         session_id=session_id,
         lease_seconds=LEASE_SECONDS,
+        answering=event_types.is_action_result(events[0].get("type", "")),
     )
     # claim_session goes around the ORM either way, so the in-memory row is
     # stale here whether we won or lost.
@@ -380,6 +395,14 @@ async def cancel_session(
     Stopping an idle session is not an error — the user pressed the button, and
     that gets recorded — but there is nothing to release, so the session itself
     is left alone. Two interrupts in a row therefore do the same thing as one.
+
+    An idle session parked on `requires_action` is the exception, and the reason
+    this path has to reach idle sessions at all. Nothing is running, so nothing
+    is stopped; what goes is the parking, which is otherwise a gate only the
+    awaited answer opens — and if that answer is never coming, this is the only
+    way back. The graph needs no unwinding to match: the next message restarts
+    the agent from the top, and DeepAgents' PatchToolCallsMiddleware closes the
+    tool call left hanging on the way past.
     """
     session = await get_session(db, session_id=session_id, organization_id=organization_id)
     if session.status == TERMINATED:
@@ -393,14 +416,17 @@ async def cancel_session(
         payload={},
     )
 
-    if session.status == RUNNING:
+    parked = (session.stop_reason or {}).get("type") == STOP_REQUIRES_ACTION
+    if session.status == RUNNING or parked:
         # Nothing beyond the type: the client knows what it sent, and a field
         # here listing "what was cut off" beside `requires_action`'s list of
         # "what to answer" is two meanings one glance apart.
         stop_reason: dict[str, Any] = {"type": STOP_INTERRUPTED}
         await sessions_q.release_session(db, session, status=IDLE, stop_reason=stop_reason)
         # The engine emits this itself when a turn ends normally; an interrupted
-        # turn unwinds through an exception instead, so nobody else will.
+        # turn unwinds through an exception instead, so nobody else will. A
+        # parked session already reported one idle, saying it was waiting; this
+        # second one says it has stopped waiting, which is news.
         await sessions_q.append_event(
             db,
             session,
@@ -658,7 +684,7 @@ async def process_session(
             session_id=session_id,
             trigger=events[0].get("type") if events else None,
         ):
-            await asyncio.wait_for(
+            stop_reason = await asyncio.wait_for(
                 execute_agent(
                     session=session,
                     version=version,
@@ -689,7 +715,10 @@ async def process_session(
     # the turn is done, and everything the turn produced has to be fetchable by
     # then. It is also the last moment the container is certainly awake.
     await collect_outputs(db, session, container)
-    await sessions_q.release_session(db, session, status=IDLE)
+    # The reason goes on the row, not just out as an event. A turn that stopped
+    # to ask leaves the session idle and the gate open, and this is the only
+    # thing standing between "waiting for an answer" and "free for anyone".
+    await sessions_q.release_session(db, session, status=IDLE, stop_reason=stop_reason)
     await db.commit()
 
 

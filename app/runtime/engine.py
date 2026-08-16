@@ -17,7 +17,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from deepagents import create_deep_agent
+from deepagents import (
+    GeneralPurposeSubagentProfile,
+    HarnessProfile,
+    create_deep_agent,
+    register_harness_profile,
+)
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
@@ -41,6 +46,31 @@ from app.utils.timing import timed
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
 ToolCompleted = Callable[[str], Awaitable[None]]
 _FILESYSTEM_MUTATORS = {"write_file", "edit_file", "execute"}
+
+# No `task` tool, and so no subagents. DeepAgents adds a `general-purpose`
+# subagent unless told otherwise, and only attaches `SubAgentMiddleware` — the
+# thing that carries `task` — when at least one synchronous subagent exists.
+# We pass no `subagents=`, so disabling the default one leaves the middleware
+# out entirely rather than leaving a tool nobody can reach.
+#
+# Why it is off: that subagent inherits the parent's tools *and* its skills,
+# but not its system prompt and not the conversation. A copy of an agent that
+# has been told how to talk to a user, has every paid tool, and knows nothing
+# about what the user asked, will hold a conversation with its own parent —
+# and spend money doing it. Worse, none of that reaches the client: the
+# subagent's calls are internal to the graph, so the whole run appears in the
+# event log as a single `task` with no cost and no trace attached.
+#
+# Registered under the provider rather than a model id because every model in
+# the catalogue is reached through `ChatOpenRouter` (see `_build_chat_model`),
+# which resolves to provider `openrouter`. Profile lookup falls back from
+# `provider:identifier` to the bare provider, so this one entry covers the
+# whole catalogue. There is no wildcard key; a second gateway would need its
+# own registration here.
+register_harness_profile(
+    "openrouter",
+    HarnessProfile(general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)),
+)
 
 
 class UnsupportedEventError(RuntimeError):
@@ -70,8 +100,11 @@ async def execute_agent(
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
     tool_completed: ToolCompleted | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Run one turn to completion, or to the next point it needs the user.
+
+    Returns why it stopped, in the shape the `session.status_idle` event
+    carries it.
 
     `events` is the batch that triggered this turn. Whether it starts a turn or
     answers a paused one is decided from the first event's type, not by asking
@@ -202,10 +235,13 @@ async def execute_agent(
         # Read the graph again rather than infer: whether it stopped for a human
         # is a fact it records, and deciding for ourselves would be a second
         # opinion that can disagree with it.
-        await emit(
-            event_types.SESSION_STATUS_IDLE,
-            {"stop_reason": _stop_reason(await graph.aget_state(config), interrupt_on)},
-        )
+        stop_reason = _stop_reason(await graph.aget_state(config), interrupt_on)
+        await emit(event_types.SESSION_STATUS_IDLE, {"stop_reason": stop_reason})
+        # Handed back as well as emitted. The event tells the client why the
+        # turn ended; the caller puts the same answer on the session row, where
+        # the gate can see it — a turn that stopped to ask leaves the session
+        # idle, and only the row says it is not free.
+        return stop_reason
 
 
 # --- turning the trigger event into graph input -----------------------------
