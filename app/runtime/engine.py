@@ -29,7 +29,7 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import DEEPSEEK, MODEL_CATALOG, OPENROUTER_SLUGS
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
 from app.runtime.tools import (
     AGENT_TOOLSET,
@@ -712,7 +712,16 @@ def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
 
     from langchain_openrouter import ChatOpenRouter
 
-    return ChatOpenRouter(model=slug, api_key=_require_key(api_key))
+    provider_routing = (
+        {"order": [DEEPSEEK], "allow_fallbacks": False}
+        if entry.provider == DEEPSEEK
+        else None
+    )
+    return ChatOpenRouter(
+        model=slug,
+        api_key=_require_key(api_key),
+        openrouter_provider=provider_routing,
+    )
 
 
 def _require_key(key: str) -> str:
