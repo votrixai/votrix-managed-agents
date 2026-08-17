@@ -79,6 +79,30 @@ AGENT_TOOL_USE = "agent.tool_use"
 AGENT_TOOL_RESULT = "agent.tool_result"
 AGENT_CUSTOM_TOOL_USE = "agent.custom_tool_use"
 
+# A preview of a message still being written, so a client has something to show
+# during the ten to thirty seconds one call takes. Deltas are not the log: the
+# `agent.message` that follows carries the whole text, and a client replaces
+# what it previewed with that rather than appending to it.
+#
+# These are the one thing here that is not an event. They are never written to
+# `session_events`, have no `seq`, and cannot be read back or resumed — they
+# travel on their own `NOTIFY` channel and are delivered only to streams open at
+# the moment they are published. A stream that opens mid-call has missed the
+# ones already sent and gets the rest; one that opens after the call has ended
+# sees none at all, and neither client is missing anything, because the
+# `agent.message` carries the whole text either way.
+#
+# That is deliberate rather than a limitation to fix later. Giving a preview a
+# `seq` makes it a row: an insert, a commit, a bump of the session's counter,
+# and a delete once the turn is over — the cost of a permanent record, paid four
+# times a second for something discarded seconds later. What a client actually
+# needs from a preview is that it arrives while the model is still talking, and
+# nothing about that requires it to survive.
+AGENT_MESSAGE_DELTA = "agent.message_delta"
+AGENT_THINKING_DELTA = "agent.thinking_delta"
+
+DELTA_EVENTS = (AGENT_MESSAGE_DELTA, AGENT_THINKING_DELTA)
+
 SESSION_STATUS_RUNNING = "session.status_running"
 SESSION_STATUS_IDLE = "session.status_idle"
 SESSION_STATUS_TERMINATED = "session.status_terminated"
@@ -195,6 +219,53 @@ class AgentThinkingEvent(RecordedEvent):
 
     type: Literal["agent.thinking"] = AGENT_THINKING
     content: list[TextBlock]
+
+
+class DeltaFrame(ApiModel):
+    """Something that appeared on the stream without being recorded.
+
+    Not a `RecordedEvent`, and the absent fields are the whole distinction —
+    no `id`, no `seq`, no `processed_at`, because none of those mean anything
+    for something that was never stored. A reader tells the two apart by type
+    rather than by inspecting fields, which is what this base class is for.
+
+    Incremental, not cumulative: a client appends these to build a preview, and
+    replaces the lot with the `agent.message` when it lands. The batching window
+    means one of these covers a few hundred milliseconds of output, not one
+    token.
+    """
+
+    text: str
+
+
+class AgentMessageDeltaFrame(DeltaFrame):
+    type: Literal["agent.message_delta"] = AGENT_MESSAGE_DELTA
+
+
+class AgentThinkingDeltaFrame(DeltaFrame):
+    """The same, for reasoning. Most of what a thinking model emits is this —
+    without it a client watching a turn sees nothing at all for most of it."""
+
+    type: Literal["agent.thinking_delta"] = AGENT_THINKING_DELTA
+
+
+_DELTA_FRAMES: dict[str, type[DeltaFrame]] = {
+    AGENT_MESSAGE_DELTA: AgentMessageDeltaFrame,
+    AGENT_THINKING_DELTA: AgentThinkingDeltaFrame,
+}
+
+
+def to_delta_frame(type: str, text: str) -> DeltaFrame | None:
+    """Build a frame from what came off the channel, or nothing.
+
+    Returns `None` for a type this build does not know rather than raising. The
+    payload crossed a process boundary from a publisher that may be running
+    different code — during a rollout it certainly is — and the correct response
+    to a preview we cannot name is to skip it. There is no message to be lost:
+    the `agent.message` it previewed is coming through the log regardless.
+    """
+    frame = _DELTA_FRAMES.get(type)
+    return None if frame is None else frame(text=text)
 
 
 class AgentToolUseEvent(RecordedEvent):

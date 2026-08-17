@@ -12,6 +12,7 @@ return, because every reader downstream goes to the event log instead.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,7 +30,13 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import (
+    DEFAULT_THINKING,
+    MODEL_CATALOG,
+    OPENROUTER_SLUGS,
+    THINKING_LEVELS,
+    ModelResponse,
+)
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
 from app.runtime.tools import (
     AGENT_TOOLSET,
@@ -44,6 +51,10 @@ from app.utils.sandbox import OUTPUTS_DIR, SKILLS_DIR, UPLOADS_DIR, WORKDIR, San
 from app.utils.timing import timed
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
+
+# Says a preview out loud. Distinct from `Emit` in the one way that matters:
+# nothing it is given is written down, so there is no event to hand back.
+Publish = Callable[[str, str], Awaitable[None]]
 ToolCompleted = Callable[[str], Awaitable[None]]
 _FILESYSTEM_MUTATORS = {"write_file", "edit_file", "execute"}
 
@@ -85,6 +96,10 @@ class UnknownModelError(ValueError):
     """A model id that is not in the catalogue."""
 
 
+class UnsupportedThinkingError(ValueError):
+    """A thinking level this build does not offer, or a model that has no dial."""
+
+
 class MissingProviderKeyError(RuntimeError):
     """The model exists but this deployment has no key for its provider."""
 
@@ -96,6 +111,7 @@ async def execute_agent(
     events: list[dict[str, Any]],
     sandbox: Sandbox,
     emit: Emit,
+    publish: Publish,
     inference_key: str,
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
@@ -214,11 +230,40 @@ async def execute_agent(
         # checkpoint write between the nodes — happens inside this loop, so
         # this number minus everything reported from within it is what is
         # still unaccounted for.
+        # `values` is the committed truth — one snapshot per node, and what the
+        # log is built from. `messages` is the same output arriving token by
+        # token while the node is still running, and is only ever a preview.
+        # Asking for both is what lets the second exist without the first
+        # having to change.
+        #
+        # The two go out by different routes on purpose. `emit` writes a row and
+        # is what a client can read back; `publish` says the text once to
+        # whoever is listening and keeps nothing. Handing the buffer `publish`
+        # rather than `emit` is the whole of the difference — a preview that
+        # took the `emit` path would allocate a seq and a row for every quarter
+        # second of a turn, and then need deleting.
+        deltas = _DeltaBuffer(publish)
         async with timed("graph_streamed", session_id=session.id) as span:
             steps = 0
-            async for values in graph.astream(graph_input, config, stream_mode="values"):
+            async for mode, payload in graph.astream(
+                graph_input, config, stream_mode=["values", "messages"]
+            ):
+                if mode == "messages":
+                    chunk, metadata = payload
+                    if (metadata or {}).get("langgraph_node") != _MODEL_NODE:
+                        continue
+                    _stream_delta(chunk, deltas)
+                    await deltas.flush_if_due()
+                    continue
+
                 steps += 1
-                messages = values.get("messages", [])
+                messages = payload.get("messages", [])
+                # Anything still buffered previewed a message that is now
+                # final, so it goes out ahead of it. Ordering holds across the
+                # two routes because this await completes before the row below
+                # is written, and Postgres delivers one connection's
+                # notifications in the order they were issued.
+                await deltas.flush()
                 for msg in messages[last_index:]:
                     await _translate(
                         msg,
@@ -229,6 +274,7 @@ async def execute_agent(
                         tool_completed,
                     )
                 last_index = len(messages)
+            await deltas.flush()
             span["steps"] = steps
             span["messages"] = last_index
 
@@ -336,6 +382,98 @@ def _stop_reason(state: Any, interrupt_on: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- turning graph output into events ----------------------------------------
+
+
+# The node the agent's own model runs in. Tools run in `tools`, and one of ours
+# calls a second model to read an image — without this filter that model's
+# output would stream out as though the agent had said it.
+_MODEL_NODE = "model"
+
+# A ceiling for a burst that outruns the clock, so one flush cannot build an
+# unbounded message. Counted in bytes rather than characters because what it
+# protects is the `NOTIFY` payload limit, and that limit is in bytes: CJK is
+# three of them per character, so a character-counted ceiling is wrong by 3x on
+# exactly the text most likely to be long.
+#
+# Deliberately well under `DELTA_PAYLOAD_BUDGET_BYTES`, so the splitting there
+# is a backstop that never runs in practice rather than part of the normal path.
+# Not configurable: this is about the size of one message, which is the same
+# everywhere, rather than about the cost of sending it.
+DELTA_MAX_BYTES = 2000
+
+
+class _DeltaBuffer:
+    """Batches streamed tokens into one published preview per flush window.
+
+    The model emits a chunk roughly every 25ms. Publishing each one would put a
+    database round trip between every token and the next — and this is awaited
+    inside the generation loop, so on a turn producing twelve thousand tokens
+    that is minutes of added wall clock, spent to make the turn *feel* faster.
+    Batching leaves the turn's own timing alone and still puts text on screen
+    twice a second.
+
+    Runs are kept in order rather than one buffer per kind: reasoning and
+    speech interleave, and flushing two buckets would reorder them.
+    """
+
+    def __init__(self, publish: Publish) -> None:
+        self._publish = publish
+        self._runs: list[tuple[str, list[str]]] = []
+        self._bytes = 0
+        self._window = get_settings().vma_delta_flush_seconds
+        self._due = time.monotonic() + self._window
+
+    def add(self, event_type: str, text: str) -> None:
+        if not text:
+            return
+        if self._runs and self._runs[-1][0] == event_type:
+            self._runs[-1][1].append(text)
+        else:
+            self._runs.append((event_type, [text]))
+        self._bytes += len(text.encode())
+
+    async def flush_if_due(self) -> None:
+        if self._bytes >= DELTA_MAX_BYTES or time.monotonic() >= self._due:
+            await self.flush()
+
+    async def flush(self) -> None:
+        """Publish what has accumulated, oldest run first.
+
+        Called before every committed event as well as on the clock: a preview
+        that arrived after the message it was previewing would read as the
+        model carrying on after it had finished.
+        """
+        runs, self._runs = self._runs, []
+        self._bytes = 0
+        self._due = time.monotonic() + self._window
+        for event_type, pieces in runs:
+            await self._publish(event_type, "".join(pieces))
+
+
+def _stream_delta(chunk: Any, deltas: _DeltaBuffer) -> None:
+    """Sort one streamed chunk into speech or reasoning.
+
+    `content_blocks` is LangChain's normalised view and is what `_translate`
+    reads, so the two agree on what counts as thinking. Chunks that predate it
+    fall back to the raw content, which is speech by definition — a provider
+    that puts reasoning there would be one where nothing could tell them apart.
+    """
+    blocks = getattr(chunk, "content_blocks", None)
+    if blocks:
+        for block in blocks:
+            kind = block.get("type")
+            if kind == "reasoning":
+                deltas.add(event_types.AGENT_THINKING_DELTA, block.get("reasoning") or "")
+            elif kind == "text":
+                deltas.add(event_types.AGENT_MESSAGE_DELTA, block.get("text") or "")
+        return
+
+    reasoning = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
+    if reasoning:
+        deltas.add(event_types.AGENT_THINKING_DELTA, str(reasoning))
+    content = getattr(chunk, "content", None)
+    if isinstance(content, str):
+        deltas.add(event_types.AGENT_MESSAGE_DELTA, content)
 
 
 async def _translate(
@@ -712,7 +850,62 @@ def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
 
     from langchain_openrouter import ChatOpenRouter
 
-    return ChatOpenRouter(model=slug, api_key=_require_key(api_key))
+    settings = get_settings()
+    options: dict[str, Any] = {}
+
+    # Unpinned is the deployed path: the gateway picks an upstream and may fall
+    # back when one is busy. A pin turns fallbacks off in the same breath,
+    # because a pin that quietly served a second provider would report that
+    # provider's latency under the first one's name — the one failure this
+    # switch exists to rule out. A busy upstream must fail loudly instead.
+    pinned = settings.openrouter_provider_only.strip()
+    if pinned:
+        options["openrouter_provider"] = {"only": [pinned], "allow_fallbacks": False}
+
+    thinking = _resolve_thinking(spec, entry)
+    if thinking is not None:
+        options["reasoning"] = {"effort": thinking}
+
+    return ChatOpenRouter(model=slug, api_key=_require_key(api_key), **options)
+
+
+def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str | None:
+    """How hard to think, from the spec that named the model.
+
+    It rides on the model spec rather than beside it because it is not separable
+    from the model: `low` means a different number of tokens on each of them,
+    and on two of the sixteen it means nothing at all. A Session that carries
+    one carries the other.
+
+    Note what the caller passes in — `session.model or version.model` — so a
+    Session naming a model replaces the Agent's spec whole rather than merging
+    with it. A Session that sets an id and no level gets the default, not the
+    Agent's level. That is how the id already behaved, and splitting the rule
+    per field would mean a Session could inherit half of a spec it overrode.
+
+    Raises rather than quietly dropping an unusable level. The gateway's own
+    behaviour here is to map to the nearest supported setting and say nothing,
+    which is the failure this refuses to pass on: a caller that asked for `high`
+    on a model with no dial would be shown `high` everywhere and get whatever
+    the model felt like, with nothing anywhere to say the two disagreed.
+    """
+    requested = None if isinstance(spec, str) else spec.get("thinking")
+
+    if requested is None:
+        return DEFAULT_THINKING if entry.thinking else None
+
+    level = str(requested).strip().lower()
+    if level not in THINKING_LEVELS:
+        allowed = ", ".join(THINKING_LEVELS)
+        raise UnsupportedThinkingError(
+            f"Unknown thinking level {requested!r}. Allowed: {allowed}"
+        )
+    if not entry.thinking:
+        raise UnsupportedThinkingError(
+            f"Model {entry.id!r} takes no thinking level — it reasons as it sees fit "
+            "and the gateway exposes no dial for it"
+        )
+    return level
 
 
 def _require_key(key: str) -> str:

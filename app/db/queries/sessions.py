@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -215,12 +218,105 @@ def event_channel() -> str:
     return f"vma_session_events_{get_settings().database_schema or 'public'}"
 
 
+def delta_channel() -> str:
+    """The channel streamed previews travel on, contents and all.
+
+    Separate from `event_channel` because the two carry opposite things. That
+    one is a doorbell: its payload is a session id, and the reader answers it by
+    running the query it was going to run anyway, which is why a notification
+    lost or doubled there costs nothing. This one *is* the payload — there is no
+    row to go back and read, so a lost notification loses the text.
+
+    That asymmetry is the reason they are not merged. A single channel would
+    have to be sniffed at the far end to tell an id from a preview, and every
+    process listening for one would wake for the other: the worker takes no
+    streams and would still be woken four times a second by every turn in the
+    tenant.
+    """
+    return f"vma_session_deltas_{get_settings().database_schema or 'public'}"
+
+
+# Postgres refuses a `NOTIFY` payload over 8000 bytes outright, and a refusal
+# here would abort the transaction the turn is running in — a dropped preview
+# taking the whole turn with it. This is what is left for the text once the
+# envelope and a session id are paid for, with enough slack that nobody has to
+# do this arithmetic again.
+DELTA_PAYLOAD_BUDGET_BYTES = 6000
+
+
+async def publish_delta(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    type: str,
+    text: str,
+) -> None:
+    """Broadcast a preview. No row, no seq, no commit of its own.
+
+    The entire cost is one round trip to say it. Nothing is inserted, and in
+    particular the session's `last_event_seq` is left alone — the counter that
+    `append_event` bumps sits on a single row, so writing previews through it
+    would rewrite that row four times a second for the length of every turn,
+    leaving a dead tuple each time and holding a lock every other writer to the
+    session queues behind.
+
+    Delivery is best effort by construction: Postgres drops a notification
+    nobody is listening for, so a turn no client is watching publishes into
+    silence and pays only for having spoken. That is the desired behaviour and
+    not a gap to close — what a preview is *for* expires the moment the
+    `agent.message` lands.
+    """
+    if not _wakes_readers(db):
+        return
+    channel = delta_channel()
+    for piece in _within_payload_budget(text):
+        payload = json.dumps(
+            {"s": session_id, "t": type, "x": piece},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        await db.execute(
+            sa_text("SELECT pg_notify(:channel, :payload)"),
+            {"channel": channel, "payload": payload},
+        )
+
+
+def _within_payload_budget(text: str) -> Iterator[str]:
+    """Split on a byte budget without splitting a character in half.
+
+    Almost always yields the whole string on the first pass; the engine's own
+    flush ceiling keeps a normal delta an order of magnitude under this. The
+    loop exists for the pathological case — a model that emits several thousand
+    characters between two flushes — where the alternative is a `NOTIFY` that
+    raises inside the turn.
+
+    Cutting on the byte budget can land in the middle of a multi-byte character,
+    so the cut walks back off any continuation byte (`10xxxxxx`) first. CJK is
+    three bytes per character, which is exactly where a naive character-count
+    ceiling would have been wrong.
+    """
+    raw = text.encode()
+    while raw:
+        if len(raw) <= DELTA_PAYLOAD_BUDGET_BYTES:
+            yield raw.decode()
+            return
+        cut = DELTA_PAYLOAD_BUDGET_BYTES
+        while cut > 0 and (raw[cut] & 0xC0) == 0x80:
+            cut -= 1
+        yield raw[:cut].decode()
+        raw = raw[cut:]
+
+
 def _wakes_readers(db: AsyncSession) -> bool:
     """Whether this database can carry a wake-up at all.
 
     SQLite has no `pg_notify`, and a fresh checkout runs on SQLite. There is
     nothing to fall back to and nothing to warn about: with no listener there is
     no reader waiting to be told, and the stream polls as it always did.
+
+    For previews this is not a degradation to the poll — it is their absence.
+    They live only on the channel, so on SQLite a turn simply has no previews
+    and a client sees whole messages, which is what it saw before any of this.
     """
     return db.get_bind().dialect.name == "postgresql"
 
@@ -242,6 +338,10 @@ async def list_events(
     `last_event_seq` anyway and does not have to have seen the last event to
     ask for the next. `after_id`/`before_id` are here so this page reads like
     every other one.
+
+    Nothing is filtered out. This returns the table, and the table is only the
+    log — streamed previews never reach it, so there is no longer a category of
+    row that has to be hidden from the transcript that stores it.
     """
     stmt = select(SessionEvent).where(
         SessionEvent.session_id == session_id,
