@@ -560,6 +560,9 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
     async def _emit(_event, _payload):
         return None
 
+    async def _publish(_event, _text):
+        return None
+
     await engine.execute_agent(
         session=SimpleNamespace(id="sess_model_resolution", model=session_model),
         version=SimpleNamespace(
@@ -573,6 +576,7 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
         events=[MESSAGE],
         sandbox=SimpleNamespace(to_deep_agent_backend=object()),
         emit=_emit,
+        publish=_publish,
         # Which model runs and whose key pays are separate questions; this test
         # only asks the first, so any credential will do.
         inference_key="sk-or-v1-test",

@@ -14,11 +14,40 @@ GOOGLE = "google"
 OPENAI = "openai"
 
 
+# How hard a model is asked to think, as a Session or Agent may set it.
+#
+# Three, where the gateway accepts seven. `minimal`, `medium` and `xhigh` are
+# real values there and not real settings here: DeepSeek collapses them to its
+# own low/high/max, and Gemini maps `xhigh` down to `high`. Offering a control
+# with four positions that do nothing is worse than offering one with three
+# that work — a user who picks `medium` and sees no change has been told a lie
+# by the interface, and there is nothing in the response to say so.
+THINKING_LEVELS = ("none", "low", "high")
+
+# What a Session gets when nobody says otherwise.
+#
+# Not "send nothing", which is what this used to do and is not the neutral
+# option it looks like: with the field absent each upstream applies its own
+# default, and DeepSeek's is thinking *on* at `high` — the slowest and priciest
+# setting available, arrived at by omission. Naming `low` here is what makes the
+# quiet default the cheap one.
+DEFAULT_THINKING = "low"
+
+
 class ModelResponse(ApiModel):
     id: str
     type: Literal["model"] = "model"
     provider: str
     display_name: str
+    # Whether this model takes a thinking level at all. A `false` here does not
+    # mean the model does not reason — every model below does — only that the
+    # gateway exposes no dial for it, so how deeply is the model's own business.
+    #
+    # Read off the gateway's `supported_parameters` rather than assumed per
+    # vendor, because it does not follow vendor lines: Claude Haiku 4.5 has no
+    # dial while every other Claude does, and Gemini 2.5 Pro has none while
+    # every Gemini 3 does.
+    thinking: bool = True
 
 
 # Ordered strongest first within each provider, because this is the list a
@@ -46,6 +75,7 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         id="claude-haiku-4-5",
         provider=ANTHROPIC,
         display_name="Claude Haiku 4.5",
+        thinking=False,
     ),
     ModelResponse(
         id="gemini-3.1-pro-preview",
@@ -71,6 +101,7 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         id="gemini-2.5-pro",
         provider=GOOGLE,
         display_name="Gemini 2.5 Pro",
+        thinking=False,
     ),
     ModelResponse(
         id="gpt-5.6-sol",
@@ -87,6 +118,12 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         provider=OPENAI,
         display_name="GPT-5.6 Luna",
     ),
+    # Undated on purpose. Dated snapshots were briefly listed beside these so
+    # two cuts of the same model could be timed against each other; that
+    # measurement is done, and a catalogue is a menu rather than a record of
+    # what has been tried. Which snapshot the gateway serves for an undated id
+    # is the gateway's business, and pinning one here would freeze every Session
+    # on it forever.
     ModelResponse(
         id="deepseek-v4-pro",
         provider=DEEPSEEK,
