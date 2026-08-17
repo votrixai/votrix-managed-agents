@@ -1,6 +1,7 @@
 """Shared FastAPI dependencies for the router layer."""
 
 import asyncio
+from dataclasses import dataclass
 from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, Header, HTTPException, status
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import human_auth
 from app.config import get_settings
 from app.db.engine import get_session_factory
-from app.db.models import VmaApiKey
+from app.db.models import MEMBER_ROLE_ADMIN, MEMBER_ROLE_OWNER, VmaApiKey
 from app.db.queries import organizations as organizations_q
 from app.db.queries import vma_api_keys as api_keys_q
 
@@ -73,6 +74,23 @@ async def authenticate(
 AuthenticatedKey = Annotated[VmaApiKey, Depends(authenticate)]
 
 
+@dataclass(frozen=True)
+class ConsolePrincipal:
+    """A verified Console user scoped to one active Organization."""
+
+    organization_id: str
+    user_id: str
+    membership_role: str | None
+    is_super_admin: bool = False
+
+    @property
+    def can_manage_all_api_keys(self) -> bool:
+        return self.is_super_admin or self.membership_role in {
+            MEMBER_ROLE_OWNER,
+            MEMBER_ROLE_ADMIN,
+        }
+
+
 async def get_organization_id(
     db: Db,
     x_api_key: Annotated[str | None, Header()] = None,
@@ -93,11 +111,70 @@ async def get_organization_id(
     the same tenant id consumed by every existing service and query.
     """
     if x_api_key:
-        return (await authenticate(db, x_api_key)).organization_id
+        organization_id = (await authenticate(db, x_api_key)).organization_id
+        await _finish_auth_transaction(db)
+        return organization_id
+
+    principal = await _resolve_console_principal(
+        db,
+        authorization=authorization,
+        x_organization_id=x_organization_id,
+        missing_auth_detail="Missing x-api-key",
+    )
+    await _finish_auth_transaction(db)
+    return principal.organization_id
+
+
+async def get_console_principal(
+    db: Db,
+    authorization: Annotated[
+        str | None,
+        Header(include_in_schema=False),
+    ] = None,
+    x_organization_id: Annotated[
+        str | None,
+        Header(include_in_schema=False),
+    ] = None,
+) -> ConsolePrincipal:
+    """Authenticate a human Console user; API keys are never accepted here."""
+    principal = await _resolve_console_principal(
+        db,
+        authorization=authorization,
+        x_organization_id=x_organization_id,
+        missing_auth_detail="Missing bearer token",
+    )
+    await _finish_auth_transaction(db)
+    return principal
+
+
+async def _finish_auth_transaction(db: AsyncSession) -> None:
+    """Release read locks before the request handler or response stream runs.
+
+    FastAPI keeps yielded dependencies alive until a streaming response ends.
+    Authentication returns primitive values or a detached dataclass, so its
+    read-only transaction has no reason to remain open. A handler sharing this
+    session starts a fresh transaction automatically on its first database
+    operation.
+    """
+    if db.in_transaction():
+        # This session is configured with expire_on_commit=False. Committing a
+        # read-only authentication transaction releases its database locks
+        # without expiring ORM objects another dependency may already hold.
+        await db.commit()
+
+
+async def _resolve_console_principal(
+    db: AsyncSession,
+    *,
+    authorization: str | None,
+    x_organization_id: str | None,
+    missing_auth_detail: str,
+) -> ConsolePrincipal:
+    """Verify one Supabase identity and its selected Organization membership."""
 
     scheme, _, access_token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not access_token:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing x-api-key")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, missing_auth_detail)
 
     organization_id = (x_organization_id or "").strip()
     if not organization_id or len(organization_id) > 64:
@@ -114,7 +191,12 @@ async def get_organization_id(
     if organization is None or organization.archived_at is not None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Organization access denied")
     if user.is_super_admin:
-        return organization.id
+        return ConsolePrincipal(
+            organization_id=organization.id,
+            user_id=user.id,
+            membership_role=None,
+            is_super_admin=True,
+        )
 
     membership = await organizations_q.get_member(
         db,
@@ -123,7 +205,11 @@ async def get_organization_id(
     )
     if membership is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Organization access denied")
-    return organization.id
+    return ConsolePrincipal(
+        organization_id=organization.id,
+        user_id=user.id,
+        membership_role=membership.role,
+    )
 
 
 async def get_api_key_id(api_key: AuthenticatedKey) -> str:
@@ -174,5 +260,6 @@ async def verify_task_caller(
 
 
 OrganizationId = Annotated[str, Depends(get_organization_id)]
+ConsoleIdentity = Annotated[ConsolePrincipal, Depends(get_console_principal)]
 ApiKeyId = Annotated[str, Depends(get_api_key_id)]
 TaskCaller = Depends(verify_task_caller)

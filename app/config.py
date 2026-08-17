@@ -59,14 +59,6 @@ class Settings(BaseSettings):
     # enumerate and revoke.
     openrouter_management_key: str = ""
 
-    # Holds every turn to one upstream provider behind the gateway, named by
-    # its slug (`deepseek`, `fireworks`, `together`, …). Empty — the deployed
-    # value — leaves routing to the gateway, which is right in production and
-    # ruinous for a measurement: consecutive turns land on different hosts, so
-    # the spread being timed is the routing, not the model. Set it only to hold
-    # the upstream still, and only for as long as that is what is being asked.
-    openrouter_provider_only: str = ""
-
     # How long streamed text is held before it becomes an event.
     #
     # What this really sets is how much of a database connection each in-flight

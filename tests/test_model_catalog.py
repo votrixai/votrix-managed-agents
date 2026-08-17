@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.llm import MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import DEEPSEEK, MODEL_CATALOG, OPENROUTER_SLUGS
 from app.runtime.engine import UnknownModelError, _build_chat_model
 
 
@@ -60,3 +60,19 @@ def test_every_catalog_model_builds_one_gateway_client():
     assert [client.model for client in built] == [
         OPENROUTER_SLUGS[m.id] for m in MODEL_CATALOG
     ]
+
+
+def test_deepseek_models_are_restricted_to_the_first_party_provider():
+    """DeepSeek models must never spill to third-party inference hosts."""
+    built = {
+        model.id: _build_chat_model(model.id, api_key="sk-or-v1-test")
+        for model in MODEL_CATALOG
+    }
+
+    for model in MODEL_CATALOG:
+        expected = (
+            {"only": [DEEPSEEK], "allow_fallbacks": False}
+            if model.provider == DEEPSEEK
+            else None
+        )
+        assert built[model.id].openrouter_provider == expected

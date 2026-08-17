@@ -31,6 +31,7 @@ from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
 from app.models.llm import (
+    DEEPSEEK,
     DEFAULT_THINKING,
     MODEL_CATALOG,
     OPENROUTER_SLUGS,
@@ -850,17 +851,13 @@ def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
 
     from langchain_openrouter import ChatOpenRouter
 
-    settings = get_settings()
     options: dict[str, Any] = {}
 
-    # Unpinned is the deployed path: the gateway picks an upstream and may fall
-    # back when one is busy. A pin turns fallbacks off in the same breath,
-    # because a pin that quietly served a second provider would report that
-    # provider's latency under the first one's name — the one failure this
-    # switch exists to rule out. A busy upstream must fail loudly instead.
-    pinned = settings.openrouter_provider_only.strip()
-    if pinned:
-        options["openrouter_provider"] = {"only": [pinned], "allow_fallbacks": False}
+    # DeepSeek traffic is intentionally confined to its first-party endpoint.
+    # If the OpenRouter workspace's data policy stops admitting that endpoint,
+    # fail the request rather than silently spilling it to a slower third party.
+    if entry.provider == DEEPSEEK:
+        options["openrouter_provider"] = {"only": [DEEPSEEK], "allow_fallbacks": False}
 
     thinking = _resolve_thinking(spec, entry)
     if thinking is not None:
