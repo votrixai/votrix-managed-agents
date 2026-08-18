@@ -379,11 +379,36 @@ async def send_events(
     # The whole batch goes, not the first of it. A paused graph is resumed with
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
-    await _dispatch_turn(
-        session_id=session_id,
-        generation=session.lock_version,
-        events=events,
-    )
+    generation = session.lock_version
+    try:
+        await _dispatch_turn(
+            session_id=session_id,
+            generation=generation,
+            events=events,
+        )
+    except Exception as exc:
+        # The events above are already committed. Returning a 500 now would tell
+        # the caller they were refused even though the session is holding their
+        # turn, leaving it `running` with no worker on the other side. Lock and
+        # re-read the row before failing it so an interrupt, a live worker, or a
+        # newer turn cannot be overwritten by this handoff's late failure.
+        logger.exception(
+            "turn_dispatch_failed",
+            session_id=session_id,
+            generation=generation,
+        )
+        await db.refresh(
+            session,
+            ["status", "lock_version", "last_event_seq"],
+            with_for_update=True,
+        )
+        if session.status == RUNNING and session.lock_version == generation:
+            await _fail(db, session, exc)
+        else:
+            # Release the FOR UPDATE lock even when somebody else already ended
+            # this generation. There is deliberately no error event to append to
+            # a turn this request no longer owns.
+            await db.commit()
     return appended
 
 
@@ -590,10 +615,12 @@ async def _dispatch_turn(
     that only came back when the agent was done would deliver the whole turn at
     the end, and no amount of streaming further down could undo that.
 
-    Failures are swallowed in either mode. The message really was accepted —
-    it is committed — and `_fail` records what went wrong as a `session.error`
-    event, so the client learns about it the same way it learns everything
-    else, instead of from a 500 on a request that actually succeeded.
+    A synchronous handoff failure propagates to `send_events`, which still owns
+    the request's database session and can record `_fail` safely. The message
+    really was accepted — it is committed — so the client learns about a failed
+    handoff from `session.error` and `session.status_idle`, not from a 500 on a
+    request that actually succeeded. Inline execution failures happen later and
+    are contained by `_run_inline_turn` instead.
     """
     if get_settings().turn_dispatch == "cloud":
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
@@ -631,6 +658,7 @@ async def process_session(
     *,
     session_id: str,
     events: list[dict[str, Any]],
+    expected_generation: int | None = None,
 ) -> None:
     """Run one turn. The API already claimed the session before enqueueing us.
 
@@ -644,7 +672,16 @@ async def process_session(
 
     # Either the turn was cancelled before we got here, or this is a second
     # delivery of a task we already ran. Both mean: do nothing.
-    if session.status != RUNNING:
+    if session.status != RUNNING or (
+        expected_generation is not None and session.lock_version != expected_generation
+    ):
+        logger.info(
+            "stale_turn_discarded",
+            session_id=session_id,
+            expected_generation=expected_generation,
+            current_generation=session.lock_version,
+            status=session.status,
+        )
         return
 
     sandbox = await sessions_q.get_sandbox(
@@ -853,7 +890,16 @@ async def _enqueue_task(
         name=f"{parent}/tasks/turn-{session_id}-{generation}",
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
-            url=f"{worker_url}/internal/sessions/{quote(session_id, safe='')}/process",
+            # A create response can be lost after Google accepted the task. If
+            # every retry then fails, the API releases this generation so the
+            # session remains usable. Carrying the generation to the worker is
+            # what stops that possibly-created task from arriving later and
+            # running inside a newer turn. A query parameter keeps rolling
+            # deploys compatible with older workers, which simply ignore it.
+            url=(
+                f"{worker_url}/internal/sessions/"
+                f"{quote(session_id, safe='')}/process?generation={generation}"
+            ),
             headers={"Content-Type": "application/json"},
             body=json.dumps({"events": events}).encode(),
             # Cloud Tasks signs the call, and the endpoint checks the signature.

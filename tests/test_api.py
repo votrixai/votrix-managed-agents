@@ -655,18 +655,18 @@ async def test_a_signed_call_from_the_queue_runs_the_turn(client, cloud_dispatch
         "google.oauth2.id_token.verify_oauth2_token",
         lambda token, request, audience: {"email": cloud_dispatch},
     )
-    ran: list[str] = []
+    ran: list[tuple[str, int | None]] = []
 
-    async def _run(db, *, session_id, events):
-        ran.append(session_id)
+    async def _run(db, *, session_id, events, expected_generation=None):
+        ran.append((session_id, expected_generation))
 
     monkeypatch.setattr("app.services.sessions.process_session", _run)
 
     response = await client.post(
-        "/internal/sessions/ses_1/process",
+        "/internal/sessions/ses_1/process?generation=7",
         json={"events": [{"type": "user.message"}]},
         headers={"Authorization": "Bearer whatever"},
     )
 
     assert response.status_code == 204
-    assert ran == ["ses_1"]
+    assert ran == [("ses_1", 7)]

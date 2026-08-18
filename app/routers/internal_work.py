@@ -33,7 +33,12 @@ class ProcessSessionRequest(ApiModel):
 
 
 @router.post("/{session_id}/process", status_code=204)
-async def process_session(session_id: str, body: ProcessSessionRequest, db: Db) -> None:
+async def process_session(
+    session_id: str,
+    body: ProcessSessionRequest,
+    db: Db,
+    generation: int | None = None,
+) -> None:
     """Run one turn.
 
     No organization header: a worker is woken by a queue, not by a tenant, so
@@ -46,6 +51,11 @@ async def process_session(session_id: str, body: ProcessSessionRequest, db: Db) 
     cannot succeed, against a session that has already been told it is over.
     """
     try:
-        await service.process_session(db, session_id=session_id, events=body.events)
+        await service.process_session(
+            db,
+            session_id=session_id,
+            events=body.events,
+            expected_generation=generation,
+        )
     except Exception:
         logger.exception("cloud_turn_failed", session_id=session_id)

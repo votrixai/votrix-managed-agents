@@ -319,6 +319,36 @@ async def test_a_cancelled_worker_stops_even_once_a_new_turn_is_running(db, sess
         await emit("agent.message", {"text": "from the turn before"})
 
 
+async def test_a_late_queued_turn_cannot_take_over_the_next_generation(db, session):
+    """The queue may have accepted a task whose success response was lost.
+
+    If dispatch recovery releases that turn and the user starts another one
+    before the old task arrives, the generation carried by the task is the only
+    thing distinguishing the stale work from the live `running` session.
+    """
+    await send(db, session)
+    await db.refresh(session)
+    stale_generation = session.lock_version
+    await sessions_q.release_session(db, session, status=IDLE)
+    await db.commit()
+
+    await send(db, session)
+    await db.refresh(session)
+    live_generation = session.lock_version
+    assert live_generation != stale_generation
+
+    await service.process_session(
+        db,
+        session_id=session.id,
+        events=[MESSAGE],
+        expected_generation=stale_generation,
+    )
+
+    await db.refresh(session)
+    assert session.status == RUNNING
+    assert session.lock_version == live_generation
+
+
 # --- handing the turn over ---------------------------------------------------
 #
 # Everything above stubs dispatch out entirely: accepting a message and running
@@ -408,7 +438,9 @@ async def test_a_queued_turn_calls_back_with_a_signed_request(cloud):
     await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
 
     request = cloud.created[0]["task"].http_request
-    assert request.url == "https://api.votrix.example/internal/sessions/ses_1/process"
+    assert request.url == (
+        "https://api.votrix.example/internal/sessions/ses_1/process?generation=3"
+    )
     # Signed for exactly the host it calls, so a token lifted off one deployment
     # is no use against another.
     assert request.oidc_token.audience == "https://api.votrix.example"
@@ -516,6 +548,60 @@ async def test_accepting_a_message_queues_it_rather_than_running_it(db, session,
     await send(db, session)
 
     assert ran == []
+    assert len(cloud.created) == 1
+
+
+async def test_an_unavailable_queue_after_a_tool_result_does_not_lose_the_session(
+    db, session, cloud, monkeypatch
+):
+    """Once a tool result is committed, dispatch failure is a turn error, not a 500.
+
+    The caller gets acknowledgement for the event that really was accepted, the
+    stream gets a terminal idle event, and the same session can take another
+    turn as soon as the queue is reachable again.
+    """
+    from google.api_core.exceptions import ServiceUnavailable
+
+    unavailable = True
+
+    async def _create(request):
+        if unavailable:
+            raise ServiceUnavailable("connection reset by peer")
+        cloud.created.append(request)
+
+    monkeypatch.setattr(cloud, "create_task", _create)
+    monkeypatch.setattr(service, "TASK_ENQUEUE_RETRY_DELAYS_SECONDS", ())
+    # `never_dispatch` is autouse, so restore the real cloud handoff here.
+    monkeypatch.setattr(service, "_dispatch_turn", REAL_DISPATCH)
+
+    # This is the publish-file path: the graph is parked on a custom tool call,
+    # and the backend sends either the published URL or a recoverable tool error
+    # back as the result that resumes it.
+    await park(db, session)
+    accepted = await send(db, session, ACTION_RESULT)
+
+    await db.refresh(session)
+    assert [event.type for event in accepted] == ["user.custom_tool_result"]
+    assert session.status == IDLE
+    assert session.stop_reason == {"type": "error"}
+    events = (await sessions_q.list_events(
+        db,
+        session_id=session.id,
+        organization_id=session.organization_id,
+    )).items
+    assert [event.type for event in events] == [
+        "user.custom_tool_result",
+        "session.error",
+        "session.status_idle",
+    ]
+    assert events[1].payload["error"]["type"] == "ServiceUnavailable"
+
+    unavailable = False
+    next_turn = await send(db, session)
+
+    await db.refresh(session)
+    assert [event.seq for event in next_turn] == [4]
+    assert session.status == RUNNING
     assert len(cloud.created) == 1
 
 
