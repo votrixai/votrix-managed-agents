@@ -447,6 +447,49 @@ async def test_a_turn_already_queued_is_not_queued_again(cloud, monkeypatch):
     await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
 
 
+async def test_a_transient_cloud_tasks_disconnect_retries_the_named_turn(
+    cloud, monkeypatch
+):
+    from google.api_core.exceptions import ServiceUnavailable
+
+    attempts: list[dict] = []
+
+    async def _flaky(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            raise ServiceUnavailable("connection reset by peer")
+
+    monkeypatch.setattr(cloud, "create_task", _flaky)
+    monkeypatch.setattr(service, "TASK_ENQUEUE_RETRY_DELAYS_SECONDS", (0,))
+
+    await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
+
+    assert len(attempts) == 2
+    assert attempts[0]["task"].name == attempts[1]["task"].name
+
+
+async def test_a_lost_cloud_tasks_response_can_settle_as_already_queued(
+    cloud, monkeypatch
+):
+    from google.api_core.exceptions import AlreadyExists, ServiceUnavailable
+
+    attempts = 0
+
+    async def _accepted_without_a_response(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ServiceUnavailable("response connection reset")
+        raise AlreadyExists("the first request created it")
+
+    monkeypatch.setattr(cloud, "create_task", _accepted_without_a_response)
+    monkeypatch.setattr(service, "TASK_ENQUEUE_RETRY_DELAYS_SECONDS", (0,))
+
+    await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
+
+    assert attempts == 2
+
+
 async def test_the_message_travels_with_the_task(cloud):
     """The worker is handed what to run, rather than looking it up — the event
     log is for clients, and the agent's own history lives in the checkpoint."""

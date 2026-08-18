@@ -91,6 +91,11 @@ SKILL_URL_TTL_SECONDS = 300
 # has to outlive one sandbox start.
 FILE_URL_TTL_SECONDS = 300
 
+# A Cloud Tasks create is safe to repeat because every turn has a deterministic
+# task name. If the first request reached Google but its response was lost, the
+# retry returns AlreadyExists and is treated as success below.
+TASK_ENQUEUE_RETRY_DELAYS_SECONDS = (0.1, 0.5)
+
 # The same ceiling CMA puts on an agent.
 MAX_SKILLS_PER_AGENT = 20
 MAX_MEMORY_STORES_PER_SESSION = 8
@@ -832,7 +837,7 @@ async def _enqueue_task(
     into at-most-once. `lock_version` is what makes the name unique: it moves
     every time a turn ends, so the next message on this session gets its own.
     """
-    from google.api_core.exceptions import AlreadyExists
+    from google.api_core.exceptions import AlreadyExists, ServiceUnavailable
     from google.cloud import tasks_v2
     from google.protobuf import duration_pb2
 
@@ -862,10 +867,26 @@ async def _enqueue_task(
         # never retries something that is merely still working.
         dispatch_deadline=duration_pb2.Duration(seconds=TURN_TIMEOUT_SECONDS + 120),
     )
-    try:
-        await client.create_task(request={"parent": parent, "task": task})
-    except AlreadyExists:
-        logger.info("turn_already_queued", session_id=session_id, generation=generation)
+    for attempt in range(len(TASK_ENQUEUE_RETRY_DELAYS_SECONDS) + 1):
+        try:
+            await client.create_task(request={"parent": parent, "task": task})
+            return
+        except AlreadyExists:
+            logger.info("turn_already_queued", session_id=session_id, generation=generation)
+            return
+        except ServiceUnavailable as exc:
+            if attempt == len(TASK_ENQUEUE_RETRY_DELAYS_SECONDS):
+                raise
+            delay = TASK_ENQUEUE_RETRY_DELAYS_SECONDS[attempt]
+            logger.warning(
+                "turn_enqueue_retry",
+                session_id=session_id,
+                generation=generation,
+                attempt=attempt + 1,
+                delay_seconds=delay,
+                error_type=type(exc).__name__,
+            )
+            await asyncio.sleep(delay)
 
 
 def _cloud_tasks_client():
