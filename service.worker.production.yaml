@@ -37,7 +37,7 @@ spec:
             - name: APP_ENV
               value: "production"
             - name: DATABASE_SCHEMA
-              value: "vma_rewrite_production"
+              value: "vma"
             - name: VMA_PUBLIC_BUILD_ID
               value: "__VMA_PUBLIC_BUILD_ID__"
             - name: VMA_GIT_COMMIT_SHA

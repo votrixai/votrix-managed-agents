@@ -27,7 +27,7 @@ steps:
         WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"
         RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
         DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"
-        DATABASE_SCHEMA="vma_rewrite_${_APP_ENV}"
+        DATABASE_SCHEMA="vma"
 
         echo "Waiting for $$IMAGE to become available..."
         for attempt in $$(seq 1 10); do

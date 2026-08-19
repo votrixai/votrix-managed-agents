@@ -51,7 +51,7 @@ API_MANIFEST="${REPO_ROOT}/service.production.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.production.yaml"
 MIGRATION_JOB="${PRODUCTION_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-direct"
-DATABASE_SCHEMA="vma_rewrite_production"
+DATABASE_SCHEMA="vma"
 
 if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   echo "Production deploys must run from a git checkout with a commit." >&2
