@@ -548,8 +548,8 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
             if False:
                 yield {}
 
-    def _capture(spec, *_args, **_kwargs):
-        built.append(spec)
+    def _capture(spec, *_args, **kwargs):
+        built.append({"spec": spec, **kwargs})
         return object()
 
     monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
@@ -582,4 +582,10 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
         inference_key="sk-or-v1-test",
     )
 
-    assert built == [expected]
+    assert built == [
+        {
+            "spec": expected,
+            "api_key": "sk-or-v1-test",
+            "session_id": "sess_model_resolution",
+        }
+    ]
