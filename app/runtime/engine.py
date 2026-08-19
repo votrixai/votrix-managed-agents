@@ -150,7 +150,9 @@ async def execute_agent(
     # the same container `read_file` reads from, and it is here because
     # `read_file` hands an image back as a content block — which is an answer
     # only if the agent's own model has eyes.
-    tools.append(read_image_tool(sandbox, api_key=inference_key))
+    tools.append(
+        read_image_tool(sandbox, api_key=inference_key, session_id=session.id)
+    )
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         tools.append(web_search_tool())
         tools.append(web_fetch_tool(sandbox))
@@ -190,7 +192,9 @@ async def execute_agent(
                 # separate questions: the model comes off the session or the
                 # agent, the key off the session's Account.
                 model=_build_chat_model(
-                    session.model or version.model or {}, api_key=inference_key
+                    session.model or version.model or {},
+                    api_key=inference_key,
+                    session_id=session.id,
                 ),
                 tools=tools,
                 system_prompt=_system_prompt(
@@ -826,7 +830,12 @@ def _system_prompt(
     return f"{configured}\n\n{workspace}" if configured else workspace
 
 
-def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
+def _build_chat_model(
+    spec: dict[str, Any] | str,
+    *,
+    api_key: str,
+    session_id: str,
+) -> Any:
     """A caller names a model; the credential is handed in, never looked up.
 
     Every model is reached through one gateway. The catalog's `provider`
@@ -863,7 +872,15 @@ def _build_chat_model(spec: dict[str, Any] | str, *, api_key: str) -> Any:
     if thinking is not None:
         options["reasoning"] = {"effort": thinking}
 
-    return ChatOpenRouter(model=slug, api_key=_require_key(api_key), **options)
+    return ChatOpenRouter(
+        model=slug,
+        api_key=_require_key(api_key),
+        # One VMA Session is one OpenRouter Session. Besides making the
+        # gateway's Sessions view useful, this gives every model call in the
+        # conversation the same sticky-routing key for prompt-cache reuse.
+        session_id=session_id,
+        **options,
+    )
 
 
 def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str | None:
