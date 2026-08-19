@@ -447,6 +447,49 @@ async def test_a_turn_already_queued_is_not_queued_again(cloud, monkeypatch):
     await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
 
 
+async def test_a_transient_cloud_tasks_disconnect_retries_the_named_turn(
+    cloud, monkeypatch
+):
+    from google.api_core.exceptions import ServiceUnavailable
+
+    attempts: list[dict] = []
+
+    async def _flaky(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            raise ServiceUnavailable("connection reset by peer")
+
+    monkeypatch.setattr(cloud, "create_task", _flaky)
+    monkeypatch.setattr(service, "TASK_ENQUEUE_RETRY_DELAYS_SECONDS", (0,))
+
+    await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
+
+    assert len(attempts) == 2
+    assert attempts[0]["task"].name == attempts[1]["task"].name
+
+
+async def test_a_lost_cloud_tasks_response_can_settle_as_already_queued(
+    cloud, monkeypatch
+):
+    from google.api_core.exceptions import AlreadyExists, ServiceUnavailable
+
+    attempts = 0
+
+    async def _accepted_without_a_response(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ServiceUnavailable("response connection reset")
+        raise AlreadyExists("the first request created it")
+
+    monkeypatch.setattr(cloud, "create_task", _accepted_without_a_response)
+    monkeypatch.setattr(service, "TASK_ENQUEUE_RETRY_DELAYS_SECONDS", (0,))
+
+    await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
+
+    assert attempts == 2
+
+
 async def test_the_message_travels_with_the_task(cloud):
     """The worker is handed what to run, rather than looking it up — the event
     log is for clients, and the agent's own history lives in the checkpoint."""
@@ -473,6 +516,60 @@ async def test_accepting_a_message_queues_it_rather_than_running_it(db, session,
     await send(db, session)
 
     assert ran == []
+    assert len(cloud.created) == 1
+
+
+async def test_an_unavailable_queue_after_a_tool_result_does_not_lose_the_session(
+    db, session, cloud, monkeypatch
+):
+    """Once a tool result is committed, dispatch failure is a turn error, not a 500.
+
+    The caller gets acknowledgement for the event that really was accepted, the
+    stream gets a terminal idle event, and the same session can take another
+    turn as soon as the queue is reachable again.
+    """
+    from google.api_core.exceptions import ServiceUnavailable
+
+    unavailable = True
+
+    async def _create(request):
+        if unavailable:
+            raise ServiceUnavailable("connection reset by peer")
+        cloud.created.append(request)
+
+    monkeypatch.setattr(cloud, "create_task", _create)
+    monkeypatch.setattr(service, "TASK_ENQUEUE_RETRY_DELAYS_SECONDS", ())
+    # `never_dispatch` is autouse, so restore the real cloud handoff here.
+    monkeypatch.setattr(service, "_dispatch_turn", REAL_DISPATCH)
+
+    # This is the publish-file path: the graph is parked on a custom tool call,
+    # and the backend sends either the published URL or a recoverable tool error
+    # back as the result that resumes it.
+    await park(db, session)
+    accepted = await send(db, session, ACTION_RESULT)
+
+    await db.refresh(session)
+    assert [event.type for event in accepted] == ["user.custom_tool_result"]
+    assert session.status == IDLE
+    assert session.stop_reason == {"type": "error"}
+    events = (await sessions_q.list_events(
+        db,
+        session_id=session.id,
+        organization_id=session.organization_id,
+    )).items
+    assert [event.type for event in events] == [
+        "user.custom_tool_result",
+        "session.error",
+        "session.status_idle",
+    ]
+    assert events[1].payload["error"]["type"] == "ServiceUnavailable"
+
+    unavailable = False
+    next_turn = await send(db, session)
+
+    await db.refresh(session)
+    assert [event.seq for event in next_turn] == [4]
+    assert session.status == RUNNING
     assert len(cloud.created) == 1
 
 
