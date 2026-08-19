@@ -319,36 +319,6 @@ async def test_a_cancelled_worker_stops_even_once_a_new_turn_is_running(db, sess
         await emit("agent.message", {"text": "from the turn before"})
 
 
-async def test_a_late_queued_turn_cannot_take_over_the_next_generation(db, session):
-    """The queue may have accepted a task whose success response was lost.
-
-    If dispatch recovery releases that turn and the user starts another one
-    before the old task arrives, the generation carried by the task is the only
-    thing distinguishing the stale work from the live `running` session.
-    """
-    await send(db, session)
-    await db.refresh(session)
-    stale_generation = session.lock_version
-    await sessions_q.release_session(db, session, status=IDLE)
-    await db.commit()
-
-    await send(db, session)
-    await db.refresh(session)
-    live_generation = session.lock_version
-    assert live_generation != stale_generation
-
-    await service.process_session(
-        db,
-        session_id=session.id,
-        events=[MESSAGE],
-        expected_generation=stale_generation,
-    )
-
-    await db.refresh(session)
-    assert session.status == RUNNING
-    assert session.lock_version == live_generation
-
-
 # --- handing the turn over ---------------------------------------------------
 #
 # Everything above stubs dispatch out entirely: accepting a message and running
@@ -438,9 +408,7 @@ async def test_a_queued_turn_calls_back_with_a_signed_request(cloud):
     await service._enqueue_task(session_id="ses_1", generation=3, events=[MESSAGE])
 
     request = cloud.created[0]["task"].http_request
-    assert request.url == (
-        "https://api.votrix.example/internal/sessions/ses_1/process?generation=3"
-    )
+    assert request.url == "https://api.votrix.example/internal/sessions/ses_1/process"
     # Signed for exactly the host it calls, so a token lifted off one deployment
     # is no use against another.
     assert request.oidc_token.audience == "https://api.votrix.example"

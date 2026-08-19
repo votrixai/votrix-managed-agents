@@ -379,35 +379,29 @@ async def send_events(
     # The whole batch goes, not the first of it. A paused graph is resumed with
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
-    generation = session.lock_version
     try:
         await _dispatch_turn(
             session_id=session_id,
-            generation=generation,
+            generation=session.lock_version,
             events=events,
         )
     except Exception as exc:
         # The events above are already committed. Returning a 500 now would tell
         # the caller they were refused even though the session is holding their
         # turn, leaving it `running` with no worker on the other side. Lock and
-        # re-read the row before failing it so an interrupt, a live worker, or a
-        # newer turn cannot be overwritten by this handoff's late failure.
-        logger.exception(
-            "turn_dispatch_failed",
-            session_id=session_id,
-            generation=generation,
-        )
+        # re-read the row before failing it so an interrupt or a worker that has
+        # already ended the turn cannot be overwritten by this late failure.
+        logger.exception("turn_dispatch_failed", session_id=session_id)
         await db.refresh(
             session,
-            ["status", "lock_version", "last_event_seq"],
+            ["status", "last_event_seq"],
             with_for_update=True,
         )
-        if session.status == RUNNING and session.lock_version == generation:
+        if session.status == RUNNING:
             await _fail(db, session, exc)
         else:
             # Release the FOR UPDATE lock even when somebody else already ended
-            # this generation. There is deliberately no error event to append to
-            # a turn this request no longer owns.
+            # the turn. There is deliberately no second error event to append.
             await db.commit()
     return appended
 
@@ -658,7 +652,6 @@ async def process_session(
     *,
     session_id: str,
     events: list[dict[str, Any]],
-    expected_generation: int | None = None,
 ) -> None:
     """Run one turn. The API already claimed the session before enqueueing us.
 
@@ -672,16 +665,7 @@ async def process_session(
 
     # Either the turn was cancelled before we got here, or this is a second
     # delivery of a task we already ran. Both mean: do nothing.
-    if session.status != RUNNING or (
-        expected_generation is not None and session.lock_version != expected_generation
-    ):
-        logger.info(
-            "stale_turn_discarded",
-            session_id=session_id,
-            expected_generation=expected_generation,
-            current_generation=session.lock_version,
-            status=session.status,
-        )
+    if session.status != RUNNING:
         return
 
     sandbox = await sessions_q.get_sandbox(
@@ -890,16 +874,7 @@ async def _enqueue_task(
         name=f"{parent}/tasks/turn-{session_id}-{generation}",
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
-            # A create response can be lost after Google accepted the task. If
-            # every retry then fails, the API releases this generation so the
-            # session remains usable. Carrying the generation to the worker is
-            # what stops that possibly-created task from arriving later and
-            # running inside a newer turn. A query parameter keeps rolling
-            # deploys compatible with older workers, which simply ignore it.
-            url=(
-                f"{worker_url}/internal/sessions/"
-                f"{quote(session_id, safe='')}/process?generation={generation}"
-            ),
+            url=f"{worker_url}/internal/sessions/{quote(session_id, safe='')}/process",
             headers={"Content-Type": "application/json"},
             body=json.dumps({"events": events}).encode(),
             # Cloud Tasks signs the call, and the endpoint checks the signature.
