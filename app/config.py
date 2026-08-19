@@ -145,8 +145,9 @@ class Settings(BaseSettings):
     e2b_api_key: str = ""
     # How long a container may sit idle before E2B pauses it. Long enough to
     # cover a model thinking between tool calls; short enough that an abandoned
-    # session is not billed all afternoon.
-    sandbox_timeout_seconds: int = 900
+    # session is not billed all afternoon. Keep the default above the command
+    # timeout so a maximum-length command has time to return before auto-pause.
+    sandbox_timeout_seconds: int = 360
     sandbox_command_timeout_seconds: int = 300
     # Long enough for a container to finish a transfer, short enough that a URL
     # in a log is worth nothing by the time anyone reads it.

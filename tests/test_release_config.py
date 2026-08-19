@@ -227,8 +227,8 @@ def test_runtime_manifests_use_the_actual_sandbox_timeout_setting():
     expected = {
         "service.staging.yaml": "300",
         "service.worker.staging.yaml": "300",
-        "service.production.yaml": "900",
-        "service.worker.production.yaml": "900",
+        "service.production.yaml": "360",
+        "service.worker.production.yaml": "360",
     }
 
     for name, timeout in expected.items():

@@ -91,7 +91,7 @@ spec:
             - name: VMA_E2B_GUEST_USER
               value: "user"
             - name: SANDBOX_TIMEOUT_SECONDS
-              value: "900"
+              value: "360"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
             - name: VMA_E2B_KEEP_MEMORY
