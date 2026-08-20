@@ -39,6 +39,7 @@ from app.models.llm import (
     ModelResponse,
 )
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
+from app.runtime.model_usage import OpenRouterUsageSpans
 from app.runtime.tools import (
     AGENT_TOOLSET,
     WEB_TOOLSET,
@@ -134,6 +135,7 @@ async def execute_agent(
     """
     config = {"configurable": {"thread_id": session.id}}
     declared = version.tools or []
+    usage_spans = OpenRouterUsageSpans(emit)
 
     # DeepAgents' native tools are never filtered — whatever create_deep_agent()
     # installs is exactly what the model gets. Config only ever decides which of
@@ -151,7 +153,12 @@ async def execute_agent(
     # `read_file` hands an image back as a content block — which is an answer
     # only if the agent's own model has eyes.
     tools.append(
-        read_image_tool(sandbox, api_key=inference_key, session_id=session.id)
+        read_image_tool(
+            sandbox,
+            api_key=inference_key,
+            session_id=session.id,
+            usage_spans=usage_spans,
+        )
     )
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         tools.append(web_search_tool())
@@ -195,6 +202,7 @@ async def execute_agent(
                     session.model or version.model or {},
                     api_key=inference_key,
                     session_id=session.id,
+                    callbacks=[usage_spans],
                 ),
                 tools=tools,
                 system_prompt=_system_prompt(
@@ -835,6 +843,7 @@ def _build_chat_model(
     *,
     api_key: str,
     session_id: str,
+    callbacks: list[Any] | None = None,
 ) -> Any:
     """A caller names a model; the credential is handed in, never looked up.
 
@@ -879,6 +888,9 @@ def _build_chat_model(
         # gateway's Sessions view useful, this gives every model call in the
         # conversation the same sticky-routing key for prompt-cache reuse.
         session_id=session_id,
+        # The final streaming chunk is where OpenRouter reports usage.
+        stream_usage=True,
+        callbacks=callbacks,
         **options,
     )
 

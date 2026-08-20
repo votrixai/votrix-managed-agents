@@ -18,6 +18,10 @@ three seconds into a turn.
       agent.custom_tool_use     tool_use_id  name  input
       agent.tool_result         tool_use_id  content[]  is_error
 
+    model request spans
+      span.model_request_start  —
+      span.model_request_end    model_request_start_id  model_usage  is_error
+
     session lifecycle
       session.status_running    —
       session.status_idle       stop_reason
@@ -59,6 +63,7 @@ from app.models.common import ApiModel, ListResponse
 #     user.*     client -> agent
 #     system.*   client -> agent, appended context (does not start a run)
 #     agent.*    agent -> client
+#     span.*     model request telemetry
 #     session.*  session lifecycle
 
 USER_MESSAGE = "user.message"
@@ -78,6 +83,9 @@ AGENT_THINKING = "agent.thinking"
 AGENT_TOOL_USE = "agent.tool_use"
 AGENT_TOOL_RESULT = "agent.tool_result"
 AGENT_CUSTOM_TOOL_USE = "agent.custom_tool_use"
+
+SPAN_MODEL_REQUEST_START = "span.model_request_start"
+SPAN_MODEL_REQUEST_END = "span.model_request_end"
 
 # A preview of a message still being written, so a client has something to show
 # during the ten to thirty seconds one call takes. Deltas are not the log: the
@@ -298,6 +306,29 @@ class AgentToolResultEvent(RecordedEvent):
     is_error: bool = False
 
 
+# --- span.* ------------------------------------------------------------------
+
+
+class ModelUsage(ApiModel):
+    """CMA's usage buckets, sourced only from OpenRouter's final report."""
+
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    cache_creation_input_tokens: int = Field(ge=0)
+    cache_read_input_tokens: int = Field(ge=0)
+
+
+class SpanModelRequestStartEvent(RecordedEvent):
+    type: Literal["span.model_request_start"] = SPAN_MODEL_REQUEST_START
+
+
+class SpanModelRequestEndEvent(RecordedEvent):
+    type: Literal["span.model_request_end"] = SPAN_MODEL_REQUEST_END
+    model_request_start_id: str
+    model_usage: ModelUsage
+    is_error: bool
+
+
 # --- session.* ---------------------------------------------------------------
 
 
@@ -390,6 +421,8 @@ EventResponse = Annotated[
         AgentToolUseEvent,
         AgentCustomToolUseEvent,
         AgentToolResultEvent,
+        SpanModelRequestStartEvent,
+        SpanModelRequestEndEvent,
         SessionStatusRunningEvent,
         SessionStatusIdleEvent,
             SessionStatusTerminatedEvent,
@@ -444,7 +477,7 @@ class ListEventsResponse(ListResponse[EventResponse]):
 #
 # A stored row is `type` plus a JSON blob. Turning one back into its own shape
 # lives here rather than in the router, because this is the file that knows all
-# fourteen of them and the router would only be guessing.
+# of them and the router would only be guessing.
 
 _EVENT_CLASSES = (
     UserMessageEvent,
@@ -456,6 +489,8 @@ _EVENT_CLASSES = (
     AgentToolUseEvent,
     AgentCustomToolUseEvent,
     AgentToolResultEvent,
+    SpanModelRequestStartEvent,
+    SpanModelRequestEndEvent,
     SessionStatusRunningEvent,
     SessionStatusIdleEvent,
     SessionStatusTerminatedEvent,

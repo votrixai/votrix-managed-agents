@@ -629,6 +629,7 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
     from app.runtime import engine
 
     built: list[dict] = []
+    image_usage_spans: list[object] = []
 
     class _Checkpoint:
         async def __aenter__(self):
@@ -651,7 +652,11 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
 
     monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
     monkeypatch.setattr(engine, "_build_chat_model", _capture)
-    monkeypatch.setattr(engine, "read_image_tool", lambda *_a, **_kw: object())
+    def _read_image(*_args, **kwargs):
+        image_usage_spans.append(kwargs["usage_spans"])
+        return object()
+
+    monkeypatch.setattr(engine, "read_image_tool", _read_image)
     monkeypatch.setattr(engine, "create_deep_agent", lambda **_kw: _Graph())
 
     async def _emit(_event, _payload):
@@ -679,6 +684,7 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
         inference_key="sk-or-v1-test",
     )
 
+    callbacks = built[0].pop("callbacks")
     assert built == [
         {
             "spec": expected,
@@ -686,3 +692,5 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
             "session_id": "sess_model_resolution",
         }
     ]
+    assert len(callbacks) == 1
+    assert image_usage_spans == callbacks

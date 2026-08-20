@@ -2514,6 +2514,12 @@
                       "$ref": "#/components/schemas/AgentToolResultEvent"
                     },
                     {
+                      "$ref": "#/components/schemas/SpanModelRequestStartEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SpanModelRequestEndEvent"
+                    },
+                    {
                       "$ref": "#/components/schemas/SessionStatusRunningEvent"
                     },
                     {
@@ -2538,6 +2544,8 @@
                       "agent.tool_use": "#/components/schemas/AgentToolUseEvent",
                       "agent.custom_tool_use": "#/components/schemas/AgentCustomToolUseEvent",
                       "agent.tool_result": "#/components/schemas/AgentToolResultEvent",
+                      "span.model_request_start": "#/components/schemas/SpanModelRequestStartEvent",
+                      "span.model_request_end": "#/components/schemas/SpanModelRequestEndEvent",
                       "session.status_running": "#/components/schemas/SessionStatusRunningEvent",
                       "session.status_idle": "#/components/schemas/SessionStatusIdleEvent",
                       "session.status_terminated": "#/components/schemas/SessionStatusTerminatedEvent",
@@ -6247,6 +6255,12 @@
                   "$ref": "#/components/schemas/AgentToolResultEvent"
                 },
                 {
+                  "$ref": "#/components/schemas/SpanModelRequestStartEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SpanModelRequestEndEvent"
+                },
+                {
                   "$ref": "#/components/schemas/SessionStatusRunningEvent"
                 },
                 {
@@ -6271,6 +6285,8 @@
                   "session.status_idle": "#/components/schemas/SessionStatusIdleEvent",
                   "session.status_running": "#/components/schemas/SessionStatusRunningEvent",
                   "session.status_terminated": "#/components/schemas/SessionStatusTerminatedEvent",
+                  "span.model_request_end": "#/components/schemas/SpanModelRequestEndEvent",
+                  "span.model_request_start": "#/components/schemas/SpanModelRequestStartEvent",
                   "user.custom_tool_result": "#/components/schemas/UserCustomToolResultEvent",
                   "user.interrupt": "#/components/schemas/UserInterruptEvent",
                   "user.message": "#/components/schemas/UserMessageEvent",
@@ -6868,6 +6884,35 @@
         "type": "object",
         "title": "MemoryStoreUpdateRequest"
       },
+      "ModelUsage": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0
+          },
+          "cache_creation_input_tokens": {
+            "type": "integer",
+            "minimum": 0.0
+          },
+          "cache_read_input_tokens": {
+            "type": "integer",
+            "minimum": 0.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cache_creation_input_tokens",
+          "cache_read_input_tokens"
+        ],
+        "title": "ModelUsage"
+      },
       "PackagesConfig": {
         "properties": {
           "apt": {
@@ -7004,6 +7049,12 @@
                   "$ref": "#/components/schemas/AgentToolResultEvent"
                 },
                 {
+                  "$ref": "#/components/schemas/SpanModelRequestStartEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/SpanModelRequestEndEvent"
+                },
+                {
                   "$ref": "#/components/schemas/SessionStatusRunningEvent"
                 },
                 {
@@ -7028,6 +7079,8 @@
                   "session.status_idle": "#/components/schemas/SessionStatusIdleEvent",
                   "session.status_running": "#/components/schemas/SessionStatusRunningEvent",
                   "session.status_terminated": "#/components/schemas/SessionStatusTerminatedEvent",
+                  "span.model_request_end": "#/components/schemas/SpanModelRequestEndEvent",
+                  "span.model_request_start": "#/components/schemas/SpanModelRequestStartEvent",
                   "user.custom_tool_result": "#/components/schemas/UserCustomToolResultEvent",
                   "user.interrupt": "#/components/schemas/UserInterruptEvent",
                   "user.message": "#/components/schemas/UserMessageEvent",
@@ -7558,6 +7611,72 @@
           "updated_at"
         ],
         "title": "SkillResponse"
+      },
+      "SpanModelRequestEndEvent": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "processed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string",
+            "const": "span.model_request_end",
+            "default": "span.model_request_end"
+          },
+          "model_request_start_id": {
+            "type": "string"
+          },
+          "model_usage": {
+            "$ref": "#/components/schemas/ModelUsage"
+          },
+          "is_error": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "seq",
+          "processed_at",
+          "model_request_start_id",
+          "model_usage",
+          "is_error"
+        ],
+        "title": "SpanModelRequestEndEvent"
+      },
+      "SpanModelRequestStartEvent": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "processed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string",
+            "const": "span.model_request_start",
+            "default": "span.model_request_start"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "seq",
+          "processed_at"
+        ],
+        "title": "SpanModelRequestStartEvent"
       },
       "TextBlock": {
         "properties": {
