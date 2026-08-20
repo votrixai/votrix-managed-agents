@@ -91,6 +91,11 @@ SKILL_URL_TTL_SECONDS = 300
 # has to outlive one sandbox start.
 FILE_URL_TTL_SECONDS = 300
 
+# A Cloud Tasks create is safe to repeat because every turn has a deterministic
+# task name. If the first request reached Google but its response was lost, the
+# retry returns AlreadyExists and is treated as success below.
+TASK_ENQUEUE_RETRY_DELAYS_SECONDS = (0.1, 0.5)
+
 # The same ceiling CMA puts on an agent.
 MAX_SKILLS_PER_AGENT = 20
 MAX_MEMORY_STORES_PER_SESSION = 8
@@ -119,6 +124,8 @@ STREAM_MAX_SECONDS = 1800
 STREAM_BATCH = 100
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[SessionEvent]]
+# Returns nothing, because nothing is stored. See `_publisher`.
+Publish = Callable[[str, str], Awaitable[None]]
 
 logger = structlog.get_logger(__name__)
 
@@ -372,11 +379,30 @@ async def send_events(
     # The whole batch goes, not the first of it. A paused graph is resumed with
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
-    await _dispatch_turn(
-        session_id=session_id,
-        generation=session.lock_version,
-        events=events,
-    )
+    try:
+        await _dispatch_turn(
+            session_id=session_id,
+            generation=session.lock_version,
+            events=events,
+        )
+    except Exception as exc:
+        # The events above are already committed. Returning a 500 now would tell
+        # the caller they were refused even though the session is holding their
+        # turn, leaving it `running` with no worker on the other side. Lock and
+        # re-read the row before failing it so an interrupt or a worker that has
+        # already ended the turn cannot be overwritten by this late failure.
+        logger.exception("turn_dispatch_failed", session_id=session_id)
+        await db.refresh(
+            session,
+            ["status", "last_event_seq"],
+            with_for_update=True,
+        )
+        if session.status == RUNNING:
+            await _fail(db, session, exc)
+        else:
+            # Release the FOR UPDATE lock even when somebody else already ended
+            # the turn. There is deliberately no second error event to append.
+            await db.commit()
     return appended
 
 
@@ -454,6 +480,9 @@ async def list_events(
     The session is returned rather than discarded because the ownership check
     had to load it anyway, and its `last_event_seq` is what tells a caller
     whether the window it just asked for was aimed at the right end.
+
+    Previews never appear here, and nothing filters them out — they were never
+    written. This is the transcript: what was said, read back afterwards.
     """
     session = await get_session(db, session_id=session_id, organization_id=organization_id)
     page = await sessions_q.list_events(
@@ -480,7 +509,7 @@ async def stream_events(
     session_id: str,
     organization_id: str,
     after_seq: int | None = None,
-) -> AsyncIterator[SessionEvent | None]:
+) -> AsyncIterator[SessionEvent | event_types.DeltaFrame | None]:
     """Yield events as they are written, then keep waiting for more.
 
     Reads the table rather than watching the turn, because the turn is not
@@ -488,6 +517,14 @@ async def stream_events(
     belongs to a different request than this one. What makes that work is that
     a turn commits one event at a time — so a reader sees each one within a
     poll of it being written, rather than the whole turn at the end.
+
+    Previews arrive by a second route and are yielded alongside. They are not
+    rows and never were: they come off a `NOTIFY` channel carrying their own
+    text, so the loop below hands them straight on without going near the
+    table. That separation is the point of the design — during a long stretch
+    of reasoning the log has nothing new in it for thirty seconds, and a stream
+    that had to query to find each preview would be querying twice a second to
+    be told so.
 
     Takes no database session from the caller and holds none of its own. A
     stream lives for as long as someone is watching, and a connection held open
@@ -504,34 +541,51 @@ async def stream_events(
 
     last_seq = after_seq or 0
     deadline = time.monotonic() + STREAM_MAX_SECONDS
-    while time.monotonic() < deadline:
-        async with session_scope() as db:
-            page = await sessions_q.list_events(
-                db,
-                session_id=session_id,
-                organization_id=organization_id,
-                after_seq=last_seq,
-                limit=STREAM_BATCH,
-            )
-            events = page.items
-            session = await sessions_q.get_session(
-                db, session_id=session_id, organization_id=organization_id
-            )
+    # Subscribed for the life of the stream, and only for that: previews are
+    # delivered to connections that are open when they are published, so this
+    # is both where they start arriving and the reason none accumulate for a
+    # client that has gone.
+    async with event_broker.deltas(session_id) as previews:
+        while time.monotonic() < deadline:
+            # Drained before the query, so a preview never waits behind a round
+            # trip it has nothing to do with.
+            for type, text in previews.drain():
+                frame = event_types.to_delta_frame(type, text)
+                if frame is not None:
+                    yield frame
 
-        for event in events:
-            last_seq = event.seq
-            yield event
+            async with session_scope() as db:
+                page = await sessions_q.list_events(
+                    db,
+                    session_id=session_id,
+                    organization_id=organization_id,
+                    after_seq=last_seq,
+                    limit=STREAM_BATCH,
+                )
+                events = page.items
+                session = await sessions_q.get_session(
+                    db, session_id=session_id, organization_id=organization_id
+                )
 
-        # A terminated session will never produce another event, and a deleted
-        # one has nothing left to watch.
-        if session is None or session.status == TERMINATED:
-            return
-        if not events:
-            yield None
-            # Waits to be told, and falls back to the poll interval when there
-            # is nobody to tell it. Either way what happens next is this same
-            # query, so the two are the same code path.
-            await event_broker.wait(session_id, poll_interval=STREAM_POLL_SECONDS)
+            for event in events:
+                last_seq = event.seq
+                yield event
+
+            # A terminated session will never produce another event, and a
+            # deleted one has nothing left to watch.
+            if session is None or session.status == TERMINATED:
+                return
+            if not events:
+                yield None
+                # Waits to be told, and falls back to the poll interval when
+                # there is nobody to tell it. Either signal brings us back to
+                # the top, where previews are drained and the table is read —
+                # the caller does not need to know which one fired.
+                await event_broker.wait(
+                    session_id,
+                    poll_interval=STREAM_POLL_SECONDS,
+                    previews=previews,
+                )
 
 
 # Inline turns in flight. Held here because asyncio keeps only a weak
@@ -555,10 +609,12 @@ async def _dispatch_turn(
     that only came back when the agent was done would deliver the whole turn at
     the end, and no amount of streaming further down could undo that.
 
-    Failures are swallowed in either mode. The message really was accepted —
-    it is committed — and `_fail` records what went wrong as a `session.error`
-    event, so the client learns about it the same way it learns everything
-    else, instead of from a 500 on a request that actually succeeded.
+    A synchronous handoff failure propagates to `send_events`, which still owns
+    the request's database session and can record `_fail` safely. The message
+    really was accepted — it is committed — so the client learns about a failed
+    handoff from `session.error` and `session.status_idle`, not from a 500 on a
+    request that actually succeeded. Inline execution failures happen later and
+    are contained by `_run_inline_turn` instead.
     """
     if get_settings().turn_dispatch == "cloud":
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
@@ -694,6 +750,7 @@ async def process_session(
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
                     emit=_emitter(db, session, generation),
+                    publish=_publisher(db, session),
                 ),
                 timeout=TURN_TIMEOUT_SECONDS,
             )
@@ -710,6 +767,9 @@ async def process_session(
         raise
     finally:
         heartbeat.cancel()
+        # No cleanup of previews here, and none anywhere else either. They were
+        # never written down, so a turn that ends — or is killed outright —
+        # leaves nothing behind to collect.
 
     # Before the release, never after: the client takes `idle` as the sign that
     # the turn is done, and everything the turn produced has to be fetchable by
@@ -756,6 +816,37 @@ def _emitter(db: AsyncSession, session: Session, generation: int) -> Emit:
     return emit
 
 
+def _publisher(db: AsyncSession, session: Session) -> Publish:
+    """Build the callback the engine speaks its previews through.
+
+    Deliberately not a sibling of `_emitter`, and shorter by everything that
+    makes one expensive. There is no generation check, because a preview from a
+    cancelled turn is a few words that no longer match anything and that the
+    next real event replaces regardless — refusing it would spend a `refresh`
+    round trip twice a second to prevent nothing. There is no row, so no `seq`
+    is allocated and the session's counter is left alone.
+
+    The commit is not optional, which is the one thing here worth knowing.
+    Postgres holds a notification until the transaction that issued it commits,
+    and between two `emit` calls nothing else commits — during a long stretch of
+    reasoning there are no committed events at all. Leaving it out would queue
+    every preview until the model stopped talking and then deliver them at once,
+    which is the behaviour this whole path exists to remove. So a preview costs
+    two round trips: saying it, and making it true. Against the four an event
+    costs — a refresh, a counter update, an insert, a commit — and against the
+    row, the dead tuple and the lock contention on the session those imply, it
+    is the difference between spending a connection and borrowing one.
+    """
+
+    async def publish(type: str, text: str) -> None:
+        await sessions_q.publish_delta(
+            db, session_id=session.id, type=type, text=text
+        )
+        await db.commit()
+
+    return publish
+
+
 async def _enqueue_task(
     *, session_id: str, generation: int, events: list[dict[str, Any]]
 ) -> None:
@@ -767,7 +858,7 @@ async def _enqueue_task(
     into at-most-once. `lock_version` is what makes the name unique: it moves
     every time a turn ends, so the next message on this session gets its own.
     """
-    from google.api_core.exceptions import AlreadyExists
+    from google.api_core.exceptions import AlreadyExists, ServiceUnavailable
     from google.cloud import tasks_v2
     from google.protobuf import duration_pb2
 
@@ -797,10 +888,26 @@ async def _enqueue_task(
         # never retries something that is merely still working.
         dispatch_deadline=duration_pb2.Duration(seconds=TURN_TIMEOUT_SECONDS + 120),
     )
-    try:
-        await client.create_task(request={"parent": parent, "task": task})
-    except AlreadyExists:
-        logger.info("turn_already_queued", session_id=session_id, generation=generation)
+    for attempt in range(len(TASK_ENQUEUE_RETRY_DELAYS_SECONDS) + 1):
+        try:
+            await client.create_task(request={"parent": parent, "task": task})
+            return
+        except AlreadyExists:
+            logger.info("turn_already_queued", session_id=session_id, generation=generation)
+            return
+        except ServiceUnavailable as exc:
+            if attempt == len(TASK_ENQUEUE_RETRY_DELAYS_SECONDS):
+                raise
+            delay = TASK_ENQUEUE_RETRY_DELAYS_SECONDS[attempt]
+            logger.warning(
+                "turn_enqueue_retry",
+                session_id=session_id,
+                generation=generation,
+                attempt=attempt + 1,
+                delay_seconds=delay,
+                error_type=type(exc).__name__,
+            )
+            await asyncio.sleep(delay)
 
 
 def _cloud_tasks_client():

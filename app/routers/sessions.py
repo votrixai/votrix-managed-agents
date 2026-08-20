@@ -11,6 +11,7 @@ from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
 from app.models.events import (
+    DeltaFrame,
     EventResponse,
     ListEventsResponse,
     SendEventsRequest,
@@ -244,6 +245,14 @@ async def _sse(
                 yield ": keep-alive\n\n"
             continue
         quiet_since = time.monotonic()
+        if isinstance(event, DeltaFrame):
+            # No `id:`, deliberately. That field is what the browser stores and
+            # sends back as `Last-Event-ID`, and it means "resume after this
+            # point in the log" — a preview has no point in the log. Numbering
+            # one would tell a reconnecting client to skip past events it has
+            # never seen.
+            yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
+            continue
         yield (
             f"id: {event.seq}\n"
             f"event: {event.type}\n"

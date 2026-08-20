@@ -59,6 +59,31 @@ class Settings(BaseSettings):
     # enumerate and revoke.
     openrouter_management_key: str = ""
 
+    # How long streamed text is held before it becomes an event.
+    #
+    # What this really sets is how much of a database connection each in-flight
+    # turn holds. A flush borrows a connection for a checkout ping, the
+    # `UPDATE ... RETURNING` that allocates the seq, the insert and the commit —
+    # four round trips, so ~100ms at the 25ms the deployed pooler answers in.
+    # Against a 250ms window that is half a connection per turn, and this pool
+    # hands out ten while the worker is allowed twenty concurrent turns: deltas
+    # alone would claim every connection the service has, and they are not the
+    # only thing asking. Agent messages, session state and an interrupt all
+    # queue behind them. Doubling the window halves the claim.
+    #
+    # It does not go higher because the window is also the floor on how often a
+    # short reply appears to move. A hundred-character answer flushes three or
+    # four times at 0.5s and once or twice at 1s, and something that arrives in
+    # two pieces is not streaming. Going lower buys nothing anyone can see: at
+    # 80 tokens/s a 0.5s window carries about sixty characters, which is already
+    # an order of magnitude past reading speed.
+    #
+    # A knob rather than a constant because the cost of a flush is the round
+    # trip to the database, and that is environment, not code: deployed beside
+    # Postgres it is milliseconds, while a laptop reaching a hosted database
+    # pays hundreds and needs a much longer window to keep turns responsive.
+    vma_delta_flush_seconds: float = 0.5
+
     # Base64url AES-256 key wrapping provider secrets at rest. Without it no
     # Account credential can be written or read, which is why provisioning
     # fails loudly rather than storing a key in the clear.
@@ -120,8 +145,9 @@ class Settings(BaseSettings):
     e2b_api_key: str = ""
     # How long a container may sit idle before E2B pauses it. Long enough to
     # cover a model thinking between tool calls; short enough that an abandoned
-    # session is not billed all afternoon.
-    sandbox_timeout_seconds: int = 900
+    # session is not billed all afternoon. Keep the default above the command
+    # timeout so a maximum-length command has time to return before auto-pause.
+    sandbox_timeout_seconds: int = 360
     sandbox_command_timeout_seconds: int = 300
     # Long enough for a container to finish a transfer, short enough that a URL
     # in a log is worth nothing by the time anyone reads it.
