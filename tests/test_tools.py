@@ -106,7 +106,7 @@ class FakeSandbox:
         return data
 
 
-async def test_the_vision_client_receives_the_usage_span_recorder(monkeypatch):
+async def test_the_vision_client_receives_the_usage_event_recorder(monkeypatch):
     built: list[dict[str, Any]] = []
 
     class FakeVision:
@@ -117,7 +117,7 @@ async def test_the_vision_client_receives_the_usage_span_recorder(monkeypatch):
             return type("Answer", (), {"content": "A cat."})()
 
     monkeypatch.setattr("langchain_openrouter.ChatOpenRouter", FakeVision)
-    usage_spans = object()
+    usage_events = object()
 
     answer = await tools_module.describe_image(
         PNG,
@@ -125,12 +125,12 @@ async def test_the_vision_client_receives_the_usage_span_recorder(monkeypatch):
         "What is in it?",
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
-        usage_spans=usage_spans,
+        usage_events=usage_events,
     )
 
     assert answer == "A cat."
     assert built[0]["session_id"] == "sess_image_test"
-    assert built[0]["callbacks"] == [usage_spans]
+    assert built[0]["callbacks"] == [usage_events]
 
 
 @pytest.fixture
@@ -145,7 +145,7 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
         *,
         api_key: str,
         session_id: str,
-        usage_spans: Any,
+        usage_events: Any,
     ) -> str:
         calls.append(
             {
@@ -154,7 +154,7 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
                 "query": query,
                 "api_key": api_key,
                 "session_id": session_id,
-                "usage_spans": usage_spans,
+                "usage_events": usage_events,
             }
         )
         return "A cat, wearing a hat."
@@ -208,7 +208,7 @@ async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
             "api_key": "sk-or-v1-test",
             # Grouped with the main model calls from the same VMA Session.
             "session_id": "sess_image_test",
-            "usage_spans": None,
+            "usage_events": None,
         }
     ]
 
@@ -264,7 +264,7 @@ async def test_a_vision_failure_comes_back_as_text(monkeypatch):
         *,
         api_key: str,
         session_id: str,
-        usage_spans: Any,
+        usage_events: Any,
     ) -> str:
         raise RuntimeError("gemini said no")
 

@@ -19,7 +19,7 @@ from langchain_core.tools import StructuredTool
 
 from app.config import get_settings
 from app.models.llm import OPENROUTER_SLUGS
-from app.runtime.model_usage import OpenRouterUsageSpans
+from app.runtime.model_usage import OpenRouterUsageEvents
 from app.utils.sandbox import WEB_CACHE_DIR, WORKDIR
 
 if TYPE_CHECKING:
@@ -193,7 +193,7 @@ async def describe_image(
     *,
     api_key: str,
     session_id: str,
-    usage_spans: OpenRouterUsageSpans | None = None,
+    usage_events: OpenRouterUsageEvents | None = None,
 ) -> str:
     """Ask the vision model one question about one image.
 
@@ -212,7 +212,7 @@ async def describe_image(
         # rather than an unrelated generation in OpenRouter's activity log.
         session_id=session_id,
         stream_usage=True,
-        callbacks=[usage_spans] if usage_spans is not None else None,
+        callbacks=[usage_events] if usage_events is not None else None,
     )
     encoded = base64.b64encode(data).decode("ascii")
     answer = await vision.ainvoke(
@@ -246,7 +246,7 @@ def read_image_tool(
     *,
     api_key: str,
     session_id: str,
-    usage_spans: OpenRouterUsageSpans | None = None,
+    usage_events: OpenRouterUsageEvents | None = None,
 ) -> StructuredTool:
     """Looking at an image, for a model that cannot.
 
@@ -287,7 +287,7 @@ def read_image_tool(
                 query,
                 api_key=api_key,
                 session_id=session_id,
-                usage_spans=usage_spans,
+                usage_events=usage_events,
             )
         except Exception as exc:
             return f"read_image could not look at {target}: {type(exc).__name__}: {exc}"

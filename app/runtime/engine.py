@@ -39,7 +39,7 @@ from app.models.llm import (
     ModelResponse,
 )
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
-from app.runtime.model_usage import OpenRouterUsageSpans
+from app.runtime.model_usage import OpenRouterUsageEvents
 from app.runtime.tools import (
     AGENT_TOOLSET,
     WEB_TOOLSET,
@@ -135,7 +135,7 @@ async def execute_agent(
     """
     config = {"configurable": {"thread_id": session.id}}
     declared = version.tools or []
-    usage_spans = OpenRouterUsageSpans(emit)
+    usage_events = OpenRouterUsageEvents(emit)
 
     # DeepAgents' native tools are never filtered — whatever create_deep_agent()
     # installs is exactly what the model gets. Config only ever decides which of
@@ -157,7 +157,7 @@ async def execute_agent(
             sandbox,
             api_key=inference_key,
             session_id=session.id,
-            usage_spans=usage_spans,
+            usage_events=usage_events,
         )
     )
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
@@ -202,7 +202,7 @@ async def execute_agent(
                     session.model or version.model or {},
                     api_key=inference_key,
                     session_id=session.id,
-                    callbacks=[usage_spans],
+                    callbacks=[usage_events],
                 ),
                 tools=tools,
                 system_prompt=_system_prompt(
