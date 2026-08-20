@@ -402,7 +402,7 @@ async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
 
 
 def to_event(event: SessionEvent) -> EventResponse:
-    """A stored row becomes whichever event shape it was written as.
+    """A stored row becomes whichever of the fourteen shapes it was written as.
 
     `models.events` owns the mapping; the router only needs the result.
     """

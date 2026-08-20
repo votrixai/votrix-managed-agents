@@ -461,7 +461,7 @@ class ListEventsResponse(ListResponse[EventResponse]):
 #
 # A stored row is `type` plus a JSON blob. Turning one back into its own shape
 # lives here rather than in the router, because this is the file that knows all
-# of them and the router would only be guessing.
+# fourteen of them and the router would only be guessing.
 
 _EVENT_CLASSES = (
     UserMessageEvent,
