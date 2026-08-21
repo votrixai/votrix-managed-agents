@@ -89,6 +89,188 @@ async def test_a_request_without_a_key_is_refused(client):
     assert response.status_code == 401
 
 
+async def test_validation_errors_never_echo_a_byok_api_key(client, headers):
+    secret = "sk-must-not-appear-in-the-response"
+    requests = [
+        {
+            "name": "Bad discriminator",
+            "funding": {
+                "type": "not-byok",
+                "credentials": [{"backend": "openai", "api_key": secret}],
+            },
+        },
+        {
+            "name": "Unsupported limit",
+            "limit_usd": "10",
+            "funding": {
+                "type": "byok",
+                "credentials": [{"backend": "openai", "api_key": secret}],
+            },
+        },
+    ]
+
+    for body in requests:
+        response = await client.post("/v1/accounts", headers=headers, json=body)
+
+        assert response.status_code == 422
+        assert secret not in response.text
+        assert "**********" in response.text
+
+
+async def test_byok_account_http_contract_and_model_boundary(
+    client,
+    headers,
+    agent,
+    environment,
+    monkeypatch,
+):
+    from app.services import accounts as accounts_service
+
+    class AcceptKey:
+        async def validate(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(accounts_service, "_byok_key_validator", AcceptKey)
+    created = await client.post(
+        "/v1/accounts",
+        headers=headers,
+        json={
+            "name": "Direct providers",
+            "funding": {
+                "type": "byok",
+                "credentials": [
+                    {"backend": "openai", "api_key": "openai-user-key"},
+                    {
+                        "backend": "anthropic",
+                        "api_key": "anthropic-user-key",
+                    },
+                ],
+            },
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    account = created.json()
+    assert account["funding"] == {
+        "type": "byok",
+        "credentials": [
+            {"backend": "anthropic"},
+            {"backend": "openai"},
+        ],
+    }
+    assert "api_key" not in created.text
+
+    usage = await client.get(
+        f"/v1/accounts/{account['id']}/usage",
+        headers=headers,
+    )
+    assert usage.status_code == 200, usage.text
+    assert usage.json()["funding"] == account["funding"]
+    assert usage.json()["usage_usd"] is None
+    assert usage.json()["observed_usage"] == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    incompatible = await client.post(
+        "/v1/sessions",
+        headers=headers,
+        json={
+            "agent_id": agent.id,
+            "environment_id": environment.id,
+            "account_id": account["id"],
+            "model": {"id": "gemini-3.6-flash"},
+        },
+    )
+    assert incompatible.status_code == 409
+    assert "no google credential" in incompatible.text
+
+    compatible = await client.post(
+        "/v1/sessions",
+        headers=headers,
+        json={
+            "agent_id": agent.id,
+            "environment_id": environment.id,
+            "account_id": account["id"],
+            "model": {"id": "gpt-5.6-sol"},
+        },
+    )
+    assert compatible.status_code == 201, compatible.text
+    assert compatible.json()["account_id"] == account["id"]
+
+
+async def test_byok_credential_management_http_contract(
+    client,
+    headers,
+    monkeypatch,
+):
+    from app.services import accounts as accounts_service
+
+    class AcceptKey:
+        async def validate(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(accounts_service, "_byok_key_validator", AcceptKey)
+    created = await client.post(
+        "/v1/accounts",
+        headers=headers,
+        json={
+            "name": "Mutable BYOK",
+            "funding": {
+                "type": "byok",
+                "credentials": [
+                    {"backend": "anthropic", "api_key": "anthropic-key"}
+                ],
+            },
+        },
+    )
+    account_id = created.json()["id"]
+
+    added = await client.put(
+        f"/v1/accounts/{account_id}/credentials/openai",
+        headers=headers,
+        json={"api_key": "openai-key-that-must-stay-secret"},
+    )
+    assert added.status_code == 200, added.text
+    assert added.json()["funding"] == {
+        "type": "byok",
+        "credentials": [
+            {"backend": "anthropic"},
+            {"backend": "openai"},
+        ],
+    }
+    assert "openai-key-that-must-stay-secret" not in added.text
+    assert "api_key" not in added.text
+
+    removed = await client.delete(
+        f"/v1/accounts/{account_id}/credentials/openai",
+        headers=headers,
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["funding"] == {
+        "type": "byok",
+        "credentials": [{"backend": "anthropic"}],
+    }
+
+    last = await client.delete(
+        f"/v1/accounts/{account_id}/credentials/anthropic",
+        headers=headers,
+    )
+    assert last.status_code == 409
+    assert "at least one" in last.text
+
+    accounts = (await client.get("/v1/accounts", headers=headers)).json()["data"]
+    default_id = next(account["id"] for account in accounts if account["is_default"])
+    platform = await client.put(
+        f"/v1/accounts/{default_id}/credentials/openai",
+        headers=headers,
+        json={"api_key": "must-not-reach-validation"},
+    )
+    assert platform.status_code == 409
+    assert "Platform Account" in platform.text
+
+
 async def test_an_unknown_key_is_refused(client, org):
     response = await client.get("/v1/sessions", headers={"x-api-key": "sk-nope"})
     assert response.status_code == 401

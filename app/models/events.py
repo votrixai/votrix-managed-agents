@@ -19,7 +19,7 @@ three seconds into a turn.
       agent.tool_result         tool_use_id  content[]  is_error
 
     model telemetry
-      model.usage               usage
+      model.usage               model  backend  source  usage
 
     session lifecycle
       session.status_running    —
@@ -308,9 +308,12 @@ class AgentToolResultEvent(RecordedEvent):
 
 
 class ModelUsageEvent(RecordedEvent):
-    """The final usage metadata returned by the OpenRouter client."""
+    """The final standardized usage metadata for one model call."""
 
     type: Literal["model.usage"] = MODEL_USAGE
+    model: str
+    backend: str
+    source: Literal["agent", "tool.read_image", "legacy"]
     usage: dict[str, Any]
 
 
@@ -489,10 +492,22 @@ def from_row(row: Any) -> EventResponse:
     this file, and handing the client something empty would hide that until
     someone noticed a gap in a transcript.
 
-    The payload is passed through whole: what the log holds is what the client
-    sees, with nothing kept back.
+    The payload is normally passed through whole. Usage rows written before
+    backend-neutral attribution carried only ``usage``; those are known to
+    have used OpenRouter, but their model and whether they came from the Agent
+    or ``read_image`` cannot be reconstructed. Mark that uncertainty instead
+    of making historical Sessions unreadable or inventing attribution.
     """
     model = _BY_TYPE.get(row.type)
     if model is None:
         raise ValueError(f"Unknown session event type {row.type!r}")
-    return model(id=row.id, seq=row.seq, processed_at=row.created_at, **(row.payload or {}))
+    payload = dict(row.payload or {})
+    if row.type == MODEL_USAGE and not {
+        "model",
+        "backend",
+        "source",
+    } <= payload.keys():
+        payload.setdefault("model", "unknown")
+        payload.setdefault("backend", "openrouter")
+        payload.setdefault("source", "legacy")
+    return model(id=row.id, seq=row.seq, processed_at=row.created_at, **payload)

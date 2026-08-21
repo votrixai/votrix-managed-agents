@@ -34,6 +34,16 @@ ACCOUNT_OPERATIONS = {
         "suspended",
         "limit_usd",
     ),
+    ("put", "/v1/accounts/{account_id}/credentials/{backend}"): (
+        "validated",
+        "idempotent",
+        "Platform Accounts",
+    ),
+    ("delete", "/v1/accounts/{account_id}/credentials/{backend}"): (
+        "At least one",
+        "Existing Sessions",
+        "historical observed usage",
+    ),
     ("get", "/v1/accounts/{account_id}/usage"): (
         "usage_usd",
         "limit_remaining_usd",
@@ -321,6 +331,62 @@ def test_account_reference_explains_each_public_operation_and_field():
     assert suspend_example["status"] == "suspended"
 
 
+def test_byok_schema_exposes_multiple_direct_backends_but_never_returns_keys():
+    schemas = build_documentation_schema(server_url=DEFAULT_SERVER_URL)[
+        "components"
+    ]["schemas"]
+    request = schemas["ByokFundingRequest"]
+    submitted = schemas["ByokModelCredentialRequest"]
+    response = schemas["ByokFundingResponse"]
+    configured = schemas["ByokModelCredentialResponse"]
+    replacement = schemas["ByokModelCredentialSetRequest"]
+
+    assert request["properties"]["credentials"]["minItems"] == 1
+    assert request["properties"]["credentials"]["maxItems"] == 4
+    assert submitted["properties"]["backend"]["enum"] == [
+        "anthropic",
+        "openai",
+        "google",
+        "deepseek",
+    ]
+    assert submitted["properties"]["api_key"]["writeOnly"] is True
+    assert "api_key" in submitted["required"]
+    assert replacement["properties"]["api_key"]["writeOnly"] is True
+    assert "api_key" in replacement["required"]
+    assert "api_key" not in response["properties"]
+    assert "api_key" not in configured["properties"]
+
+
+def test_model_usage_event_documents_one_backend_neutral_contract():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    usage = schema["components"]["schemas"]["ModelUsageEvent"]
+
+    assert usage["description"]
+    assert set(usage["required"]) >= {
+        "id",
+        "seq",
+        "processed_at",
+        "model",
+        "backend",
+        "source",
+        "usage",
+    }
+    assert usage["properties"]["source"]["enum"] == [
+        "agent",
+        "tool.read_image",
+        "legacy",
+    ]
+    for field in ("model", "backend", "source", "usage"):
+        assert usage["properties"][field]["description"]
+
+    # The public event describes a common model-call contract. Which concrete
+    # backend happens to be implemented first must not leak into its name or
+    # documentation and make direct BYOK look like a different event later.
+    rendered = str(usage).lower()
+    assert "openrouter" not in rendered
+    assert "langchain" not in rendered
+
+
 def test_api_reference_landing_page_links_to_the_accounts_guide():
     content = API_REFERENCE_INDEX.read_text(encoding="utf-8")
     assert "[Accounts](../accounts.md)" in content
@@ -332,7 +398,6 @@ def test_documentation_openapi_does_not_publish_internal_technology_details():
     forbidden = (
         "cloud tasks",
         "container",
-        "credential",
         "database",
         "deep agents",
         "e2b",

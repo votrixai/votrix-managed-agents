@@ -19,7 +19,7 @@ from langchain_core.tools import StructuredTool
 
 from app.config import get_settings
 from app.models.llm import OPENROUTER_SLUGS
-from app.runtime.model_usage import OpenRouterUsageEvents
+from app.runtime.model_usage import ModelUsageEvents
 from app.utils.sandbox import WEB_CACHE_DIR, WORKDIR
 
 if TYPE_CHECKING:
@@ -193,7 +193,8 @@ async def describe_image(
     *,
     api_key: str,
     session_id: str,
-    usage_events: OpenRouterUsageEvents | None = None,
+    backend: str = "openrouter",
+    usage_events: ModelUsageEvents | None = None,
 ) -> str:
     """Ask the vision model one question about one image.
 
@@ -203,17 +204,32 @@ async def describe_image(
     Separate from the tool so a test can replace the network call and still
     exercise everything around it.
     """
-    from langchain_openrouter import ChatOpenRouter
+    callbacks = [usage_events] if usage_events is not None else None
+    if backend == "openrouter":
+        from langchain_openrouter import ChatOpenRouter
 
-    vision = ChatOpenRouter(
-        model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
-        api_key=api_key,
-        # A vision-tool call is part of the conversation that requested it,
-        # rather than an unrelated generation in OpenRouter's activity log.
-        session_id=session_id,
-        stream_usage=True,
-        callbacks=[usage_events] if usage_events is not None else None,
-    )
+        vision = ChatOpenRouter(
+            model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
+            api_key=api_key,
+            # A vision-tool call is part of the conversation that requested it,
+            # rather than an unrelated generation in OpenRouter's activity log.
+            session_id=session_id,
+            stream_usage=True,
+            callbacks=callbacks,
+        )
+    elif backend == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        vision = ChatGoogleGenerativeAI(
+            model=READ_IMAGE_MODEL,
+            api_key=api_key,
+            temperature=1.0,
+            callbacks=callbacks,
+        )
+    else:
+        raise ValueError(
+            f"read_image has no vision adapter for the {backend} BYOK backend"
+        )
     encoded = base64.b64encode(data).decode("ascii")
     answer = await vision.ainvoke(
         [
@@ -246,7 +262,8 @@ def read_image_tool(
     *,
     api_key: str,
     session_id: str,
-    usage_events: OpenRouterUsageEvents | None = None,
+    backend: str = "openrouter",
+    usage_events: ModelUsageEvents | None = None,
 ) -> StructuredTool:
     """Looking at an image, for a model that cannot.
 
@@ -270,6 +287,11 @@ def read_image_tool(
             )
         if not api_key:
             return "read_image is unavailable: no vision model is configured on this server."
+        if backend not in {"openrouter", "google"}:
+            return (
+                "read_image is unavailable for this Account's credential backend; "
+                "use an OpenRouter or Google Account to enable it."
+            )
 
         try:
             data = await sandbox.read_bytes(target, max_bytes=READ_IMAGE_MAX_BYTES)
@@ -281,14 +303,14 @@ def read_image_tool(
             return f"read_image could not read {target}: {type(exc).__name__}: {exc}"
 
         try:
-            return await describe_image(
-                data,
-                mime_type,
-                query,
-                api_key=api_key,
-                session_id=session_id,
-                usage_events=usage_events,
-            )
+            kwargs: dict[str, Any] = {
+                "api_key": api_key,
+                "session_id": session_id,
+                "usage_events": usage_events,
+            }
+            if backend != "openrouter":
+                kwargs["backend"] = backend
+            return await describe_image(data, mime_type, query, **kwargs)
         except Exception as exc:
             return f"read_image could not look at {target}: {type(exc).__name__}: {exc}"
 

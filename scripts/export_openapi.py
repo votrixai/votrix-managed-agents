@@ -109,6 +109,7 @@ PARAMETER_EXAMPLES = {
     "agent_id": AGENT_ID_EXAMPLE,
     "after_seq": 42,
     "api_key_id": "apikey_1234567890abcdef1234567890abcdef",
+    "backend": "openai",
     "created_at[gte]": "2026-07-01T00:00:00Z",
     "created_at[lte]": "2026-08-01T00:00:00Z",
     "depth": 1,
@@ -135,20 +136,43 @@ ACCOUNT_ACTIVE_EXAMPLE = {
     "status": "active",
     "is_default": False,
     "limit_usd": "20.00",
+    "funding": {"type": "platform", "backend": "openrouter"},
 }
 ACCOUNT_SUSPENDED_EXAMPLE = {
     **ACCOUNT_ACTIVE_EXAMPLE,
     "status": "suspended",
 }
+ACCOUNT_BYOK_EXAMPLE = {
+    "id": ACCOUNT_ID_EXAMPLE,
+    "type": "account",
+    "organization_id": ORGANIZATION_ID_EXAMPLE,
+    "name": "Direct Models",
+    "status": "active",
+    "is_default": False,
+    "limit_usd": None,
+    "funding": {
+        "type": "byok",
+        "credentials": [
+            {"backend": "anthropic"},
+            {"backend": "openai"},
+        ],
+    },
+}
 ACCOUNT_USAGE_EXAMPLE = {
     "account_id": ACCOUNT_ID_EXAMPLE,
     "type": "account_usage",
+    "funding": {"type": "platform", "backend": "openrouter"},
     "usage_usd": "8.40",
     "usage_daily_usd": "0.75",
     "usage_weekly_usd": "3.10",
     "usage_monthly_usd": "8.40",
     "limit_usd": "20.00",
     "limit_remaining_usd": "11.60",
+    "observed_usage": {
+        "input_tokens": 12500,
+        "output_tokens": 3100,
+        "total_tokens": 15600,
+    },
 }
 AGENT_ACTIVE_EXAMPLE = {
     "id": AGENT_ID_EXAMPLE,
@@ -433,6 +457,10 @@ REQUEST_COMPONENT_EXAMPLES = {
         "name": "Website Builder",
         "limit_usd": "20.00",
         "idempotency_key": "create-website-builder-account",
+        "funding": {"type": "platform", "backend": "openrouter"},
+    },
+    "ByokModelCredentialSetRequest": {
+        "api_key": "YOUR_OPENAI_API_KEY",
     },
     "AgentCreateRequest": {
         "name": "Research Assistant",
@@ -583,7 +611,8 @@ RESPONSE_COMPONENT_EXAMPLES = {
 # with this small, reviewed public-contract vocabulary.
 ACCOUNT_GUIDE_REFERENCE = (
     "\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, "
-    "Session assignment, usage, spending limits, and suspension."
+    "Session assignment, usage, spending limits, BYOK key management, and "
+    "suspension."
 )
 
 
@@ -594,7 +623,9 @@ OPERATION_DESCRIPTIONS = {
         "products, or environments should not be mixed together.\n\n"
         "An Account is uncapped unless `limit_usd` is supplied. A successful "
         "response has `status: \"active\"` and can be selected when creating a "
-        "Session.\n\n"
+        "Session. Omit `funding` for a VMA-managed OpenRouter key, or choose "
+        "`byok` to supply one key for each direct backend the Account should "
+        "use. BYOK Accounts do not accept `limit_usd`.\n\n"
         "`idempotency_key` is optional and belongs in the JSON request body. "
         "Reuse the same value when retrying a successful create request to "
         "receive the original Account instead of creating another one."
@@ -621,14 +652,35 @@ OPERATION_DESCRIPTIONS = {
         "Account-specific spending limit."
         + ACCOUNT_GUIDE_REFERENCE
     ),
+    ("put", "/v1/accounts/{account_id}/credentials/{backend}"): (
+        "Add a direct-backend key to a BYOK Account or atomically replace the "
+        "key already stored for that backend. The submitted key is validated "
+        "before stored data changes, so a rejected key leaves the previous "
+        "one available. Repeating the same PUT is idempotent.\n\n"
+        "The Account keeps its current lifecycle state: changing a key on a "
+        "suspended Account does not resume it. Platform Accounts reject this "
+        "operation because their OpenRouter key is administered by VMA."
+        + ACCOUNT_GUIDE_REFERENCE
+    ),
+    ("delete", "/v1/accounts/{account_id}/credentials/{backend}"): (
+        "Remove one direct-backend key from a BYOK Account. Its stored encrypted "
+        "secret is deleted, while the Account and its historical observed usage "
+        "remain available. At least one backend key must remain.\n\n"
+        "Existing Sessions that select a model from the removed backend cannot "
+        "make their next model call until a key is added again. Platform "
+        "Accounts reject this operation because their OpenRouter key is "
+        "administered by VMA."
+        + ACCOUNT_GUIDE_REFERENCE
+    ),
     ("get", "/v1/accounts/{account_id}/usage"): (
-        "Return a current USD usage snapshot for one Account. Usage for another "
-        "Account is never included.\n\n"
-        "`usage_usd` is cumulative for the Account. The daily, weekly, and "
-        "monthly fields describe the current period windows. When a spending "
-        "limit is set, `limit_usd` reports the limit and "
-        "`limit_remaining_usd` reports the remaining amount. Both limit fields "
-        "are `null` for an uncapped Account.\n\n"
+        "Return a current usage snapshot for one Account. Usage for another "
+        "Account is never included. `observed_usage` totals the normalized "
+        "tokens recorded from completed calls.\n\n"
+        "For Platform funding, `usage_usd` is cumulative and the daily, weekly, "
+        "and monthly fields describe the current billing windows. For BYOK, "
+        "those USD fields are `null` because VMA cannot reliably price activity "
+        "outside this Account. When a spending limit is set, `limit_usd` and "
+        "`limit_remaining_usd` describe it.\n\n"
         "Usage remains available while an Account is suspended. Treat this "
         "response as a snapshot at request time, not as a receipt for one "
         "individual Agent turn."
@@ -736,6 +788,7 @@ OPERATION_SUCCESS_RESPONSES = {
                     "status": "active",
                     "is_default": True,
                     "limit_usd": None,
+                    "funding": {"type": "platform", "backend": "openrouter"},
                 },
                 ACCOUNT_SUSPENDED_EXAMPLE,
             ],
@@ -748,6 +801,22 @@ OPERATION_SUCCESS_RESPONSES = {
         "200",
         "The requested Account's public state and spending limit.",
         ACCOUNT_ACTIVE_EXAMPLE,
+    ),
+    ("put", "/v1/accounts/{account_id}/credentials/{backend}"): (
+        "200",
+        "The BYOK Account with the backend key added or replaced.",
+        ACCOUNT_BYOK_EXAMPLE,
+    ),
+    ("delete", "/v1/accounts/{account_id}/credentials/{backend}"): (
+        "200",
+        "The BYOK Account after the selected backend key was removed.",
+        {
+            **ACCOUNT_BYOK_EXAMPLE,
+            "funding": {
+                "type": "byok",
+                "credentials": [{"backend": "anthropic"}],
+            },
+        },
     ),
     ("get", "/v1/accounts/{account_id}/usage"): (
         "200",
@@ -828,8 +897,18 @@ COMPONENT_DESCRIPTIONS = {
         "An Account's identity, readiness, default role, and optional spending limit."
     ),
     "AccountUsageResponse": (
-        "A current USD usage snapshot for one Account."
+        "A current billing and observed-token snapshot for one Account."
     ),
+    "PlatformFundingRequest": "Select a VMA-managed OpenRouter key.",
+    "ByokFundingRequest": "Supply your own keys for supported direct backends.",
+    "ByokModelCredentialRequest": "One write-only direct-backend API key.",
+    "ByokModelCredentialSetRequest": (
+        "A write-only API key used to add or replace one direct backend."
+    ),
+    "PlatformFundingResponse": "Funding details for a VMA-managed Account.",
+    "ByokFundingResponse": "Configured backends for a user-key Account.",
+    "ByokModelCredentialResponse": "One configured direct backend.",
+    "ObservedTokenUsage": "Normalized tokens recorded from completed model calls.",
     "ListResponse_AccountResponse_": (
         "A cursor page of Accounts ordered from oldest to newest."
     ),
@@ -848,6 +927,9 @@ COMPONENT_DESCRIPTIONS = {
     "MemoryStoreResource": (
         "A Memory Store attached when a Session is created."
     ),
+    "ModelUsageEvent": (
+        "The standardized token usage reported for one completed model call."
+    ),
     "UserCustomToolResultInput": (
         "The result returned by your application for a custom tool request."
     ),
@@ -861,6 +943,9 @@ PROPERTY_DESCRIPTIONS = {
     ("AccountCreateRequest", "idempotency_key"): (
         "Optional retry key scoped to the Organization. Reuse it to receive the "
         "Account created by the first successful request."
+    ),
+    ("AccountCreateRequest", "funding"): (
+        "Funding selection. Omit it for a VMA-managed OpenRouter key."
     ),
     ("AccountResponse", "id"): "Public Account identifier with the `acct_` prefix.",
     ("AccountResponse", "type"): "Resource type. Always `account`.",
@@ -878,23 +963,29 @@ PROPERTY_DESCRIPTIONS = {
     ("AccountResponse", "limit_usd"): (
         "The Account-specific spending limit in USD, or `null` when uncapped."
     ),
+    ("AccountResponse", "funding"): (
+        "Whether VMA or the Account owner supplies keys, and their backends."
+    ),
     ("AccountUsageResponse", "account_id"): (
         "The Account whose usage is represented by this response."
     ),
     ("AccountUsageResponse", "type"): (
         "Resource type. Always `account_usage`."
     ),
+    ("AccountUsageResponse", "funding"): (
+        "Funding mode and configured backends used to interpret the usage fields."
+    ),
     ("AccountUsageResponse", "usage_usd"): (
-        "Cumulative usage for the Account in USD."
+        "Cumulative usage in USD for Platform funding, or `null` for BYOK."
     ),
     ("AccountUsageResponse", "usage_daily_usd"): (
-        "Usage in the current daily window, in USD."
+        "Current daily USD usage for Platform funding, or `null` for BYOK."
     ),
     ("AccountUsageResponse", "usage_weekly_usd"): (
-        "Usage in the current weekly window, in USD."
+        "Current weekly USD usage for Platform funding, or `null` for BYOK."
     ),
     ("AccountUsageResponse", "usage_monthly_usd"): (
-        "Usage in the current monthly window, in USD."
+        "Current monthly USD usage for Platform funding, or `null` for BYOK."
     ),
     ("AccountUsageResponse", "limit_usd"): (
         "The Account's spending limit in USD, or `null` when uncapped."
@@ -902,6 +993,36 @@ PROPERTY_DESCRIPTIONS = {
     ("AccountUsageResponse", "limit_remaining_usd"): (
         "The amount remaining under the Account's limit, or `null` when uncapped."
     ),
+    ("AccountUsageResponse", "observed_usage"): (
+        "Normalized token totals from completed calls recorded for this Account."
+    ),
+    ("PlatformFundingRequest", "type"): "Funding mode. Always `platform`.",
+    ("PlatformFundingRequest", "backend"): "Inference backend. Always `openrouter`.",
+    ("ByokFundingRequest", "type"): "Funding mode. Always `byok`.",
+    ("ByokFundingRequest", "credentials"): (
+        "One write-only API key per direct backend configured on this Account."
+    ),
+    ("ByokModelCredentialRequest", "backend"): (
+        "Direct model backend that accepts this key."
+    ),
+    ("ByokModelCredentialRequest", "api_key"): (
+        "Write-only API key for this backend. It is never returned."
+    ),
+    ("ByokModelCredentialSetRequest", "api_key"): (
+        "Write-only API key for the backend in the URL. It is never returned."
+    ),
+    ("PlatformFundingResponse", "type"): "Funding mode. Always `platform`.",
+    ("PlatformFundingResponse", "backend"): "Inference backend. Always `openrouter`.",
+    ("ByokFundingResponse", "type"): "Funding mode. Always `byok`.",
+    ("ByokFundingResponse", "credentials"): (
+        "Direct backends configured on this Account; secret values are omitted."
+    ),
+    ("ByokModelCredentialResponse", "backend"): (
+        "A direct model backend configured on this Account."
+    ),
+    ("ObservedTokenUsage", "input_tokens"): "Recorded input tokens.",
+    ("ObservedTokenUsage", "output_tokens"): "Recorded output tokens.",
+    ("ObservedTokenUsage", "total_tokens"): "Recorded total tokens.",
     ("ListResponse_AccountResponse_", "data"): (
         "Accounts in this page, ordered from oldest to newest."
     ),
@@ -913,6 +1034,20 @@ PROPERTY_DESCRIPTIONS = {
     ),
     ("ListResponse_AccountResponse_", "last_id"): (
         "ID of the last Account in this page, or `null` for an empty page."
+    ),
+    ("ModelUsageEvent", "model"): (
+        "The public VMA model ID used for this call."
+    ),
+    ("ModelUsageEvent", "backend"): (
+        "The inference backend that executed this call."
+    ),
+    ("ModelUsageEvent", "source"): (
+        "Whether the Agent or read-image tool made this call; `legacy` marks "
+        "an older event whose source was not recorded."
+    ),
+    ("ModelUsageEvent", "usage"): (
+        "Token counts standardized by the active chat integration and preserved "
+        "without repricing, estimation, or reconstructed totals."
     ),
     ("SessionCreateRequest", "account_id"): (
         "The Account assigned to this Session. Omit it to use the Organization's "

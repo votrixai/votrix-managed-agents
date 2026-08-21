@@ -12,7 +12,7 @@
           "accounts"
         ],
         "summary": "Create Account",
-        "description": "Create a separate usage and spending boundary inside your Organization. Use additional Accounts when work for different customers, teams, products, or environments should not be mixed together.\n\nAn Account is uncapped unless `limit_usd` is supplied. A successful response has `status: \"active\"` and can be selected when creating a Session.\n\n`idempotency_key` is optional and belongs in the JSON request body. Reuse the same value when retrying a successful create request to receive the original Account instead of creating another one.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
+        "description": "Create a separate usage and spending boundary inside your Organization. Use additional Accounts when work for different customers, teams, products, or environments should not be mixed together.\n\nAn Account is uncapped unless `limit_usd` is supplied. A successful response has `status: \"active\"` and can be selected when creating a Session. Omit `funding` for a VMA-managed OpenRouter key, or choose `byok` to supply one key for each direct backend the Account should use. BYOK Accounts do not accept `limit_usd`.\n\n`idempotency_key` is optional and belongs in the JSON request body. Reuse the same value when retrying a successful create request to receive the original Account instead of creating another one.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
         "operationId": "create_account_v1_accounts_post",
         "parameters": [
           {
@@ -40,7 +40,11 @@
                   "value": {
                     "name": "Website Builder",
                     "limit_usd": "20.00",
-                    "idempotency_key": "create-website-builder-account"
+                    "idempotency_key": "create-website-builder-account",
+                    "funding": {
+                      "type": "platform",
+                      "backend": "openrouter"
+                    }
                   }
                 }
               }
@@ -62,7 +66,11 @@
                   "name": "Website Builder",
                   "status": "active",
                   "is_default": false,
-                  "limit_usd": "20.00"
+                  "limit_usd": "20.00",
+                  "funding": {
+                    "type": "platform",
+                    "backend": "openrouter"
+                  }
                 }
               }
             }
@@ -95,7 +103,7 @@
             "id": "request-json",
             "lang": "json",
             "label": "Request JSON",
-            "source": "{\n  \"name\": \"Website Builder\",\n  \"limit_usd\": \"20.00\",\n  \"idempotency_key\": \"create-website-builder-account\"\n}"
+            "source": "{\n  \"name\": \"Website Builder\",\n  \"limit_usd\": \"20.00\",\n  \"idempotency_key\": \"create-website-builder-account\",\n  \"funding\": {\n    \"type\": \"platform\",\n    \"backend\": \"openrouter\"\n  }\n}"
           }
         ]
       },
@@ -104,7 +112,7 @@
           "accounts"
         ],
         "summary": "List Accounts",
-        "description": "List the Accounts available to your API key. Accounts are returned oldest first, which normally places the Organization's default Account first.\n\nThe response includes active and suspended Accounts. Use `is_default` to identify the Account selected when Session creation omits `account_id`, and use `status` to decide whether an Account can fund Agent work.\n\nUse `after_id` or `before_id` with the returned cursor fields to move through additional pages.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
+        "description": "List the Accounts available to your API key. Accounts are returned oldest first, which normally places the Organization's default Account first.\n\nThe response includes active and suspended Accounts. Use `is_default` to identify the Account selected when Session creation omits `account_id`, and use `status` to decide whether an Account can fund Agent work.\n\nUse `after_id` or `before_id` with the returned cursor fields to move through additional pages.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
         "operationId": "list_accounts_v1_accounts_get",
         "parameters": [
           {
@@ -178,7 +186,11 @@
                       "name": "Default",
                       "status": "active",
                       "is_default": true,
-                      "limit_usd": null
+                      "limit_usd": null,
+                      "funding": {
+                        "type": "platform",
+                        "backend": "openrouter"
+                      }
                     },
                     {
                       "id": "acct_1234567890abcdef1234567890abcdef",
@@ -187,7 +199,11 @@
                       "name": "Website Builder",
                       "status": "suspended",
                       "is_default": false,
-                      "limit_usd": "20.00"
+                      "limit_usd": "20.00",
+                      "funding": {
+                        "type": "platform",
+                        "backend": "openrouter"
+                      }
                     }
                   ],
                   "has_more": false,
@@ -266,7 +282,11 @@
                   "name": "Website Builder",
                   "status": "active",
                   "is_default": false,
-                  "limit_usd": "20.00"
+                  "limit_usd": "20.00",
+                  "funding": {
+                    "type": "platform",
+                    "backend": "openrouter"
+                  }
                 }
               }
             }
@@ -294,7 +314,233 @@
             }
           }
         },
-        "description": "Retrieve one Account by its public `acct_...` ID.\n\n`status` is `provisioning` while the Account is not ready, `active` when it can fund Agent work, or `suspended` when further work is blocked. `is_default` identifies the fallback used by Sessions that omit `account_id`. `limit_usd: null` means the Account has no Account-specific spending limit.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension."
+        "description": "Retrieve one Account by its public `acct_...` ID.\n\n`status` is `provisioning` while the Account is not ready, `active` when it can fund Agent work, or `suspended` when further work is blocked. `is_default` identifies the fallback used by Sessions that omit `account_id`. `limit_usd: null` means the Account has no Account-specific spending limit.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension."
+      }
+    },
+    "/v1/accounts/{account_id}/credentials/{backend}": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Set Byok Model Credential",
+        "description": "Add a direct-backend key to a BYOK Account or atomically replace the key already stored for that backend. The submitted key is validated before stored data changes, so a rejected key leaves the previous one available. Repeating the same PUT is idempotent.\n\nThe Account keeps its current lifecycle state: changing a key on a suspended Account does not resume it. Platform Accounts reject this operation because their OpenRouter key is administered by VMA.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
+        "operationId": "set_byok_model_credential_v1_accounts__account_id__credentials__backend__put",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request.",
+            "example": "acct_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "backend",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "anthropic",
+                "openai",
+                "google",
+                "deepseek"
+              ],
+              "type": "string"
+            },
+            "description": "Value supplied for the backend path parameter.",
+            "example": "openai"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ByokModelCredentialSetRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "api_key": "YOUR_OPENAI_API_KEY"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The BYOK Account with the backend key added or replaced.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                },
+                "example": {
+                  "id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account",
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "name": "Direct Models",
+                  "status": "active",
+                  "is_default": false,
+                  "limit_usd": null,
+                  "funding": {
+                    "type": "byok",
+                    "credentials": [
+                      {
+                        "backend": "anthropic"
+                      },
+                      {
+                        "backend": "openai"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"api_key\": \"YOUR_OPENAI_API_KEY\"\n}"
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Delete Byok Model Credential",
+        "description": "Remove one direct-backend key from a BYOK Account. Its stored encrypted secret is deleted, while the Account and its historical observed usage remain available. At least one backend key must remain.\n\nExisting Sessions that select a model from the removed backend cannot make their next model call until a key is added again. Platform Accounts reject this operation because their OpenRouter key is administered by VMA.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
+        "operationId": "delete_byok_model_credential_v1_accounts__account_id__credentials__backend__delete",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the account addressed by this request.",
+            "example": "acct_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "backend",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "anthropic",
+                "openai",
+                "google",
+                "deepseek"
+              ],
+              "type": "string"
+            },
+            "description": "Value supplied for the backend path parameter.",
+            "example": "openai"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The BYOK Account after the selected backend key was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                },
+                "example": {
+                  "id": "acct_1234567890abcdef1234567890abcdef",
+                  "type": "account",
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "name": "Direct Models",
+                  "status": "active",
+                  "is_default": false,
+                  "limit_usd": null,
+                  "funding": {
+                    "type": "byok",
+                    "credentials": [
+                      {
+                        "backend": "anthropic"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/accounts/{account_id}/usage": {
@@ -303,7 +549,7 @@
           "accounts"
         ],
         "summary": "Retrieve Account Usage",
-        "description": "Return a current USD usage snapshot for one Account. Usage for another Account is never included.\n\n`usage_usd` is cumulative for the Account. The daily, weekly, and monthly fields describe the current period windows. When a spending limit is set, `limit_usd` reports the limit and `limit_remaining_usd` reports the remaining amount. Both limit fields are `null` for an uncapped Account.\n\nUsage remains available while an Account is suspended. Treat this response as a snapshot at request time, not as a receipt for one individual Agent turn.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
+        "description": "Return a current usage snapshot for one Account. Usage for another Account is never included. `observed_usage` totals the normalized tokens recorded from completed calls.\n\nFor Platform funding, `usage_usd` is cumulative and the daily, weekly, and monthly fields describe the current billing windows. For BYOK, those USD fields are `null` because VMA cannot reliably price activity outside this Account. When a spending limit is set, `limit_usd` and `limit_remaining_usd` describe it.\n\nUsage remains available while an Account is suspended. Treat this response as a snapshot at request time, not as a receipt for one individual Agent turn.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
         "operationId": "retrieve_account_usage_v1_accounts__account_id__usage_get",
         "parameters": [
           {
@@ -338,12 +584,21 @@
                 "example": {
                   "account_id": "acct_1234567890abcdef1234567890abcdef",
                   "type": "account_usage",
+                  "funding": {
+                    "type": "platform",
+                    "backend": "openrouter"
+                  },
                   "usage_usd": "8.40",
                   "usage_daily_usd": "0.75",
                   "usage_weekly_usd": "3.10",
                   "usage_monthly_usd": "8.40",
                   "limit_usd": "20.00",
-                  "limit_remaining_usd": "11.60"
+                  "limit_remaining_usd": "11.60",
+                  "observed_usage": {
+                    "input_tokens": 12500,
+                    "output_tokens": 3100,
+                    "total_tokens": 15600
+                  }
                 }
               }
             }
@@ -379,7 +634,7 @@
           "accounts"
         ],
         "summary": "Suspend Account",
-        "description": "Stop a non-default Account from funding further Agent work. The Account keeps the same ID, spending limit, and usage history, and its usage endpoint remains available.\n\nA suspended Account cannot be selected for a new Session. Existing Sessions remain assigned to it, but their next Agent work cannot continue until the Account is resumed. Suspending an already suspended Account returns that Account without changing it again.\n\nThe Organization's default Account cannot be suspended because it is the fallback for every Session created without an explicit `account_id`.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
+        "description": "Stop a non-default Account from funding further Agent work. The Account keeps the same ID, spending limit, and usage history, and its usage endpoint remains available.\n\nA suspended Account cannot be selected for a new Session. Existing Sessions remain assigned to it, but their next Agent work cannot continue until the Account is resumed. Suspending an already suspended Account returns that Account without changing it again.\n\nThe Organization's default Account cannot be suspended because it is the fallback for every Session created without an explicit `account_id`.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
         "operationId": "suspend_account_v1_accounts__account_id__suspend_post",
         "parameters": [
           {
@@ -418,7 +673,11 @@
                   "name": "Website Builder",
                   "status": "suspended",
                   "is_default": false,
-                  "limit_usd": "20.00"
+                  "limit_usd": "20.00",
+                  "funding": {
+                    "type": "platform",
+                    "backend": "openrouter"
+                  }
                 }
               }
             }
@@ -454,7 +713,7 @@
           "accounts"
         ],
         "summary": "Resume Account",
-        "description": "Return a suspended Account to `active` so it can fund new and existing Sessions again.\n\nResuming preserves the Account's ID, limit, and usage history. Existing Sessions stay assigned to the same Account; they do not need to be recreated. Resuming an already active Account returns it unchanged.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
+        "description": "Return a suspended Account to `active` so it can fund new and existing Sessions again.\n\nResuming preserves the Account's ID, limit, and usage history. Existing Sessions stay assigned to the same Account; they do not need to be recreated. Resuming an already active Account returns it unchanged.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, BYOK key management, and suspension.",
         "operationId": "resume_account_v1_accounts__account_id__resume_post",
         "parameters": [
           {
@@ -493,7 +752,11 @@
                   "name": "Website Builder",
                   "status": "active",
                   "is_default": false,
-                  "limit_usd": "20.00"
+                  "limit_usd": "20.00",
+                  "funding": {
+                    "type": "platform",
+                    "backend": "openrouter"
+                  }
                 }
               }
             }
@@ -5032,6 +5295,24 @@
               }
             ],
             "description": "Optional retry key scoped to the Organization. Reuse it to receive the Account created by the first successful request."
+          },
+          "funding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlatformFundingRequest"
+              },
+              {
+                "$ref": "#/components/schemas/ByokFundingRequest"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "byok": "#/components/schemas/ByokFundingRequest",
+                "platform": "#/components/schemas/PlatformFundingRequest"
+              }
+            },
+            "description": "Funding selection. Omit it for a VMA-managed OpenRouter key."
           }
         },
         "additionalProperties": false,
@@ -5086,6 +5367,24 @@
               }
             ],
             "description": "The Account-specific spending limit in USD, or `null` when uncapped."
+          },
+          "funding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlatformFundingResponse"
+              },
+              {
+                "$ref": "#/components/schemas/ByokFundingResponse"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "byok": "#/components/schemas/ByokFundingResponse",
+                "platform": "#/components/schemas/PlatformFundingResponse"
+              }
+            },
+            "description": "Whether VMA or the Account owner supplies keys, and their backends."
           }
         },
         "additionalProperties": false,
@@ -5095,7 +5394,8 @@
           "organization_id",
           "name",
           "status",
-          "is_default"
+          "is_default",
+          "funding"
         ],
         "title": "AccountResponse",
         "description": "An Account's identity, readiness, default role, and optional spending limit."
@@ -5112,25 +5412,71 @@
             "default": "account_usage",
             "description": "Resource type. Always `account_usage`."
           },
+          "funding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlatformFundingResponse"
+              },
+              {
+                "$ref": "#/components/schemas/ByokFundingResponse"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "byok": "#/components/schemas/ByokFundingResponse",
+                "platform": "#/components/schemas/PlatformFundingResponse"
+              }
+            },
+            "description": "Funding mode and configured backends used to interpret the usage fields."
+          },
           "usage_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "description": "Cumulative usage for the Account in USD."
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cumulative usage in USD for Platform funding, or `null` for BYOK."
           },
           "usage_daily_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "description": "Usage in the current daily window, in USD."
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current daily USD usage for Platform funding, or `null` for BYOK."
           },
           "usage_weekly_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "description": "Usage in the current weekly window, in USD."
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current weekly USD usage for Platform funding, or `null` for BYOK."
           },
           "usage_monthly_usd": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "description": "Usage in the current monthly window, in USD."
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current monthly USD usage for Platform funding, or `null` for BYOK."
           },
           "limit_usd": {
             "anyOf": [
@@ -5155,19 +5501,21 @@
               }
             ],
             "description": "The amount remaining under the Account's limit, or `null` when uncapped."
+          },
+          "observed_usage": {
+            "$ref": "#/components/schemas/ObservedTokenUsage",
+            "description": "Normalized token totals from completed calls recorded for this Account."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "account_id",
-          "usage_usd",
-          "usage_daily_usd",
-          "usage_weekly_usd",
-          "usage_monthly_usd"
+          "funding",
+          "observed_usage"
         ],
         "title": "AccountUsageResponse",
-        "description": "A current USD usage snapshot for one Account."
+        "description": "A current billing and observed-token snapshot for one Account."
       },
       "AgentCreateRequest": {
         "properties": {
@@ -5859,6 +6207,124 @@
           "file"
         ],
         "title": "Body_upload_file_v1_files_post"
+      },
+      "ByokFundingRequest": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "byok",
+            "default": "byok",
+            "description": "Funding mode. Always `byok`."
+          },
+          "credentials": {
+            "items": {
+              "$ref": "#/components/schemas/ByokModelCredentialRequest"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 1,
+            "description": "One write-only API key per direct backend configured on this Account."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "credentials"
+        ],
+        "title": "ByokFundingRequest",
+        "description": "Supply your own keys for supported direct backends."
+      },
+      "ByokFundingResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "byok",
+            "default": "byok",
+            "description": "Funding mode. Always `byok`."
+          },
+          "credentials": {
+            "items": {
+              "$ref": "#/components/schemas/ByokModelCredentialResponse"
+            },
+            "type": "array",
+            "description": "Direct backends configured on this Account; secret values are omitted."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "credentials"
+        ],
+        "title": "ByokFundingResponse",
+        "description": "Configured backends for a user-key Account."
+      },
+      "ByokModelCredentialRequest": {
+        "properties": {
+          "backend": {
+            "type": "string",
+            "enum": [
+              "anthropic",
+              "openai",
+              "google",
+              "deepseek"
+            ],
+            "description": "Direct model backend that accepts this key."
+          },
+          "api_key": {
+            "type": "string",
+            "minLength": 1,
+            "format": "password",
+            "writeOnly": true,
+            "description": "Write-only API key for this backend. It is never returned."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "backend",
+          "api_key"
+        ],
+        "title": "ByokModelCredentialRequest",
+        "description": "One write-only direct-backend API key."
+      },
+      "ByokModelCredentialResponse": {
+        "properties": {
+          "backend": {
+            "type": "string",
+            "enum": [
+              "anthropic",
+              "openai",
+              "google",
+              "deepseek"
+            ],
+            "description": "A direct model backend configured on this Account."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "backend"
+        ],
+        "title": "ByokModelCredentialResponse",
+        "description": "One configured direct backend."
+      },
+      "ByokModelCredentialSetRequest": {
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "minLength": 1,
+            "format": "password",
+            "writeOnly": true,
+            "description": "Write-only API key for the backend in the URL. It is never returned."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "api_key"
+        ],
+        "title": "ByokModelCredentialSetRequest",
+        "description": "A write-only API key used to add or replace one direct backend."
       },
       "DeletedMemoryStoreResponse": {
         "properties": {
@@ -6893,9 +7359,27 @@
             "const": "model.usage",
             "default": "model.usage"
           },
+          "model": {
+            "type": "string",
+            "description": "The public VMA model ID used for this call."
+          },
+          "backend": {
+            "type": "string",
+            "description": "The inference backend that executed this call."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "tool.read_image",
+              "legacy"
+            ],
+            "description": "Whether the Agent or read-image tool made this call; `legacy` marks an older event whose source was not recorded."
+          },
           "usage": {
             "additionalProperties": true,
-            "type": "object"
+            "type": "object",
+            "description": "Token counts standardized by the active chat integration and preserved without repricing, estimation, or reconstructed totals."
           }
         },
         "additionalProperties": false,
@@ -6904,9 +7388,41 @@
           "id",
           "seq",
           "processed_at",
+          "model",
+          "backend",
+          "source",
           "usage"
         ],
-        "title": "ModelUsageEvent"
+        "title": "ModelUsageEvent",
+        "description": "The standardized token usage reported for one completed model call."
+      },
+      "ObservedTokenUsage": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "description": "Recorded input tokens."
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "description": "Recorded output tokens."
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "description": "Recorded total tokens."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "total_tokens"
+        ],
+        "title": "ObservedTokenUsage",
+        "description": "Normalized tokens recorded from completed model calls."
       },
       "PackagesConfig": {
         "properties": {
@@ -6950,6 +7466,46 @@
         "additionalProperties": false,
         "type": "object",
         "title": "PackagesConfig"
+      },
+      "PlatformFundingRequest": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "platform",
+            "default": "platform",
+            "description": "Funding mode. Always `platform`."
+          },
+          "backend": {
+            "type": "string",
+            "const": "openrouter",
+            "default": "openrouter",
+            "description": "Inference backend. Always `openrouter`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PlatformFundingRequest",
+        "description": "Select a VMA-managed OpenRouter key."
+      },
+      "PlatformFundingResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "platform",
+            "default": "platform",
+            "description": "Funding mode. Always `platform`."
+          },
+          "backend": {
+            "type": "string",
+            "const": "openrouter",
+            "default": "openrouter",
+            "description": "Inference backend. Always `openrouter`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PlatformFundingResponse",
+        "description": "Funding details for a VMA-managed Account."
       },
       "RequiresAction": {
         "properties": {

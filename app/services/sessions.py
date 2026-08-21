@@ -41,8 +41,10 @@ from app.db.queries import environments as environments_q
 from app.db.queries import sessions as sessions_q
 from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.models import events as event_types
+from app.models.llm import GOOGLE
 from app.models.errors import (
     Conflict,
+    InvalidRequest,
     MemoryStoreUnavailable,
     NotFound,
     SandboxUnavailable,
@@ -227,6 +229,27 @@ async def _create_session(
     account = await accounts_service.require_spendable_account(
         db, organization_id=organization_id, account_id=account_id
     )
+    normalized_model = (
+        agents_service.normalize_model(model) if model is not None else None
+    )
+    from app.runtime.chat_backends import (
+        resolve_catalog_model,
+        validate_model_for_backend,
+    )
+
+    try:
+        model_spec = normalized_model or version.model
+        model_entry = resolve_catalog_model(model_spec)
+        backend = accounts_service.backend_for_model(
+            account,
+            model_provider=model_entry.provider,
+        )
+        validate_model_for_backend(
+            model_spec,
+            backend=backend,
+        )
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
 
     session = await sessions_q.create_session(
         db,
@@ -236,7 +259,7 @@ async def _create_session(
         environment_id=environment_id,
         # Normalised on the way in, never on the way out, so every reader of the
         # column — runtime, API response, a future query — sees one shape.
-        model=agents_service.normalize_model(model) if model is not None else None,
+        model=normalized_model,
         account_id=account.id,
         title=title,
     )
@@ -723,10 +746,24 @@ async def process_session(
     #
     # `account_id` is None on Sessions opened before Accounts existed; those
     # fall back to the Organization's default.
-    inference_key = await accounts_service.resolve_spendable_key(
+    from app.runtime.chat_backends import resolve_catalog_model
+
+    model_entry = resolve_catalog_model(session.model or version.model)
+    credential = await accounts_service.resolve_spendable_credential(
         db,
         organization_id=session.organization_id,
         account_id=session.account_id,
+        model_provider=model_entry.provider,
+    )
+    vision_credential = (
+        credential
+        if credential.funding_mode == "platform" or credential.backend == GOOGLE
+        else await accounts_service.resolve_optional_spendable_credential(
+            db,
+            organization_id=session.organization_id,
+            account_id=session.account_id,
+            model_provider=GOOGLE,
+        )
     )
 
     heartbeat = asyncio.create_task(_hold_lease(session_id))
@@ -746,7 +783,8 @@ async def process_session(
                     version=version,
                     events=events,
                     sandbox=container,
-                    inference_key=inference_key,
+                    credential=credential,
+                    vision_credential=vision_credential,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
                     emit=_emitter(db, session, generation),

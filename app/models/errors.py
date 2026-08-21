@@ -66,5 +66,9 @@ class AccountUnavailable(Conflict):
     """
 
 
+class CredentialValidationUnavailable(ServiceError):
+    """A credential backend could not be reached to validate a BYOK key."""
+
+
 class MemoryStoreUnavailable(ServiceError):
     """The provider could not create, mount, or destroy a Memory Store Volume."""

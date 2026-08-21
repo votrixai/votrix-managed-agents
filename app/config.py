@@ -52,11 +52,11 @@ class Settings(BaseSettings):
     # polls instead, which is what local runs and the worker service both do.
     vma_listen_database_url: str = ""
 
-    # Mints the per-Account keys, and the only provider credential this
-    # deployment holds — every key that can actually be spent belongs to an
-    # Account and is stored encrypted. The provider refuses inference on a
-    # provisioning key, so a leak of this one cannot be spent, only used to
-    # enumerate and revoke.
+    # Mints Platform Account keys, and the only shared provider credential in
+    # process configuration. Every key that can actually be spent — managed or
+    # BYOK — belongs to an Account and is stored encrypted. OpenRouter refuses
+    # inference on a provisioning key, so a leak of this one cannot be spent,
+    # only used to enumerate and revoke.
     openrouter_management_key: str = ""
 
     # How long streamed text is held before it becomes an event.

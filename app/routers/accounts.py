@@ -14,9 +14,16 @@ from app.models.accounts import (
     AccountCreateRequest,
     AccountResponse,
     AccountUsageResponse,
+    ByokFundingResponse,
+    ByokModelCredentialResponse,
+    ByokModelCredentialSetRequest,
+    DirectAccountBackend,
+    ObservedTokenUsage,
+    PlatformFundingResponse,
 )
 from app.routers.deps import Db, OrganizationId
 from app.services import accounts as service
+from app.services.account_credentials import SubmittedByokCredential
 
 router = APIRouter(prefix="/v1/accounts", tags=["accounts"])
 
@@ -27,14 +34,15 @@ async def create_account(
     db: Db,
     organization_id: OrganizationId,
 ):
-    """Create an Account with its own provider credential.
+    """Create a Platform or BYOK Account with its own inference key.
 
     Spend on this Account is measured and capped separately from every other
     one, because a separate credential is what the provider enforces the
     boundary with: a request either carries this Account's key or it does not.
 
-    The credential is minted during this call, so the Account comes back
-    `active` and ready to be spent through.
+    Platform funding mints an isolated OpenRouter key. BYOK validates and
+    encrypts one key per supplied direct backend. Either comes back `active`
+    and ready to be spent through.
     """
     account = await service.create_account(
         db,
@@ -42,6 +50,18 @@ async def create_account(
         name=body.name,
         limit_usd=body.limit_usd,
         idempotency_key=body.idempotency_key,
+        funding_mode=body.funding.type,
+        byok_credentials=(
+            tuple(
+                SubmittedByokCredential(
+                    backend=credential.backend,
+                    api_key=credential.api_key,
+                )
+                for credential in body.funding.credentials
+            )
+            if body.funding.type == "byok"
+            else None
+        ),
     )
     return to_account(account)
 
@@ -77,18 +97,69 @@ async def retrieve_account(
     return to_account(account)
 
 
+@router.put(
+    "/{account_id}/credentials/{backend}",
+    response_model=AccountResponse,
+)
+async def set_byok_model_credential(
+    account_id: str,
+    backend: DirectAccountBackend,
+    body: ByokModelCredentialSetRequest,
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """Add or replace one direct-provider key on a BYOK Account.
+
+    The new key is validated before the stored credential changes. Repeating
+    the same request is idempotent. Platform Accounts reject this operation.
+    """
+
+    account = await service.set_byok_model_credential(
+        db,
+        organization_id=organization_id,
+        account_id=account_id,
+        backend=backend,
+        api_key=body.api_key,
+    )
+    return to_account(account)
+
+
+@router.delete(
+    "/{account_id}/credentials/{backend}",
+    response_model=AccountResponse,
+)
+async def delete_byok_model_credential(
+    account_id: str,
+    backend: DirectAccountBackend,
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """Remove one direct-provider key from a BYOK Account.
+
+    At least one key must remain. Platform keys are VMA-managed and cannot be
+    changed through this endpoint.
+    """
+
+    account = await service.delete_byok_model_credential(
+        db,
+        organization_id=organization_id,
+        account_id=account_id,
+        backend=backend,
+    )
+    return to_account(account)
+
+
 @router.get("/{account_id}/usage", response_model=AccountUsageResponse)
 async def retrieve_account_usage(
     account_id: str,
     db: Db,
     organization_id: OrganizationId,
 ):
-    """What this Account has spent, in USD.
+    """Billing and normalized token usage for this Account.
 
-    Read live from the provider that charges it, so the answer includes every
-    call made on this Account's credential rather than only the ones this
-    platform recorded. It is current as of the request; there is no settlement
-    delay to wait out.
+    Platform USD figures are read live from its managed OpenRouter key.
+    ``observed_usage`` is built from model calls recorded on Sessions pinned to
+    this Account. BYOK returns null USD figures rather than inventing a price.
 
     Answered for a suspended Account too. What one spent has to stay readable,
     which is most of the reason Accounts are suspended rather than removed.
@@ -98,12 +169,27 @@ async def retrieve_account_usage(
     )
     return AccountUsageResponse(
         account_id=account_id,
+        funding=(
+            PlatformFundingResponse()
+            if usage.funding_mode == "platform"
+            else ByokFundingResponse(
+                credentials=[
+                    ByokModelCredentialResponse(backend=backend)
+                    for backend in usage.backends
+                ]
+            )
+        ),
         usage_usd=usage.usage_usd,
         usage_daily_usd=usage.usage_daily_usd,
         usage_weekly_usd=usage.usage_weekly_usd,
         usage_monthly_usd=usage.usage_monthly_usd,
         limit_usd=usage.limit_usd,
         limit_remaining_usd=usage.limit_remaining_usd,
+        observed_usage=ObservedTokenUsage(
+            input_tokens=usage.observed_input_tokens,
+            output_tokens=usage.observed_output_tokens,
+            total_tokens=usage.observed_total_tokens,
+        ),
     )
 
 
@@ -115,9 +201,9 @@ async def suspend_account(
 ):
     """Stop this Account spending, without giving up what it spent.
 
-    The credential is disabled at the provider, not removed, so the Account
-    keeps its id, its limit, and everything recorded against it — and `resume`
-    turns the same credential back on.
+    A managed Platform credential is disabled at OpenRouter, not removed. A
+    BYOK credential stays user-owned and is blocked locally. Either way the
+    Account keeps its id and usage, and `resume` reuses the same credential.
 
     Sessions already running on this Account fail their next model call. That
     is the point: a suspension that let existing work finish would not be one.
@@ -155,4 +241,14 @@ def to_account(account: OrganizationAccount) -> AccountResponse:
         # one; that is a storage detail, and the API says true or false.
         is_default=bool(account.is_default),
         limit_usd=account.limit_usd,
+        funding=(
+            PlatformFundingResponse()
+            if account.funding_mode == "platform"
+            else ByokFundingResponse(
+                credentials=[
+                    ByokModelCredentialResponse(backend=credential.backend)
+                    for credential in account.model_credentials
+                ]
+            )
+        ),
     )

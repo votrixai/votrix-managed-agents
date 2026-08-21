@@ -6,6 +6,8 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -13,6 +15,7 @@ from app.config import get_settings
 
 from app.models.errors import (
     Conflict,
+    CredentialValidationUnavailable,
     InvalidRequest,
     MemoryPreconditionFailed,
     MemoryStoreUnavailable,
@@ -117,6 +120,21 @@ CORS_REQUEST_HEADERS = ("*",)
 CORS_EXPOSED_HEADERS = ("request-id", "x-request-id")
 CORS_PREFLIGHT_MAX_AGE_SECONDS = 600
 
+_REDACTED_INPUT = "**********"
+_SENSITIVE_REQUEST_FIELDS = frozenset(
+    {
+        "access_token",
+        "api_key",
+        "authorization",
+        "client_secret",
+        "password",
+        "private_key",
+        "refresh_token",
+        "secret",
+        "token",
+    }
+)
+
 
 def _install_cors(app: FastAPI) -> None:
     """Allow the configured browser origins, and no others.
@@ -148,6 +166,16 @@ def _install_error_handlers(app: FastAPI) -> None:
     raises what went wrong, and this is the only place that decides what that
     looks like on the wire.
     """
+
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(_safe_validation_errors(exc))},
+        )
 
     @app.exception_handler(NotFound)
     async def _not_found(request: Request, exc: NotFound) -> JSONResponse:
@@ -218,3 +246,63 @@ def _install_error_handlers(app: FastAPI) -> None:
                 "error": {"type": "memory_store_unavailable", "message": str(exc)}
             },
         )
+
+    @app.exception_handler(CredentialValidationUnavailable)
+    async def _credential_validation_unavailable(
+        request: Request, exc: CredentialValidationUnavailable
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "type": "credential_validation_unavailable",
+                    "message": str(exc),
+                }
+            },
+        )
+
+
+def _safe_validation_errors(exc: RequestValidationError) -> list[dict]:
+    """Keep FastAPI's validation shape without echoing request secrets.
+
+    Pydantic includes the rejected input in each error. For a discriminated
+    union or a model-level validator that input can be the whole object, which
+    means a malformed BYOK request would otherwise return its API key in the
+    422 body. Preserve useful field values while recursively masking known
+    secret fields.
+    """
+
+    errors: list[dict] = []
+    for error in exc.errors():
+        safe = dict(error)
+        location = {str(part) for part in safe.get("loc", ())}
+        if "input" in safe:
+            safe["input"] = (
+                _REDACTED_INPUT
+                if any(_is_sensitive_request_field(part) for part in location)
+                else _redact_sensitive_input(safe["input"])
+            )
+        errors.append(safe)
+    return errors
+
+
+def _redact_sensitive_input(value: object) -> object:
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            redacted[key] = (
+                _REDACTED_INPUT
+                if _is_sensitive_request_field(str(key))
+                else _redact_sensitive_input(item)
+            )
+        return redacted
+    if isinstance(value, (list, tuple)):
+        return [_redact_sensitive_input(item) for item in value]
+    return value
+
+
+def _is_sensitive_request_field(value: str) -> bool:
+    normalized = value.lower().replace("-", "_")
+    return normalized in _SENSITIVE_REQUEST_FIELDS or normalized.endswith(
+        ("_api_key", "_password", "_secret", "_token")
+    )

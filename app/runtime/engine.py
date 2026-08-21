@@ -18,6 +18,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from pydantic import SecretStr
+
 from deepagents import (
     GeneralPurposeSubagentProfile,
     HarnessProfile,
@@ -30,18 +32,21 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
-from app.models.llm import (
-    DEEPSEEK,
-    DEFAULT_THINKING,
-    MODEL_CATALOG,
-    OPENROUTER_SLUGS,
-    THINKING_LEVELS,
-    ModelResponse,
-)
+from app.models.llm import GOOGLE
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
-from app.runtime.model_usage import OpenRouterUsageEvents
+from app.runtime.chat_backends import (
+    MissingProviderKeyError,
+    UnknownModelError,
+    UnsupportedThinkingError,
+    build_chat_model,
+    model_id,
+    resolve_thinking,
+)
+from app.runtime.model_usage import ModelUsageSink
+from app.services.account_credentials import ResolvedAccountCredential
 from app.runtime.tools import (
     AGENT_TOOLSET,
+    READ_IMAGE_MODEL,
     WEB_TOOLSET,
     custom_tool,
     read_image_tool,
@@ -74,16 +79,21 @@ _FILESYSTEM_MUTATORS = {"write_file", "edit_file", "execute"}
 # subagent's calls are internal to the graph, so the whole run appears in the
 # event log as a single `task` with no cost and no trace attached.
 #
-# Registered under the provider rather than a model id because every model in
-# the catalogue is reached through `ChatOpenRouter` (see `_build_chat_model`),
-# which resolves to provider `openrouter`. Profile lookup falls back from
-# `provider:identifier` to the bare provider, so this one entry covers the
-# whole catalogue. There is no wildcard key; a second gateway would need its
-# own registration here.
-register_harness_profile(
+# Every supported client gets the same no-subagent harness behavior. DeepAgents
+# derives these names from the concrete LangChain model instance.
+for _harness_backend in (
     "openrouter",
-    HarnessProfile(general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)),
-)
+    "anthropic",
+    "openai",
+    "google_genai",
+    "deepseek",
+):
+    register_harness_profile(
+        _harness_backend,
+        HarnessProfile(
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
+        ),
+    )
 
 
 class UnsupportedEventError(RuntimeError):
@@ -94,18 +104,6 @@ class FilesystemToolsetRequiredError(RuntimeError):
     """The agent declares no agent toolset, so it has nothing to work with."""
 
 
-class UnknownModelError(ValueError):
-    """A model id that is not in the catalogue."""
-
-
-class UnsupportedThinkingError(ValueError):
-    """A thinking level this build does not offer, or a model that has no dial."""
-
-
-class MissingProviderKeyError(RuntimeError):
-    """The model exists but this deployment has no key for its provider."""
-
-
 async def execute_agent(
     *,
     session: Session,
@@ -114,7 +112,9 @@ async def execute_agent(
     sandbox: Sandbox,
     emit: Emit,
     publish: Publish,
-    inference_key: str,
+    credential: ResolvedAccountCredential | None = None,
+    vision_credential: ResolvedAccountCredential | None = None,
+    inference_key: str | None = None,
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
     tool_completed: ToolCompleted | None = None,
@@ -133,9 +133,45 @@ async def execute_agent(
     `emit` refuses to write once the session has been interrupted, so a
     cancelled turn unwinds through the next call rather than running to the end.
     """
+    legacy_inference_key = credential is None
+    if credential is None:
+        # Compatibility for internal callers written before credentials carried
+        # routing context. Production Session execution always passes the full
+        # object, so a native key can never be mistaken for an OpenRouter key.
+        credential = ResolvedAccountCredential(
+            account_id=str(getattr(session, "account_id", "") or "compat"),
+            funding_mode="platform",
+            backend="openrouter",
+            api_key=SecretStr(inference_key or ""),
+        )
+    if vision_credential is None and (
+        credential.funding_mode == "platform" or credential.backend == GOOGLE
+    ):
+        vision_credential = credential
+
+    vision_backend = (
+        vision_credential.backend if vision_credential is not None else GOOGLE
+    )
+    vision_key = (
+        vision_credential.api_key.get_secret_value()
+        if vision_credential is not None
+        else ""
+    )
+
     config = {"configurable": {"thread_id": session.id}}
     declared = version.tools or []
-    usage_events = OpenRouterUsageEvents(emit)
+    model_spec = session.model or version.model or {}
+    usage_sink = ModelUsageSink(emit)
+    model_usage_events = usage_sink.bind(
+        model=_model_id(model_spec),
+        backend=credential.backend,
+        source="agent",
+    )
+    image_usage_events = usage_sink.bind(
+        model=READ_IMAGE_MODEL,
+        backend=vision_backend,
+        source="tool.read_image",
+    )
 
     # DeepAgents' native tools are never filtered — whatever create_deep_agent()
     # installs is exactly what the model gets. Config only ever decides which of
@@ -155,9 +191,10 @@ async def execute_agent(
     tools.append(
         read_image_tool(
             sandbox,
-            api_key=inference_key,
+            api_key=vision_key,
+            backend=vision_backend,
             session_id=session.id,
-            usage_events=usage_events,
+            usage_events=image_usage_events,
         )
     )
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
@@ -198,11 +235,20 @@ async def execute_agent(
                 # Which model to run and whose credential pays for it are
                 # separate questions: the model comes off the session or the
                 # agent, the key off the session's Account.
-                model=_build_chat_model(
-                    session.model or version.model or {},
-                    api_key=inference_key,
-                    session_id=session.id,
-                    callbacks=[usage_events],
+                model=(
+                    _build_chat_model(
+                        model_spec,
+                        api_key=inference_key,
+                        session_id=session.id,
+                        callbacks=[model_usage_events],
+                    )
+                    if legacy_inference_key
+                    else _build_chat_model(
+                        model_spec,
+                        credential=credential,
+                        session_id=session.id,
+                        callbacks=[model_usage_events],
+                    )
                 ),
                 tools=tools,
                 system_prompt=_system_prompt(
@@ -841,105 +887,33 @@ def _system_prompt(
 def _build_chat_model(
     spec: dict[str, Any] | str,
     *,
-    api_key: str,
+    credential: ResolvedAccountCredential | None = None,
+    api_key: str | None = None,
+    backend: str = "openrouter",
     session_id: str,
     callbacks: list[Any] | None = None,
 ) -> Any:
-    """A caller names a model; the credential is handed in, never looked up.
+    """Compatibility wrapper around the provider-neutral backend registry."""
 
-    Every model is reached through one gateway. The catalog's `provider`
-    survives only as a label for a picker: it no longer selects a client, so
-    adding a model is a catalog entry and its slug, never a new dependency.
-
-    The key belongs to the Account paying for this turn, so it arrives as an
-    argument. Reading it from configuration here would mean this function
-    decides who pays, which is a question about the Session it cannot see.
-    """
-    model_id = spec if isinstance(spec, str) else str(spec.get("id") or "")
-    entry = next((m for m in MODEL_CATALOG if m.id == model_id), None)
-    if entry is None:
-        known = ", ".join(m.id for m in MODEL_CATALOG)
-        raise UnknownModelError(f"Unknown model {model_id!r}. Known models: {known}")
-
-    slug = OPENROUTER_SLUGS.get(entry.id)
-    if slug is None:
-        # A catalog entry with no slug is a packaging mistake, not a bad
-        # request: the caller named a model this build claims to serve.
-        raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
-
-    from langchain_openrouter import ChatOpenRouter
-
-    options: dict[str, Any] = {}
-
-    # DeepSeek traffic is intentionally confined to its first-party endpoint.
-    # If the OpenRouter workspace's data policy stops admitting that endpoint,
-    # fail the request rather than silently spilling it to a slower third party.
-    if entry.provider == DEEPSEEK:
-        options["openrouter_provider"] = {"only": [DEEPSEEK], "allow_fallbacks": False}
-
-    thinking = _resolve_thinking(spec, entry)
-    if thinking is not None:
-        options["reasoning"] = {"effort": thinking}
-
-    return ChatOpenRouter(
-        model=slug,
-        api_key=_require_key(api_key),
-        # One VMA Session is one OpenRouter Session. Besides making the
-        # gateway's Sessions view useful, this gives every model call in the
-        # conversation the same sticky-routing key for prompt-cache reuse.
+    resolved = credential or ResolvedAccountCredential(
+        account_id="compat",
+        funding_mode="platform" if backend == "openrouter" else "byok",
+        backend=backend,
+        api_key=SecretStr(api_key or ""),
+    )
+    return build_chat_model(
+        spec,
+        credential=resolved,
         session_id=session_id,
-        # The final streaming chunk is where OpenRouter reports usage.
-        stream_usage=True,
         callbacks=callbacks,
-        **options,
     )
 
 
-def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str | None:
-    """How hard to think, from the spec that named the model.
-
-    It rides on the model spec rather than beside it because it is not separable
-    from the model: `low` means a different number of tokens on each of them,
-    and on two of the sixteen it means nothing at all. A Session that carries
-    one carries the other.
-
-    Note what the caller passes in — `session.model or version.model` — so a
-    Session naming a model replaces the Agent's spec whole rather than merging
-    with it. A Session that sets an id and no level gets the default, not the
-    Agent's level. That is how the id already behaved, and splitting the rule
-    per field would mean a Session could inherit half of a spec it overrode.
-
-    Raises rather than quietly dropping an unusable level. The gateway's own
-    behaviour here is to map to the nearest supported setting and say nothing,
-    which is the failure this refuses to pass on: a caller that asked for `high`
-    on a model with no dial would be shown `high` everywhere and get whatever
-    the model felt like, with nothing anywhere to say the two disagreed.
-    """
-    requested = None if isinstance(spec, str) else spec.get("thinking")
-
-    if requested is None:
-        return DEFAULT_THINKING if entry.thinking else None
-
-    level = str(requested).strip().lower()
-    if level not in THINKING_LEVELS:
-        allowed = ", ".join(THINKING_LEVELS)
-        raise UnsupportedThinkingError(
-            f"Unknown thinking level {requested!r}. Allowed: {allowed}"
-        )
-    if not entry.thinking:
-        raise UnsupportedThinkingError(
-            f"Model {entry.id!r} takes no thinking level — it reasons as it sees fit "
-            "and the gateway exposes no dial for it"
-        )
-    return level
+def _model_id(spec: dict[str, Any] | str) -> str:
+    return model_id(spec)
 
 
-def _require_key(key: str) -> str:
-    if not key:
-        raise MissingProviderKeyError(
-            "no gateway credential was resolved for this turn, so no model can be reached"
-        )
-    return key
+_resolve_thinking = resolve_thinking
 
 
 def _postgres_dsn(value: str, schema: str = "") -> str:

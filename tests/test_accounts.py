@@ -56,8 +56,8 @@ async def test_creating_an_account_mints_a_key_named_after_it(db, org):
     name, limit = keys.created[0]
     assert name == f"vma:test:org:{org}:acct:{account.id}:key:1"
     assert limit is None
-    assert account.credential is not None
-    assert account.credential.status == CREDENTIAL_ACTIVE
+    assert len(account.model_credentials) == 1
+    assert account.model_credentials[0].status == CREDENTIAL_ACTIVE
 
 
 async def test_the_stored_credential_is_never_the_plaintext_key(db, org):
@@ -68,7 +68,8 @@ async def test_the_stored_credential_is_never_the_plaintext_key(db, org):
     )
 
     minted = keys.secrets[0]
-    stored = account.credential.encrypted_key
+    credential = account.model_credentials[0]
+    stored = credential.encrypted_key
     assert minted not in stored
     assert "sk-or-v1" not in stored
     # Round-trips under the Organization and key it was sealed with. Those are
@@ -76,7 +77,7 @@ async def test_the_stored_credential_is_never_the_plaintext_key(db, org):
     # lifted into another row does not open.
     assert (
         service._cipher().decrypt(
-            stored, organization_id=org, key_hash=account.credential.key_hash
+            stored, organization_id=org, key_hash=credential.key_hash
         )
         == minted
     )
@@ -129,14 +130,14 @@ async def test_suspending_disables_the_key_and_keeps_the_account(db, org):
     account = await service.create_account(
         db, organization_id=org, name="Research", keys=keys
     )
-    key_hash = account.credential.key_hash
+    key_hash = account.model_credentials[0].key_hash
 
     suspended = await service.suspend_account(
         db, organization_id=org, account_id=account.id, keys=keys
     )
 
     assert suspended.status == ACCOUNT_SUSPENDED
-    assert suspended.credential.status == CREDENTIAL_SUSPENDED
+    assert suspended.model_credentials[0].status == CREDENTIAL_SUSPENDED
     # Disabled, not deleted — what it spent stays attributable to this key.
     assert keys.updates == [(key_hash, True)]
     assert keys.deleted == []
@@ -147,7 +148,7 @@ async def test_resuming_puts_the_same_credential_back_to_work(db, org):
     account = await service.create_account(
         db, organization_id=org, name="Research", keys=keys
     )
-    key_hash = account.credential.key_hash
+    key_hash = account.model_credentials[0].key_hash
     await service.suspend_account(
         db, organization_id=org, account_id=account.id, keys=keys
     )
@@ -157,7 +158,7 @@ async def test_resuming_puts_the_same_credential_back_to_work(db, org):
     )
 
     assert resumed.status == ACCOUNT_ACTIVE
-    assert resumed.credential.key_hash == key_hash
+    assert resumed.model_credentials[0].key_hash == key_hash
     assert keys.updates[-1] == (key_hash, False)
     assert len(keys.created) == 1
 
@@ -397,7 +398,7 @@ async def test_ensure_finishes_an_account_left_without_a_credential(db, bare_org
     # Re-read rather than holding the row: a freshly added instance has no
     # loaded relationship, and touching one is lazy IO in the wrong place.
     stranded = await accounts_q.get_default_account(db, organization_id=bare_org)
-    assert stranded.credential is None
+    assert stranded.model_credentials == []
 
     repaired = await service.ensure_default_account(
         db, organization_id=bare_org, keys=keys
@@ -405,7 +406,7 @@ async def test_ensure_finishes_an_account_left_without_a_credential(db, bare_org
 
     assert repaired.id == stranded_id
     assert repaired.status == ACCOUNT_ACTIVE
-    assert repaired.credential is not None
+    assert len(repaired.model_credentials) == 1
     assert keys.created[0][0].endswith(f":acct:{stranded_id}:key:1")
 
 
@@ -520,7 +521,7 @@ async def test_usage_comes_from_the_provider_that_charges_it(db, org):
     account = await service.create_account(
         db, organization_id=org, name="Research", keys=keys
     )
-    keys.usage[account.credential.key_hash] = Decimal("2.5")
+    keys.usage[account.model_credentials[0].key_hash] = Decimal("2.5")
 
     usage = await service.get_account_usage(
         db, organization_id=org, account_id=account.id, keys=keys
@@ -534,7 +535,7 @@ async def test_usage_reports_the_headroom_left_under_a_limit(db, org):
     account = await service.create_account(
         db, organization_id=org, name="Capped", limit_usd=Decimal("10"), keys=keys
     )
-    keys.usage[account.credential.key_hash] = Decimal("4")
+    keys.usage[account.model_credentials[0].key_hash] = Decimal("4")
 
     usage = await service.get_account_usage(
         db, organization_id=org, account_id=account.id, keys=keys
@@ -565,7 +566,7 @@ async def test_a_suspended_account_still_reports_what_it_spent(db, org):
     account = await service.create_account(
         db, organization_id=org, name="Research", keys=keys
     )
-    keys.usage[account.credential.key_hash] = Decimal("7.25")
+    keys.usage[account.model_credentials[0].key_hash] = Decimal("7.25")
     await service.suspend_account(
         db, organization_id=org, account_id=account.id, keys=keys
     )

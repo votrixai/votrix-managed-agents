@@ -1,17 +1,13 @@
-"""Billing Accounts and the provider credential each one spends through.
+"""Billing Accounts and the model credentials they spend through.
 
-An Account is the boundary an Organization's spend is measured and capped at.
-One Account holds one provider credential, and that credential is the whole
-reason the boundary is enforceable: a request either carries it or fails, so
-spend cannot land on an Account by mistake the way a mislabelled request can
-land under the wrong tag.
+An Account is the boundary an Organization's usage is attributed to. Platform
+Accounts own one managed OpenRouter credential; BYOK Accounts may own one
+direct credential per supported model backend. A request either resolves a
+credential inside its pinned Account or fails, so usage cannot silently move
+to a different billing boundary.
 
-Secret material lives only on ``AccountProviderCredential`` and only encrypted.
+Secret material lives only on ``AccountModelCredential`` and only encrypted.
 Nothing here ever holds a plaintext key.
-
-Accounts are never removed. Suspending one stops it spending while leaving
-every figure recorded against it readable, which is what a billing record has
-to do — a deleted Account takes the history of what it was charged with it.
 """
 
 from __future__ import annotations
@@ -22,6 +18,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Numeric,
     String,
     Text,
@@ -31,13 +28,33 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
 
-# An Account exists before its credential does: minting one is a call to
-# another service, and that call can fail after the row is written. The state
-# says which of those happened, so a retry knows whether to mint or to adopt.
 ACCOUNT_PROVISIONING = "provisioning"
 ACCOUNT_ACTIVE = "active"
 ACCOUNT_SUSPENDED = "suspended"
 ACCOUNT_STATUSES = (ACCOUNT_PROVISIONING, ACCOUNT_ACTIVE, ACCOUNT_SUSPENDED)
+
+FUNDING_PLATFORM = "platform"
+FUNDING_BYOK = "byok"
+FUNDING_MODES = (FUNDING_PLATFORM, FUNDING_BYOK)
+
+CREDENTIAL_OPENROUTER = "openrouter"
+CREDENTIAL_ANTHROPIC = "anthropic"
+CREDENTIAL_OPENAI = "openai"
+CREDENTIAL_GOOGLE = "google"
+CREDENTIAL_DEEPSEEK = "deepseek"
+CREDENTIAL_PROVIDERS = (
+    CREDENTIAL_OPENROUTER,
+    CREDENTIAL_ANTHROPIC,
+    CREDENTIAL_OPENAI,
+    CREDENTIAL_GOOGLE,
+    CREDENTIAL_DEEPSEEK,
+)
+DIRECT_CREDENTIAL_PROVIDERS = (
+    CREDENTIAL_ANTHROPIC,
+    CREDENTIAL_OPENAI,
+    CREDENTIAL_GOOGLE,
+    CREDENTIAL_DEEPSEEK,
+)
 
 CREDENTIAL_ACTIVE = "active"
 CREDENTIAL_SUSPENDED = "suspended"
@@ -47,9 +64,6 @@ CREDENTIAL_STATUSES = (CREDENTIAL_ACTIVE, CREDENTIAL_SUSPENDED)
 class OrganizationAccount(TimestampMixin, Base):
     __tablename__ = "organization_accounts"
     __table_args__ = (
-        # One default per Organization, enforced here rather than in code: the
-        # default is what a request without an Account resolves to, and two of
-        # them is a coin toss over which one gets billed.
         UniqueConstraint(
             "organization_id",
             "is_default",
@@ -61,6 +75,14 @@ class OrganizationAccount(TimestampMixin, Base):
             "idempotency_key",
             name="uq_organization_accounts_idempotency_key",
         ),
+        # Referenced by the credential's composite FK. It makes funding mode an
+        # immutable part of the Account/credential relationship in the DB, not
+        # merely a convention shared by two rows.
+        UniqueConstraint(
+            "id",
+            "funding_mode",
+            name="uq_organization_accounts_id_funding_mode",
+        ),
         CheckConstraint(
             "status IN ('provisioning', 'active', 'suspended')",
             name="ck_organization_accounts_status",
@@ -68,6 +90,14 @@ class OrganizationAccount(TimestampMixin, Base):
         CheckConstraint(
             "limit_usd IS NULL OR limit_usd > 0",
             name="ck_organization_accounts_limit_positive",
+        ),
+        CheckConstraint(
+            "funding_mode IN ('platform', 'byok')",
+            name="ck_organization_accounts_funding_mode",
+        ),
+        CheckConstraint(
+            "funding_mode != 'byok' OR limit_usd IS NULL",
+            name="ck_organization_accounts_byok_no_limit",
         ),
     )
 
@@ -82,45 +112,76 @@ class OrganizationAccount(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=ACCOUNT_PROVISIONING
     )
+    funding_mode: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=FUNDING_PLATFORM,
+        server_default=FUNDING_PLATFORM,
+    )
     # NULL rather than False for a non-default, so the unique constraint above
     # permits many non-defaults and exactly one default.
     is_default: Mapped[bool | None] = mapped_column(Boolean)
-    # Uncapped unless a limit is asked for. A cap is the one control the
-    # provider enforces on our behalf, and imposing an unrequested one would
-    # fail requests nobody asked to have failed.
     limit_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
-    # Scoped per Organization by the constraint above: one tenant's key must
-    # not collide with another's.
     idempotency_key: Mapped[str | None] = mapped_column(String(255))
 
-    credential: Mapped["AccountProviderCredential | None"] = relationship(
+    model_credentials: Mapped[list["AccountModelCredential"]] = relationship(
         back_populates="account",
-        uselist=False,
+        foreign_keys="AccountModelCredential.account_id",
         lazy="selectin",
+        order_by="AccountModelCredential.backend",
     )
 
 
-class AccountProviderCredential(TimestampMixin, Base):
-    """What one Account spends through.
+class AccountModelCredential(TimestampMixin, Base):
+    """One model backend credential belonging to an Account.
 
-    ``encrypted_key`` is decrypted at the outbound inference boundary and
-    nowhere else. ``provider_key_name`` is the only attribution readable from
-    the provider's side: a console or billing export shows the name, and
-    without the Account id in it a key there cannot be traced back to what it
-    bills.
+    Platform rows are managed OpenRouter keys and carry a provider-side name.
+    BYOK rows are user-owned direct-provider keys and deliberately carry no
+    managed name. ``funding_mode`` is repeated solely so a composite foreign
+    key can make that distinction agree with the parent Account in the DB.
     """
 
-    __tablename__ = "account_provider_credentials"
+    __tablename__ = "account_model_credentials"
     __table_args__ = (
-        UniqueConstraint("account_id", name="uq_account_provider_credentials_account"),
-        UniqueConstraint("key_hash", name="uq_account_provider_credentials_key_hash"),
+        ForeignKeyConstraint(
+            ["account_id", "funding_mode"],
+            ["organization_accounts.id", "organization_accounts.funding_mode"],
+            name="fk_account_model_credentials_account_funding",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "account_id",
+            "backend",
+            name="uq_account_model_credentials_account_backend",
+        ),
+        UniqueConstraint(
+            "key_hash",
+            name="uq_account_model_credentials_key_hash",
+        ),
         UniqueConstraint(
             "provider_key_name",
-            name="uq_account_provider_credentials_key_name",
+            name="uq_account_model_credentials_key_name",
         ),
         CheckConstraint(
             "status IN ('active', 'suspended')",
-            name="ck_account_provider_credentials_status",
+            name="ck_account_model_credentials_status",
+        ),
+        CheckConstraint(
+            "funding_mode IN ('platform', 'byok')",
+            name="ck_account_model_credentials_funding_mode",
+        ),
+        CheckConstraint(
+            "backend IN "
+            "('openrouter', 'anthropic', 'openai', 'google', 'deepseek')",
+            name="ck_account_model_credentials_backend",
+        ),
+        CheckConstraint(
+            "(funding_mode = 'platform' AND backend = 'openrouter' "
+            "AND provider_key_name IS NOT NULL) OR "
+            "(funding_mode = 'byok' AND backend IN "
+            "('anthropic', 'openai', 'google', 'deepseek') "
+            "AND provider_key_name IS NULL)",
+            name="ck_account_model_credentials_funding_backend",
         ),
     )
 
@@ -130,23 +191,31 @@ class AccountProviderCredential(TimestampMixin, Base):
         ForeignKey("organization_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
+    funding_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=FUNDING_PLATFORM
+    )
+    backend: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=CREDENTIAL_OPENROUTER
+    )
     organization_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # OpenRouter's key hash for a managed credential; a provider-scoped
+    # one-way fingerprint for BYOK. Both are stable non-secret identities.
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    provider_key_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_key_name: Mapped[str | None] = mapped_column(String(255))
     encrypted_key: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=CREDENTIAL_ACTIVE
     )
-    # Rotation is not implemented here, but the name carries the number so a
-    # rotated key is distinguishable from the one it replaced. A provider-side
-    # name is forever: it is what a historical billing export says.
     generation: Mapped[int] = mapped_column(nullable=False, default=1)
 
-    account: Mapped[OrganizationAccount] = relationship(back_populates="credential")
+    account: Mapped[OrganizationAccount] = relationship(
+        back_populates="model_credentials",
+        foreign_keys=[account_id],
+    )
 
 
 __all__ = [
@@ -155,8 +224,18 @@ __all__ = [
     "ACCOUNT_STATUSES",
     "ACCOUNT_SUSPENDED",
     "CREDENTIAL_ACTIVE",
+    "CREDENTIAL_ANTHROPIC",
+    "CREDENTIAL_DEEPSEEK",
+    "CREDENTIAL_GOOGLE",
+    "CREDENTIAL_OPENAI",
+    "CREDENTIAL_OPENROUTER",
+    "CREDENTIAL_PROVIDERS",
     "CREDENTIAL_STATUSES",
     "CREDENTIAL_SUSPENDED",
-    "AccountProviderCredential",
+    "DIRECT_CREDENTIAL_PROVIDERS",
+    "FUNDING_BYOK",
+    "FUNDING_MODES",
+    "FUNDING_PLATFORM",
+    "AccountModelCredential",
     "OrganizationAccount",
 ]

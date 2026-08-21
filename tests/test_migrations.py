@@ -2,6 +2,7 @@ import sqlite3
 from io import StringIO
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -12,7 +13,8 @@ from app.config import clear_settings_cache
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PREVIOUS_HEAD = "b7e1c4d9a620"
 REWIRED_RELEASE_HEAD = "b7f2d4a91c53"
-CURRENT_HEAD = "f6c8d2a91e74"
+CURRENT_HEAD = "c1b7e4d92a60"
+PRE_BYOK_HEAD = "f6c8d2a91e74"
 
 
 def test_member_migration_preserves_existing_owner_and_has_one_head(
@@ -150,6 +152,225 @@ def test_postgres_offline_downgrade_emits_role_guard(monkeypatch):
     assert "DO $$" in sql
     assert "WHERE role <> 'owner'" in sql
     assert "RENAME CONSTRAINT organization_members_pkey" in sql
+
+
+def test_byok_migration_renames_and_backfills_multi_provider_credentials(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "byok-migration.sqlite"
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    clear_settings_cache()
+
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    config.set_main_option("script_location", str(REPOSITORY_ROOT / "alembic"))
+    timestamp = "2026-08-20 00:00:00+00:00"
+
+    try:
+        command.upgrade(config, PRE_BYOK_HEAD)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO organizations (id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("org_existing", "Existing", timestamp, timestamp),
+            )
+            connection.execute(
+                """
+                INSERT INTO organization_accounts
+                    (id, organization_id, name, status, is_default,
+                     limit_usd, idempotency_key, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "acct_existing",
+                    "org_existing",
+                    "Existing Account",
+                    "active",
+                    1,
+                    20,
+                    None,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO account_provider_credentials
+                    (id, account_id, organization_id, key_hash,
+                     provider_key_name, encrypted_key, status, generation,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "acctcred_existing",
+                    "acct_existing",
+                    "org_existing",
+                    "hash-existing",
+                    "vma:test:existing",
+                    "ciphertext",
+                    "active",
+                    1,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+        command.upgrade(config, "head")
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            funding = connection.execute(
+                """
+                SELECT funding_mode
+                FROM organization_accounts WHERE id = 'acct_existing'
+                """
+            ).fetchone()
+            existing_credential = connection.execute(
+                """
+                SELECT funding_mode, backend, provider_key_name
+                FROM account_model_credentials
+                WHERE id = 'acctcred_existing'
+                """
+            ).fetchone()
+            credential_columns = {
+                row[1]: row
+                for row in connection.execute(
+                    "PRAGMA table_info(account_model_credentials)"
+                )
+            }
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            connection.execute(
+                """
+                INSERT INTO organization_accounts
+                    (id, organization_id, name, status, is_default,
+                     limit_usd, idempotency_key, funding_mode,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "acct_byok",
+                    "org_existing",
+                    "BYOK",
+                    "active",
+                    None,
+                    None,
+                    None,
+                    "byok",
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            for backend in ("anthropic", "openai"):
+                connection.execute(
+                    """
+                    INSERT INTO account_model_credentials
+                        (id, account_id, funding_mode, backend, organization_id,
+                         key_hash, provider_key_name, encrypted_key, status,
+                         generation, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"acctcred_byok_{backend}",
+                        "acct_byok",
+                        "byok",
+                        backend,
+                        "org_existing",
+                        f"byok:{backend}:digest",
+                        None,
+                        "ciphertext",
+                        "active",
+                        1,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+
+            # Existing Platform rows cannot be reclassified underneath their
+            # managed key: the composite FK makes funding mode part of the
+            # relationship rather than two columns code merely keeps aligned.
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    UPDATE organization_accounts
+                    SET funding_mode = 'byok', limit_usd = NULL
+                    WHERE id = 'acct_existing'
+                    """
+                )
+
+            # A BYOK Account can have many direct backends, but OpenRouter is
+            # Platform-only and a Platform Account still has exactly one key.
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    INSERT INTO account_model_credentials
+                        (id, account_id, funding_mode, backend, organization_id,
+                         key_hash, provider_key_name, encrypted_key, status,
+                         generation, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "acctcred_invalid_gateway_byok",
+                        "acct_byok",
+                        "byok",
+                        "openrouter",
+                        "org_existing",
+                        "byok:openrouter:digest",
+                        None,
+                        "ciphertext",
+                        "active",
+                        1,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    INSERT INTO account_model_credentials
+                        (id, account_id, funding_mode, backend, organization_id,
+                         key_hash, provider_key_name, encrypted_key, status,
+                         generation, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "acctcred_second_platform",
+                        "acct_existing",
+                        "platform",
+                        "openrouter",
+                        "org_existing",
+                        "hash-second-platform",
+                        "vma:test:second",
+                        "ciphertext",
+                        "active",
+                        1,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+
+        assert funding == ("platform",)
+        assert existing_credential == (
+            "platform",
+            "openrouter",
+            "vma:test:existing",
+        )
+        assert credential_columns["provider_key_name"][3] == 0
+        assert "account_model_credentials" in tables
+        assert "account_provider_credentials" not in tables
+
+        with pytest.raises(RuntimeError, match="BYOK Accounts exist"):
+            command.downgrade(config, PRE_BYOK_HEAD)
+    finally:
+        clear_settings_cache()
 
 
 def test_reconciliation_repairs_database_stamped_by_rewired_history(

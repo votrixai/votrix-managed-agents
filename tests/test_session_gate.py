@@ -625,11 +625,16 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
     instead of holding a snapshot.
     """
     from types import SimpleNamespace
+    from uuid import uuid4
+
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
 
     from app.runtime import engine
 
     built: list[dict] = []
     image_usage_events: list[object] = []
+    emitted: list[tuple[str, dict]] = []
 
     class _Checkpoint:
         async def __aenter__(self):
@@ -652,6 +657,7 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
 
     monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
     monkeypatch.setattr(engine, "_build_chat_model", _capture)
+
     def _read_image(*_args, **kwargs):
         image_usage_events.append(kwargs["usage_events"])
         return object()
@@ -660,6 +666,7 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
     monkeypatch.setattr(engine, "create_deep_agent", lambda **_kw: _Graph())
 
     async def _emit(_event, _payload):
+        emitted.append((_event, _payload))
         return None
 
     async def _publish(_event, _text):
@@ -693,4 +700,41 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
         }
     ]
     assert len(callbacks) == 1
-    assert image_usage_events == callbacks
+    assert len(image_usage_events) == 1
+    assert image_usage_events != callbacks
+
+    usage = LLMResult(
+        generations=[
+            [
+                ChatGeneration(
+                    message=AIMessage(
+                        content="done",
+                        usage_metadata={
+                            "input_tokens": 10,
+                            "output_tokens": 2,
+                            "total_tokens": 12,
+                        },
+                    )
+                )
+            ]
+        ]
+    )
+    await callbacks[0].on_llm_end(usage, run_id=uuid4())
+    await image_usage_events[0].on_llm_end(usage, run_id=uuid4())
+
+    usage_events = [payload for kind, payload in emitted if kind == "model.usage"]
+    expected_model = expected["id"]
+    assert usage_events == [
+        {
+            "model": expected_model,
+            "backend": "openrouter",
+            "source": "agent",
+            "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+        },
+        {
+            "model": engine.READ_IMAGE_MODEL,
+            "backend": "openrouter",
+            "source": "tool.read_image",
+            "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+        },
+    ]

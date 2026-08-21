@@ -298,3 +298,53 @@ async def test_no_vision_key_is_reported_rather_than_guessed_at():
 
     assert "no vision model is configured" in answer
     assert sandbox.asked == []
+
+
+async def test_google_byok_vision_uses_the_accounts_direct_key(monkeypatch):
+    seen: list[dict[str, Any]] = []
+
+    async def _describe(
+        _data: bytes,
+        _mime_type: str,
+        _query: str,
+        **kwargs: Any,
+    ) -> str:
+        seen.append(kwargs)
+        return "Visible through Google."
+
+    monkeypatch.setattr(tools_module, "describe_image", _describe)
+    sandbox = FakeSandbox({"/home/user/a.png": PNG})
+    answer = await read_image_tool(
+        sandbox,
+        api_key="google-user-key",
+        backend="google",
+        session_id="sess_image_test",
+    ).ainvoke({"path": "a.png", "query": "What is in it?"})
+
+    assert answer == "Visible through Google."
+    assert seen[0]["api_key"] == "google-user-key"
+    assert seen[0]["backend"] == "google"
+
+
+async def test_unsupported_byok_vision_never_falls_back_or_reads_the_file(
+    monkeypatch,
+):
+    called = False
+
+    async def _describe(*_args: Any, **_kwargs: Any) -> str:
+        nonlocal called
+        called = True
+        return "should not run"
+
+    monkeypatch.setattr(tools_module, "describe_image", _describe)
+    sandbox = FakeSandbox({"/home/user/a.png": PNG})
+    answer = await read_image_tool(
+        sandbox,
+        api_key="anthropic-user-key",
+        backend="anthropic",
+        session_id="sess_image_test",
+    ).ainvoke({"path": "a.png", "query": "What is in it?"})
+
+    assert "unavailable for this Account's credential backend" in answer
+    assert sandbox.asked == []
+    assert called is False

@@ -1,7 +1,8 @@
-"""The models the platform can drive.
+"""The models VMA exposes through Platform and direct BYOK Accounts.
 
-The catalog is a hard-coded constant, not a table: the platform holds one key
-per provider in config, so there is nothing per-organization to store.
+The catalog is a hard-coded product contract rather than tenant configuration.
+An Account selects the inference backend and credential; the model IDs and
+their public capabilities remain the same across funding modes.
 """
 
 from typing import Literal
@@ -16,9 +17,9 @@ OPENAI = "openai"
 
 # How hard a model is asked to think, as a Session or Agent may set it.
 #
-# Three, where the gateway accepts seven. `minimal`, `medium` and `xhigh` are
-# real values there and not real settings here: DeepSeek collapses them to its
-# own low/high/max, and Gemini maps `xhigh` down to `high`. Offering a control
+# Three, while the supported backends expose several incompatible scales.
+# `minimal`, `medium` and `xhigh` are real values on some APIs and not portable
+# settings here: DeepSeek and Gemini do not offer the same scale. Offering a control
 # with four positions that do nothing is worse than offering one with three
 # that work — a user who picks `medium` and sees no change has been told a lie
 # by the interface, and there is nothing in the response to say so.
@@ -41,12 +42,11 @@ class ModelResponse(ApiModel):
     display_name: str
     # Whether this model takes a thinking level at all. A `false` here does not
     # mean the model does not reason — every model below does — only that the
-    # gateway exposes no dial for it, so how deeply is the model's own business.
+    # selected backend exposes no dial for it, so how deeply is the model's own
+    # business.
     #
-    # Read off the gateway's `supported_parameters` rather than assumed per
-    # vendor, because it does not follow vendor lines: Claude Haiku 4.5 has no
-    # dial while every other Claude does, and Gemini 2.5 Pro has none while
-    # every Gemini 3 does.
+    # This is part of VMA's model contract rather than inferred from a provider
+    # family: Claude Haiku 4.5 and Gemini 2.5 Pro intentionally expose no dial.
     thinking: bool = True
 
 
@@ -121,9 +121,9 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
     # Undated on purpose. Dated snapshots were briefly listed beside these so
     # two cuts of the same model could be timed against each other; that
     # measurement is done, and a catalogue is a menu rather than a record of
-    # what has been tried. Which snapshot the gateway serves for an undated id
-    # is the gateway's business, and pinning one here would freeze every Session
-    # on it forever.
+    # what has been tried. Which snapshot an upstream serves for an undated id
+    # is its business, and pinning one here would freeze every Session on it
+    # forever.
     ModelResponse(
         id="deepseek-v4-pro",
         provider=DEEPSEEK,
@@ -137,14 +137,14 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
 )
 
 
-# What the gateway calls each model. Written out rather than derived from
+# What OpenRouter calls each model. Written out rather than derived from
 # `f"{provider}/{id}"`, which is right for twelve of these and wrong for the two
 # Anthropic ids that spell their version with a dot. A wrong slug fails at the
-# gateway, whose error names a model nobody wrote down, so the mapping is stated
-# here where a reader can check it against the catalog.
+# OpenRouter, whose error names a model nobody wrote down, so the mapping is
+# stated here where a reader can check it against the catalog.
 #
 # Kept out of `ModelResponse` deliberately: that model is the body of
-# `GET /v1/models`, and which gateway serves a model is not a caller's business.
+# `GET /v1/models`, and an internal OpenRouter slug is not a caller's business.
 OPENROUTER_SLUGS: dict[str, str] = {
     "claude-opus-5": "anthropic/claude-opus-5",
     "claude-sonnet-5": "anthropic/claude-sonnet-5",
