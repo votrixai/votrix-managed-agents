@@ -25,7 +25,7 @@ uv run --extra sandbox-e2b --env-file .env python infra/e2b/vma_hardened/build.p
 uv run --extra sandbox-e2b --env-file .env python -c 'from e2b import Template; print(Template.get_tags("vma-hardened"))'
 uv run --extra sandbox-e2b --env-file .env python infra/e2b/vma_hardened/smoke.py
 uv run --extra sandbox-e2b --env-file .env python infra/e2b/vma_hardened/provider_smoke.py
-uv run --extra sandbox-e2b --env-file .env python -c 'from e2b import Template; Template.assign_tags("vma-hardened:v20260712-2", "default")'
+uv run --extra sandbox-e2b --env-file .env python -c 'import sys; sys.path.insert(0, "infra/e2b/vma_hardened"); from e2b import Template; from template import TEMPLATE_CANDIDATE; Template.assign_tags(TEMPLATE_CANDIDATE, "default")'
 uv run --extra sandbox-e2b --env-file .env python -c 'from e2b import Template; print(Template.get_tags("vma-hardened"))'
 uv run --extra sandbox-e2b --env-file .env python infra/e2b/vma_hardened/provider_smoke.py --template vma-hardened
 ```
@@ -33,6 +33,15 @@ uv run --extra sandbox-e2b --env-file .env python infra/e2b/vma_hardened/provide
 Never publish this template. It should remain private to the E2B team that owns
 the server-side VMA API key. Build a new version tag and pass the smoke test
 before moving `default` again.
+
+**Read the promoted version from `template.py`, never type it.** This step used
+to carry a hand-written literal, and it drifted: it named a build from the day
+before `zip` joined the package list, so `default` kept pointing at a sandbox
+without it long after the code had it. Agent sessions failed on `zip -r` with
+`command not found`, which looks like a broken product, not a broken build. The
+final `provider_smoke.py --template vma-hardened` line above is what catches a
+stale `default`; both smoke scripts now assert the agent toolchain is present,
+so run them against the unversioned tag after every promotion.
 
 VMA must use the unversioned default and declare the matching resources:
 

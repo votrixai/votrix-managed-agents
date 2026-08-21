@@ -4,7 +4,7 @@ from e2b import Template
 
 
 TEMPLATE_NAME = "vma-hardened"
-TEMPLATE_CANDIDATE = f"{TEMPLATE_NAME}:v20260721-1"
+TEMPLATE_CANDIDATE = f"{TEMPLATE_NAME}:v20260821-1"
 TEMPLATE_CPU_COUNT = 2
 TEMPLATE_MEMORY_MB = 2048
 
@@ -76,6 +76,16 @@ test -w /mnt/session/outputs
 test -d /tmp
 test -w /tmp
 test -k /tmp
+
+# The toolchain agents actually reach for. A session that cannot make a ZIP
+# cannot preview or deploy a site, and the failure surfaces as a broken
+# product rather than a broken build unless it is asserted here.
+for bin in zip unzip curl git jq rg; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "missing required binary: $bin" >&2
+    exit 44
+  fi
+done
 """
 
 
