@@ -40,8 +40,9 @@ before `zip` joined the package list, so `default` kept pointing at a sandbox
 without it long after the code had it. Agent sessions failed on `zip -r` with
 `command not found`, which looks like a broken product, not a broken build. The
 final `provider_smoke.py --template vma-hardened` line above is what catches a
-stale `default`; both smoke scripts now assert the agent toolchain is present,
-so run them against the unversioned tag after every promotion.
+stale `default` — it now asserts the agent toolchain against a real sandbox
+built from the promoted tag, which is the only check that can see this. Never
+skip it after promoting.
 
 VMA must use the unversioned default and declare the matching resources:
 
