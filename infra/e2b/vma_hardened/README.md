@@ -39,10 +39,13 @@ to carry a hand-written literal, and it drifted: it named a build from the day
 before `zip` joined the package list, so `default` kept pointing at a sandbox
 without it long after the code had it. Agent sessions failed on `zip -r` with
 `command not found`, which looks like a broken product, not a broken build. The
-final `provider_smoke.py --template vma-hardened` line above is what catches a
-stale `default` — it now asserts the agent toolchain against a real sandbox
-built from the promoted tag, which is the only check that can see this. Never
-skip it after promoting.
+verification against the promoted tag is what catches a stale or wrong
+`default`, because build-time attestation only ever sees the candidate. Use
+`smoke.py --template vma-hardened` for it: it asserts the agent toolchain
+(`zip`, `unzip`, `curl`, `git`, `jq`, `rg`, `python3`) inside a real sandbox.
+
+`provider_smoke.py` cannot currently stand in for that step — on this branch it
+fails at import, because `app.runtime.sandbox_providers` does not exist here.
 
 VMA must use the unversioned default and declare the matching resources:
 

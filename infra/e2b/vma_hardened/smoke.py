@@ -37,6 +37,17 @@ test -k /var/tmp
 """
 
 
+_TOOLCHAIN = r"""
+set -eu
+for bin in zip unzip curl git jq rg python3; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "missing required binary: $bin" >&2
+    exit 44
+  fi
+done
+"""
+
+
 _FORBIDDEN_WRITES = r"""
 set -eu
 for path in \
@@ -91,6 +102,7 @@ async def _attest_running_sandbox(sandbox: Any) -> None:
     if info.lifecycle.get("auto_resume") is not False:
         raise RuntimeError("E2B unexpectedly enabled auto-resume")
     await _checked(sandbox, _GUEST_ATTEST)
+    await _checked(sandbox, _TOOLCHAIN)
     await _checked(sandbox, _FORBIDDEN_WRITES)
     await _checked(sandbox, _EGRESS_BLOCKED)
 

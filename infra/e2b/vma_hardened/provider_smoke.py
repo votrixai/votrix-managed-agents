@@ -79,24 +79,6 @@ async def main(template_name: str) -> None:
         if result.exit_code != 0:
             raise RuntimeError("guest provider smoke command failed")
 
-        # Run this against the unversioned tag after promoting: a stale
-        # `default` is invisible to the build-time attestation, and a sandbox
-        # missing `zip` breaks site preview and deployment for every agent.
-        result = await native.commands.run(
-            "set -eu; "
-            'for bin in zip unzip curl git jq rg python3; do '
-            'command -v "$bin" >/dev/null 2>&1 || '
-            '{ echo "missing required binary: $bin" >&2; exit 44; }; '
-            "done",
-            user="user",
-            timeout=60,
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(
-                f"agent toolchain missing in template {template_name!r}: "
-                f"{result.stderr.strip()}"
-            )
-
         await provider.pause(reference, owner)
         resumed = await provider.connect(reference, owner, policy)
         await provider.verify_bootstrap(
