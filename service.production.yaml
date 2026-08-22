@@ -39,7 +39,7 @@ spec:
             - name: APP_ENV
               value: "production"
             - name: DATABASE_SCHEMA
-              value: "vma_rewrite_production"
+              value: "vma"
             - name: VMA_PUBLIC_BUILD_ID
               value: "__VMA_PUBLIC_BUILD_ID__"
             - name: VMA_GIT_COMMIT_SHA
@@ -91,7 +91,7 @@ spec:
             - name: VMA_E2B_GUEST_USER
               value: "user"
             - name: SANDBOX_TIMEOUT_SECONDS
-              value: "900"
+              value: "360"
             - name: VMA_E2B_AUTO_RESUME
               value: "false"
             - name: VMA_E2B_KEEP_MEMORY

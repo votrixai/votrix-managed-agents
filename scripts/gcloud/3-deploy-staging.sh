@@ -51,7 +51,7 @@ API_MANIFEST="${REPO_ROOT}/service.staging.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-direct-staging"
-DATABASE_SCHEMA="vma_rewrite_staging"
+DATABASE_SCHEMA="vma"
 
 if ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   echo "Staging deploys must run from a git checkout with a commit." >&2

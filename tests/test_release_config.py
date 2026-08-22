@@ -105,6 +105,33 @@ def test_hosted_runtime_regions_follow_the_supabase_region_matrix():
     assert '"$STAGING_REGION"' in triggers
 
 
+def test_hosted_deployments_use_the_stable_vma_schema():
+    for manifest_name in (
+        "service.production.yaml",
+        "service.staging.yaml",
+        "service.worker.production.yaml",
+        "service.worker.staging.yaml",
+    ):
+        manifest = yaml.safe_load(
+            (ROOT / manifest_name).read_text(encoding="utf-8")
+        )
+        env = manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+        database_schema = next(
+            entry["value"] for entry in env if entry["name"] == "DATABASE_SCHEMA"
+        )
+        assert database_schema == "vma"
+
+    for script_name in (
+        "scripts/gcloud/2-deploy-production.sh",
+        "scripts/gcloud/3-deploy-staging.sh",
+    ):
+        script = (ROOT / script_name).read_text(encoding="utf-8")
+        assert 'DATABASE_SCHEMA="vma"' in script
+
+    cloudbuild = (ROOT / "cloudbuild.yaml").read_text(encoding="utf-8")
+    assert 'DATABASE_SCHEMA="vma"' in cloudbuild
+
+
 def test_firecrawl_secret_is_imported_and_injected_into_every_runtime():
     expected = {
         "service.production.yaml": "vma-firecrawl-api-key",
@@ -227,8 +254,8 @@ def test_runtime_manifests_use_the_actual_sandbox_timeout_setting():
     expected = {
         "service.staging.yaml": "300",
         "service.worker.staging.yaml": "300",
-        "service.production.yaml": "900",
-        "service.worker.production.yaml": "900",
+        "service.production.yaml": "360",
+        "service.worker.production.yaml": "360",
     }
 
     for name, timeout in expected.items():
@@ -243,7 +270,11 @@ def test_runtime_manifests_use_the_actual_sandbox_timeout_setting():
 def test_migration_job_runs_alembic():
     script = (ROOT / "scripts/migrate.sh").read_text(encoding="utf-8")
 
+    assert "python scripts/rename_legacy_schema.py" in script
     assert 'alembic upgrade "${ALEMBIC_TARGET:-head}"' in script
+    assert script.index("python scripts/rename_legacy_schema.py") < script.index(
+        'alembic upgrade "${ALEMBIC_TARGET:-head}"'
+    )
 
 
 def test_operator_bootstrap_targets_the_deployed_database_schema():
@@ -251,8 +282,7 @@ def test_operator_bootstrap_targets_the_deployed_database_schema():
         encoding="utf-8"
     )
 
-    assert 'DEFAULT_DATABASE_SCHEMA="vma_rewrite_staging"' in script
-    assert 'DEFAULT_DATABASE_SCHEMA="vma_rewrite_production"' in script
+    assert script.count('DEFAULT_DATABASE_SCHEMA="vma"') == 2
     assert "DATABASE_SCHEMA=${VMA_BOOTSTRAP_DATABASE_SCHEMA:-$DEFAULT_DATABASE_SCHEMA}" in script
     assert "export DATABASE_SCHEMA" in script
 

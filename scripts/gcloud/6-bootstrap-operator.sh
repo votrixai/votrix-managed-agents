@@ -16,13 +16,13 @@ case "$TARGET" in
     SECRET_SUFFIX="-staging"
     DEFAULT_ORGANIZATION_ID="org_019fda5a22b2725cb1360e7f8ee6f0e7"
     DEFAULT_ORGANIZATION_NAME="Votrix AI"
-    DEFAULT_DATABASE_SCHEMA="vma_rewrite_staging"
+    DEFAULT_DATABASE_SCHEMA="vma"
     ;;
   production)
     SECRET_SUFFIX=""
     DEFAULT_ORGANIZATION_ID="org_votrix"
     DEFAULT_ORGANIZATION_NAME="Votrix"
-    DEFAULT_DATABASE_SCHEMA="vma_rewrite_production"
+    DEFAULT_DATABASE_SCHEMA="vma"
     ;;
   *)
     echo "Usage: $0 <staging|production>" >&2

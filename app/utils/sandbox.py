@@ -37,7 +37,9 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from e2b import AsyncSandbox, AsyncTemplate, CommandExitException
-from httpcore import LocalProtocolError
+from httpcore import LocalProtocolError, NetworkError as HttpcoreNetworkError
+from httpcore import ProtocolError as HttpcoreProtocolError
+from httpx import TransportError as HttpxTransportError
 from langchain_e2b import AsyncE2BSandbox
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,6 +103,17 @@ SKILL_DOWNLOAD_ATTEMPTS = 3
 SKILL_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 5
 SKILL_DOWNLOAD_TIMEOUT_SECONDS = 30
 FAILED_SANDBOX_CLEANUP_TIMEOUT_SECONDS = 10
+E2B_TRANSPORT_RETRY_DELAY_SECONDS = 0.1
+
+# E2B reaches its control plane through httpx and its command channel through
+# httpcore, so the same dropped HTTP/2 connection surfaces from two exception
+# families.  These are transport failures — deliberately not E2B API errors
+# such as authentication, quota or a missing sandbox.
+_E2B_TRANSPORT_ERRORS = (
+    HttpxTransportError,
+    HttpcoreNetworkError,
+    HttpcoreProtocolError,
+)
 
 _SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
@@ -755,27 +768,44 @@ class Sandbox:
                     # merely slow.
                     span["stale"] = type(exc).__name__
             span["reused"] = False
-            self._native = await AsyncSandbox.connect(
-                self._sandbox_id,
-                timeout=self._ttl_seconds,
-                api_key=get_settings().e2b_api_key,
-            )
+            for attempt in (1, 2):
+                try:
+                    self._native = await AsyncSandbox.connect(
+                        self._sandbox_id,
+                        timeout=self._ttl_seconds,
+                        api_key=get_settings().e2b_api_key,
+                    )
+                    break
+                except _E2B_TRANSPORT_ERRORS as exc:
+                    if attempt == 2:
+                        raise
+                    # Connecting only obtains a handle and extends the TTL. It
+                    # is safe to repeat even when the first response was lost.
+                    self._native = None
+                    self._verified_at = None
+                    span["transport_retry"] = type(exc).__name__
+                    await asyncio.sleep(E2B_TRANSPORT_RETRY_DELAY_SECONDS)
             self._verified_at = time.monotonic()
 
-    async def run(self, command: str, **kwargs: Any) -> ExecuteResponse:
+    async def run(
+        self, command: str, *, idempotent: bool = False, **kwargs: Any
+    ) -> ExecuteResponse:
         """Run a command in the container.
 
         The command itself is not logged — an agent's shell line can carry
         anything the user put in front of it. Its length and the exit code say
         enough to tell one call from another when reading timings back.
 
-        A `LocalProtocolError` is retried once, and only that one. It comes out
+        A `LocalProtocolError` is always retried once. It comes out
         of the HTTP/2 layer inside E2B's own client — "invalid input RECV_PING
         in state CLOSED" — and means the connection this request was about to
         go out on had already been closed by the far end. The request never
-        left the process, so sending it again cannot repeat anything: there is
-        no half-run command to worry about, which is exactly why no other
-        failure is retried here.
+        left the process, so sending it again cannot repeat anything.
+
+        Read/write transport errors are different: a command may have reached
+        the sandbox before its connection disappeared. They are retried only
+        when the caller marks the command idempotent. File hashes, listings and
+        PUTs use that path; arbitrary agent shell commands never do.
 
         It is rare — once in fifty-odd sandbox starts — and it surfaced as a
         500 on `POST /v1/sessions`, because provisioning runs commands and
@@ -802,6 +832,14 @@ class Sandbox:
                     self._native = None
                     self._verified_at = None
                     span["retried"] = "stale_connection"
+                    continue
+                except _E2B_TRANSPORT_ERRORS as exc:
+                    if not idempotent or attempt == 2:
+                        raise
+                    self._native = None
+                    self._verified_at = None
+                    span["retried"] = f"idempotent_{type(exc).__name__}"
+                    await asyncio.sleep(E2B_TRANSPORT_RETRY_DELAY_SECONDS)
                     continue
                 span["exit_code"] = getattr(result, "exit_code", None)
                 return result
@@ -941,6 +979,7 @@ class Sandbox:
         await self.run(
             f"curl -fsS -X PUT -H {shlex.quote(f'Content-Type: {content_type}')} "
             f"-T {shlex.quote(path)} {shlex.quote(url)}",
+            idempotent=True,
             user="root",
         )
 
@@ -961,7 +1000,10 @@ class Sandbox:
         )
 
     async def _digest(self, path: str) -> str | None:
-        result = await self.run(f"sha256sum {shlex.quote(path)} 2>/dev/null || true")
+        result = await self.run(
+            f"sha256sum {shlex.quote(path)} 2>/dev/null || true",
+            idempotent=True,
+        )
         digest = (result.stdout or "").split(" ", 1)[0].strip()
         return digest or None
 
@@ -975,7 +1017,10 @@ class Sandbox:
         The size is checked in the container first. A ceiling enforced after
         the transfer is a ceiling that costs the transfer.
         """
-        measured = await self.run(f"stat -c %s {shlex.quote(path)} 2>/dev/null || echo -1")
+        measured = await self.run(
+            f"stat -c %s {shlex.quote(path)} 2>/dev/null || echo -1",
+            idempotent=True,
+        )
         raw = (measured.stdout or "").strip()
         size = int(raw) if raw.lstrip("-").isdigit() else -1
         if size < 0:
@@ -1024,7 +1069,8 @@ class Sandbox:
             f"&& find . -type f 2>/dev/null | head -n {file_limit} "
             "| while IFS= read -r f; do "
             'printf "%s " "$(stat -c %s "$f" 2>/dev/null || echo -1)"; '
-            'sha256sum "$f" 2>/dev/null; done'
+            'sha256sum "$f" 2>/dev/null; done',
+            idempotent=True,
         )
         # Each line is `<size> <sha256>  ./<path>`; `stat` reports -1 for a file
         # that vanished between being listed and being read, which then fails

@@ -112,10 +112,21 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
 
     async def _describe(
-        data: bytes, mime_type: str, query: str, *, api_key: str
+        data: bytes,
+        mime_type: str,
+        query: str,
+        *,
+        api_key: str,
+        session_id: str,
     ) -> str:
         calls.append(
-            {"data": data, "mime_type": mime_type, "query": query, "api_key": api_key}
+            {
+                "data": data,
+                "mime_type": mime_type,
+                "query": query,
+                "api_key": api_key,
+                "session_id": session_id,
+            }
         )
         return "A cat, wearing a hat."
 
@@ -125,7 +136,11 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
 
 async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
     sandbox = FakeSandbox({"/home/user/uploads/cat.png": PNG})
-    tool = read_image_tool(sandbox, api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        sandbox,
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     answer = await tool.ainvoke({"path": "uploads/cat.png", "query": "What is in it?"})
 
@@ -135,7 +150,11 @@ async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
 
 async def test_an_absolute_path_is_used_as_given(looked_at):
     sandbox = FakeSandbox({"/tmp/elsewhere/cat.png": PNG})
-    tool = read_image_tool(sandbox, api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        sandbox,
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     await tool.ainvoke({"path": "/tmp/elsewhere/cat.png", "query": "What is in it?"})
 
@@ -143,7 +162,11 @@ async def test_an_absolute_path_is_used_as_given(looked_at):
 
 
 async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
-    tool = read_image_tool(FakeSandbox({"/home/user/a.jpeg": PNG}), api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        FakeSandbox({"/home/user/a.jpeg": PNG}),
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     await tool.ainvoke({"path": "a.jpeg", "query": "Is the logo legible?"})
 
@@ -154,13 +177,19 @@ async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
             "query": "Is the logo legible?",
             # Billed to the turn's Account, not to anything the tool picked.
             "api_key": "sk-or-v1-test",
+            # Grouped with the main model calls from the same VMA Session.
+            "session_id": "sess_image_test",
         }
     ]
 
 
 async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
     """A tool that raises ends the turn; a sentence lets the model try again."""
-    tool = read_image_tool(FakeSandbox({}), api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        FakeSandbox({}),
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     answer = await tool.ainvoke({"path": "gone.png", "query": "What is in it?"})
 
@@ -171,7 +200,11 @@ async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
 async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_at):
     """Nothing is transferred to find out it was a video."""
     sandbox = FakeSandbox({"/home/user/clip.mp4": PNG})
-    tool = read_image_tool(sandbox, api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        sandbox,
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     answer = await tool.ainvoke({"path": "clip.mp4", "query": "What is in it?"})
 
@@ -181,7 +214,11 @@ async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_a
 
 
 async def test_an_oversized_image_says_so(looked_at):
-    tool = read_image_tool(FakeSandbox({"/home/user/huge.png": b"x" * (READ_IMAGE_MAX_BYTES + 1)}), api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        FakeSandbox({"/home/user/huge.png": b"x" * (READ_IMAGE_MAX_BYTES + 1)}),
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     answer = await tool.ainvoke({"path": "huge.png", "query": "What is in it?"})
 
@@ -190,11 +227,22 @@ async def test_an_oversized_image_says_so(looked_at):
 
 
 async def test_a_vision_failure_comes_back_as_text(monkeypatch):
-    async def _explode(data: bytes, mime_type: str, query: str, *, api_key: str) -> str:
+    async def _explode(
+        data: bytes,
+        mime_type: str,
+        query: str,
+        *,
+        api_key: str,
+        session_id: str,
+    ) -> str:
         raise RuntimeError("gemini said no")
 
     monkeypatch.setattr(tools_module, "describe_image", _explode)
-    tool = read_image_tool(FakeSandbox({"/home/user/a.png": PNG}), api_key="sk-or-v1-test")
+    tool = read_image_tool(
+        FakeSandbox({"/home/user/a.png": PNG}),
+        api_key="sk-or-v1-test",
+        session_id="sess_image_test",
+    )
 
     answer = await tool.ainvoke({"path": "a.png", "query": "What is in it?"})
 
@@ -209,7 +257,11 @@ async def test_no_vision_key_is_reported_rather_than_guessed_at():
     """
     sandbox = FakeSandbox({"/home/user/a.png": PNG})
 
-    answer = await read_image_tool(sandbox, api_key="").ainvoke(
+    answer = await read_image_tool(
+        sandbox,
+        api_key="",
+        session_id="sess_image_test",
+    ).ainvoke(
         {"path": "a.png", "query": "What is in it?"}
     )
 

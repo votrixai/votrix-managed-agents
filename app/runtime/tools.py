@@ -186,7 +186,12 @@ def custom_tool(spec: dict[str, Any]) -> StructuredTool:
 
 
 async def describe_image(
-    data: bytes, mime_type: str, query: str, *, api_key: str
+    data: bytes,
+    mime_type: str,
+    query: str,
+    *,
+    api_key: str,
+    session_id: str,
 ) -> str:
     """Ask the vision model one question about one image.
 
@@ -201,6 +206,9 @@ async def describe_image(
     vision = ChatOpenRouter(
         model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
         api_key=api_key,
+        # A vision-tool call is part of the conversation that requested it,
+        # rather than an unrelated generation in OpenRouter's activity log.
+        session_id=session_id,
     )
     encoded = base64.b64encode(data).decode("ascii")
     answer = await vision.ainvoke(
@@ -229,7 +237,12 @@ async def describe_image(
     ).strip()
 
 
-def read_image_tool(sandbox: Sandbox, *, api_key: str) -> StructuredTool:
+def read_image_tool(
+    sandbox: Sandbox,
+    *,
+    api_key: str,
+    session_id: str,
+) -> StructuredTool:
     """Looking at an image, for a model that cannot.
 
     `read_file` already returns an image as a content block, which is the right
@@ -263,7 +276,13 @@ def read_image_tool(sandbox: Sandbox, *, api_key: str) -> StructuredTool:
             return f"read_image could not read {target}: {type(exc).__name__}: {exc}"
 
         try:
-            return await describe_image(data, mime_type, query, api_key=api_key)
+            return await describe_image(
+                data,
+                mime_type,
+                query,
+                api_key=api_key,
+                session_id=session_id,
+            )
         except Exception as exc:
             return f"read_image could not look at {target}: {type(exc).__name__}: {exc}"
 

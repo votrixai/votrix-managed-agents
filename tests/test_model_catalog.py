@@ -45,7 +45,11 @@ def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
 
 def test_an_uncatalogued_model_is_refused_before_any_client_is_built():
     with pytest.raises(UnknownModelError):
-        _build_chat_model("no-such-model", api_key="sk-or-v1-test")
+        _build_chat_model(
+            "no-such-model",
+            api_key="sk-or-v1-test",
+            session_id="sess_gateway_test",
+        )
 
 
 def test_every_catalog_model_builds_one_gateway_client():
@@ -54,18 +58,30 @@ def test_every_catalog_model_builds_one_gateway_client():
     The credential is handed in rather than read from configuration, which is
     what lets one deployment run every Account on its own key.
     """
-    built = [_build_chat_model(m.id, api_key="sk-or-v1-test") for m in MODEL_CATALOG]
+    built = [
+        _build_chat_model(
+            m.id,
+            api_key="sk-or-v1-test",
+            session_id="sess_gateway_test",
+        )
+        for m in MODEL_CATALOG
+    ]
 
     assert {type(client).__name__ for client in built} == {"ChatOpenRouter"}
     assert [client.model for client in built] == [
         OPENROUTER_SLUGS[m.id] for m in MODEL_CATALOG
     ]
+    assert {client.session_id for client in built} == {"sess_gateway_test"}
 
 
 def test_deepseek_models_are_restricted_to_the_first_party_provider():
     """DeepSeek models must never spill to third-party inference hosts."""
     built = {
-        model.id: _build_chat_model(model.id, api_key="sk-or-v1-test")
+        model.id: _build_chat_model(
+            model.id,
+            api_key="sk-or-v1-test",
+            session_id="sess_gateway_test",
+        )
         for model in MODEL_CATALOG
     }
 

@@ -91,6 +91,11 @@ SKILL_URL_TTL_SECONDS = 300
 # has to outlive one sandbox start.
 FILE_URL_TTL_SECONDS = 300
 
+# A Cloud Tasks create is safe to repeat because every turn has a deterministic
+# task name. If the first request reached Google but its response was lost, the
+# retry returns AlreadyExists and is treated as success below.
+TASK_ENQUEUE_RETRY_DELAYS_SECONDS = (0.1, 0.5)
+
 # The same ceiling CMA puts on an agent.
 MAX_SKILLS_PER_AGENT = 20
 MAX_MEMORY_STORES_PER_SESSION = 8
@@ -408,11 +413,30 @@ async def send_events(
     # The whole batch goes, not the first of it. A paused graph is resumed with
     # one decision per call it stopped on, counted; handing over a subset would
     # fail inside the turn instead of here.
-    await _dispatch_turn(
-        session_id=session_id,
-        generation=session.lock_version,
-        events=events,
-    )
+    try:
+        await _dispatch_turn(
+            session_id=session_id,
+            generation=session.lock_version,
+            events=events,
+        )
+    except Exception as exc:
+        # The events above are already committed. Returning a 500 now would tell
+        # the caller they were refused even though the session is holding their
+        # turn, leaving it `running` with no worker on the other side. Lock and
+        # re-read the row before failing it so an interrupt or a worker that has
+        # already ended the turn cannot be overwritten by this late failure.
+        logger.exception("turn_dispatch_failed", session_id=session_id)
+        await db.refresh(
+            session,
+            ["status", "last_event_seq"],
+            with_for_update=True,
+        )
+        if session.status == RUNNING:
+            await _fail(db, session, exc)
+        else:
+            # Release the FOR UPDATE lock even when somebody else already ended
+            # the turn. There is deliberately no second error event to append.
+            await db.commit()
     return appended
 
 
@@ -619,10 +643,12 @@ async def _dispatch_turn(
     that only came back when the agent was done would deliver the whole turn at
     the end, and no amount of streaming further down could undo that.
 
-    Failures are swallowed in either mode. The message really was accepted —
-    it is committed — and `_fail` records what went wrong as a `session.error`
-    event, so the client learns about it the same way it learns everything
-    else, instead of from a 500 on a request that actually succeeded.
+    A synchronous handoff failure propagates to `send_events`, which still owns
+    the request's database session and can record `_fail` safely. The message
+    really was accepted — it is committed — so the client learns about a failed
+    handoff from `session.error` and `session.status_idle`, not from a 500 on a
+    request that actually succeeded. Inline execution failures happen later and
+    are contained by `_run_inline_turn` instead.
     """
     if get_settings().turn_dispatch == "cloud":
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
@@ -866,7 +892,7 @@ async def _enqueue_task(
     into at-most-once. `lock_version` is what makes the name unique: it moves
     every time a turn ends, so the next message on this session gets its own.
     """
-    from google.api_core.exceptions import AlreadyExists
+    from google.api_core.exceptions import AlreadyExists, ServiceUnavailable
     from google.cloud import tasks_v2
     from google.protobuf import duration_pb2
 
@@ -896,10 +922,26 @@ async def _enqueue_task(
         # never retries something that is merely still working.
         dispatch_deadline=duration_pb2.Duration(seconds=TURN_TIMEOUT_SECONDS + 120),
     )
-    try:
-        await client.create_task(request={"parent": parent, "task": task})
-    except AlreadyExists:
-        logger.info("turn_already_queued", session_id=session_id, generation=generation)
+    for attempt in range(len(TASK_ENQUEUE_RETRY_DELAYS_SECONDS) + 1):
+        try:
+            await client.create_task(request={"parent": parent, "task": task})
+            return
+        except AlreadyExists:
+            logger.info("turn_already_queued", session_id=session_id, generation=generation)
+            return
+        except ServiceUnavailable as exc:
+            if attempt == len(TASK_ENQUEUE_RETRY_DELAYS_SECONDS):
+                raise
+            delay = TASK_ENQUEUE_RETRY_DELAYS_SECONDS[attempt]
+            logger.warning(
+                "turn_enqueue_retry",
+                session_id=session_id,
+                generation=generation,
+                attempt=attempt + 1,
+                delay_seconds=delay,
+                error_type=type(exc).__name__,
+            )
+            await asyncio.sleep(delay)
 
 
 def _cloud_tasks_client():
