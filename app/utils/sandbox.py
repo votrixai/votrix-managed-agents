@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
+from urllib.parse import urlparse
 from typing import Any
 
 import structlog
@@ -104,6 +105,23 @@ FAILED_SANDBOX_CLEANUP_TIMEOUT_SECONDS = 10
 _SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 logger = structlog.get_logger(__name__)
+
+
+# Everything, as a CIDR. The provider rejects a symbolic name here.
+_ALL_TRAFFIC = "0.0.0.0/0"
+
+
+def _storage_host() -> str | None:
+    """The one host a network-restricted container still has to reach.
+
+    Files move between object storage and a container over a signed URL the
+    container fetches itself, so a container that can reach nothing can also
+    be given nothing.
+    """
+    endpoint = get_settings().s3_endpoint_url
+    if not endpoint:
+        return None
+    return urlparse(endpoint).hostname
 
 
 @dataclass(frozen=True)
@@ -447,19 +465,32 @@ class Image:
 
 
 class Sandbox:
-    """One instance = one E2B container, bound to one session."""
+    """One instance = one E2B container, bound to one scope.
+
+    The scope is a Session for the containers an agent lives in, and a Sandbox
+    row for the ones the API hands out directly. Everything below treats it as
+    an opaque id: it labels the files this container produces and the timings
+    it logs, and nothing here reads it for anything else.
+    """
 
     def __init__(
         self,
         sandbox_id: str,
-        session_id: str,
+        scope_id: str,
         organization_id: str,
         native: AsyncSandbox | None = None,
+        ttl_seconds: int | None = None,
     ) -> None:
         self._sandbox_id = sandbox_id
-        self._session_id = session_id
+        self._scope_id = scope_id
         self._organization_id = organization_id
         self._native = native
+        # How long E2B is told to keep this container after each call. A
+        # Session container uses the deployment-wide default; one created
+        # through the API carries whatever TTL its caller asked for, which is
+        # the whole reason this is per-instance rather than read from settings
+        # at the point of use.
+        self._ttl_seconds = ttl_seconds or get_settings().sandbox_timeout_seconds
         # When this handle was last proven live. None for a handle handed in
         # rather than opened here — it gets checked once like any other.
         self._verified_at: float | None = None
@@ -469,12 +500,21 @@ class Sandbox:
         return self._sandbox_id
 
     @property
+    def scope_id(self) -> str:
+        return self._scope_id
+
+    @property
     def session_id(self) -> str:
-        return self._session_id
+        """The scope, for the Session callers that only ever have one."""
+        return self._scope_id
 
     @property
     def organization_id(self) -> str:
         return self._organization_id
+
+    @property
+    def ttl_seconds(self) -> int:
+        return self._ttl_seconds
 
     @property
     def to_deep_agent_backend(self) -> LazyE2BBackend:
@@ -539,16 +579,20 @@ class Sandbox:
             for file_id, path in files:
                 await sandbox.upload_file(db, f"{UPLOADS_DIR}/{path}", file_id)
 
+            ttl_seconds = get_settings().sandbox_timeout_seconds
             row = await sessions_q.create_sandbox(
                 db,
                 session,
                 provider="e2b",
                 external_sandbox_id=native.sandbox_id,
-                # Recorded for the janitor, not consulted before a turn: this is
-                # when E2B would pause an idle container, which is not when the
-                # container dies.
+                ttl_seconds=ttl_seconds,
+                # A session's container reaches the network. Recorded rather
+                # than assumed, so the row says what was actually allowed.
+                network_access=True,
+                # Not consulted before a turn: this is when E2B would pause an
+                # idle container, which is not when the container dies.
                 expires_at=datetime.now(timezone.utc)
-                + timedelta(seconds=get_settings().sandbox_timeout_seconds),
+                + timedelta(seconds=ttl_seconds),
             )
             await sessions_q.update_sandbox_state(db, row, state="running")
             return sandbox
@@ -573,18 +617,94 @@ class Sandbox:
             raise
 
     @classmethod
-    def from_id(cls, sandbox_id: str, session_id: str, organization_id: str) -> Sandbox:
-        """Reference a known container without connecting. No network call."""
-        return cls(sandbox_id, session_id, organization_id)
+    async def start(
+        cls,
+        *,
+        image: Image,
+        scope_id: str,
+        organization_id: str,
+        ttl_seconds: int,
+        network_access: bool = False,
+    ) -> Sandbox:
+        """Start a bare container, with none of a Session's furniture.
+
+        `provision` above fills a container with skills, uploads and the
+        directory layout an agent's prompt names. Nothing here needs any of
+        that: a caller reaching this through the API brings its own files and
+        runs its own command, so the container it gets is the image and
+        nothing else.
+
+        The container dies on its own when the TTL runs out. That is what
+        bounds a leak — a caller that never deletes, or a process that stops
+        before it can, costs `ttl_seconds` of container and not a cent more —
+        and it is why the TTL is written into E2B here rather than enforced by
+        a reaper of ours that could itself be the thing that died.
+
+        Network is off unless asked for. A container that can both run
+        arbitrary commands and reach the internet is an exfiltration path, and
+        the great majority of what runs here — linting, converting, checking —
+        never needs to leave the machine.
+
+        "Off" is one allowed host rather than nothing at all, because getting
+        a file in or out is the container fetching a signed URL from object
+        storage. Cutting egress completely would not make the container safer,
+        it would make it useless: the only way left to hand it a file would be
+        to stream the bytes through this process, which is exactly what the
+        signed URL exists to avoid. So the storage host is reachable and
+        nothing else is, which is the property that was actually wanted.
+        """
+        network: dict[str, Any] | None = None
+        if not network_access:
+            allowed = _storage_host()
+            # The provider requires the deny to be explicit: an allow list on
+            # its own permits everything it does not mention.
+            network = {
+                "allow_out": [allowed] if allowed else [],
+                "deny_out": [_ALL_TRAFFIC],
+            }
+
+        native = await AsyncSandbox.create(
+            template=image.image_id,
+            timeout=ttl_seconds,
+            api_key=get_settings().e2b_api_key,
+            # Egress is shaped by `network` below; switching this off would
+            # take the storage host with it.
+            allow_internet_access=True,
+            network=network,
+        )
+        return cls(
+            native.sandbox_id,
+            scope_id,
+            organization_id,
+            native=native,
+            ttl_seconds=ttl_seconds,
+        )
 
     @classmethod
-    async def connect(cls, sandbox_id: str, session_id: str, organization_id: str) -> Sandbox:
+    def from_id(
+        cls,
+        sandbox_id: str,
+        scope_id: str,
+        organization_id: str,
+        ttl_seconds: int | None = None,
+    ) -> Sandbox:
+        """Reference a known container without connecting. No network call."""
+        return cls(sandbox_id, scope_id, organization_id, ttl_seconds=ttl_seconds)
+
+    @classmethod
+    async def connect(
+        cls,
+        sandbox_id: str,
+        scope_id: str,
+        organization_id: str,
+        ttl_seconds: int | None = None,
+    ) -> Sandbox:
         """Reference a known container and connect right away.
 
         For callers that need a live connection immediately — tests, one-off
         scripts. Turn execution prefers `from_id` and connects lazily.
         """
-        sandbox = cls.from_id(sandbox_id, session_id, organization_id)
+        sandbox = cls.from_id(sandbox_id, scope_id, organization_id, ttl_seconds)
         await sandbox.ensure_connected()
         return sandbox
 
@@ -615,7 +735,7 @@ class Sandbox:
         ):
             return
         async with timed(
-            "sandbox_connected", session_id=self._session_id, sandbox_id=self._sandbox_id
+            "sandbox_connected", scope_id=self._scope_id, sandbox_id=self._sandbox_id
         ) as span:
             if self._native is not None:
                 try:
@@ -624,9 +744,7 @@ class Sandbox:
                     # before every backend call — measured, the "cheap" branch
                     # cost more than reconnecting outright. `set_timeout` is
                     # the liveness check: a container that has gone says so.
-                    await self._native.set_timeout(
-                        get_settings().sandbox_timeout_seconds
-                    )
+                    await self._native.set_timeout(self._ttl_seconds)
                     span["reused"] = True
                     self._verified_at = time.monotonic()
                     return
@@ -639,7 +757,7 @@ class Sandbox:
             span["reused"] = False
             self._native = await AsyncSandbox.connect(
                 self._sandbox_id,
-                timeout=get_settings().sandbox_timeout_seconds,
+                timeout=self._ttl_seconds,
                 api_key=get_settings().e2b_api_key,
             )
             self._verified_at = time.monotonic()
@@ -667,7 +785,7 @@ class Sandbox:
         kwargs.setdefault("timeout", get_settings().sandbox_command_timeout_seconds)
         async with timed(
             "sandbox_command",
-            session_id=self._session_id,
+            scope_id=self._scope_id,
             command_chars=len(command),
         ) as span:
             for attempt in (1, 2):
@@ -937,7 +1055,7 @@ class Sandbox:
         client, or quoted back to a user, keeps working for as long as the file
         exists, whatever the agent does to the path afterwards.
         """
-        async with timed("outputs_discovered", session_id=self._session_id) as span:
+        async with timed("outputs_discovered", scope_id=self._scope_id) as span:
             found = await self.list_files(OUTPUTS_DIR)
             span["listed"] = len(found)
 
@@ -945,7 +1063,7 @@ class Sandbox:
         for output in found:
             before = await files_q.get_latest_scoped_file(
                 db,
-                scope_id=self._session_id,
+                scope_id=self._scope_id,
                 filename=output.path,
                 organization_id=self._organization_id,
             )
@@ -955,7 +1073,7 @@ class Sandbox:
                 await self.download_file(
                     db,
                     f"{OUTPUTS_DIR}/{output.path}",
-                    scope_id=self._session_id,
+                    scope_id=self._scope_id,
                     filename=output.path,
                     sha256=output.sha256,
                 )
@@ -992,7 +1110,7 @@ class Sandbox:
 
         async with timed(
             "skills_installed",
-            session_id=self._session_id,
+            session_id=self._scope_id,
             skill_count=len(skills),
             download_concurrency=min(SKILL_DOWNLOAD_CONCURRENCY, len(skills)),
         ) as span:

@@ -10,12 +10,24 @@ class FileScope(ApiModel):
     """What a file came out of.
 
     An object rather than a bare id so the kind of thing is stated rather than
-    inferred from a prefix — today only a session produces files, and that will
-    not always be true.
+    inferred from a prefix. A file comes out of a Session when an agent leaves
+    it in `outputs/`, and out of a Sandbox when its holder asks for one by
+    path; both are ordinary files wearing a label saying where they came from.
     """
 
-    type: Literal["session"] = "session"
+    type: Literal["session", "sandbox"] = "session"
     id: str
+
+    @classmethod
+    def for_id(cls, scope_id: str) -> "FileScope":
+        """Label a scope id with the kind of thing it names.
+
+        Read off the id's prefix, which is the one place the kind is already
+        recorded. A column beside it would be the better answer if anything
+        ever needed to query by kind; nothing does, and a second copy of a fact
+        is a second thing to keep true.
+        """
+        return cls(type="sandbox" if scope_id.startswith("sbx_") else "session", id=scope_id)
 
 
 class FileResponse(ApiModel):

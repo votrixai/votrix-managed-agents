@@ -48,6 +48,10 @@ TAG_DESCRIPTIONS = {
         "Keep shared knowledge available across Sessions.",
     ),
     "models": ("Models", "See the models available to Agents."),
+    "sandbox": (
+        "Sandbox",
+        "Run commands in a sandbox you hold directly, with no Agent in it.",
+    ),
     "sessions": (
         "Sessions",
         "Start work, continue it later, and follow an Agent's progress.",
@@ -94,6 +98,8 @@ MEMORY_STORE_ID_EXAMPLE = "memstore_1234567890abcdef1234567890abcdef"
 ORGANIZATION_ID_EXAMPLE = "org_1234567890abcdef1234567890abcdef"
 SESSION_ID_EXAMPLE = "sess_1234567890abcdef1234567890abcdef"
 SKILL_ID_EXAMPLE = "skill_1234567890abcdef1234567890abcdef"
+SANDBOX_ID_EXAMPLE = "sbx_1234567890abcdef1234567890abcdef"
+EXEC_ID_EXAMPLE = "exec_1234567890abcdef1234567890abcdef"
 
 CREATED_AT_EXAMPLE = "2026-08-13T14:30:00Z"
 UPDATED_AT_EXAMPLE = "2026-08-13T14:32:00Z"
@@ -214,6 +220,35 @@ AGENT_ARCHIVED_EXAMPLE = {
     **AGENT_ACTIVE_EXAMPLE,
     "updated_at": ARCHIVED_AT_EXAMPLE,
     "archived_at": ARCHIVED_AT_EXAMPLE,
+}
+
+SANDBOX_RUNNING_EXAMPLE = {
+    "id": SANDBOX_ID_EXAMPLE,
+    "type": "sandbox",
+    "environment_id": ENVIRONMENT_ID_EXAMPLE,
+    "state": "running",
+    "session_id": None,
+    "ttl_seconds": 300,
+    "network_access": True,
+    "expires_at": "2026-08-13T14:35:00Z",
+    "last_active_at": UPDATED_AT_EXAMPLE,
+    "error": None,
+    "created_at": CREATED_AT_EXAMPLE,
+    "updated_at": UPDATED_AT_EXAMPLE,
+}
+
+SANDBOX_EXEC_EXAMPLE = {
+    "id": EXEC_ID_EXAMPLE,
+    "type": "exec",
+    "sandbox_id": SANDBOX_ID_EXAMPLE,
+    "state": "succeeded",
+    "exit_code": 0,
+    "stdout": '{"rule_count": 81, "errors": 0, "warnings": 3}',
+    "stderr": "",
+    "stdout_truncated": False,
+    "stderr_truncated": False,
+    "dir": f"/home/user/execs/{EXEC_ID_EXAMPLE}",
+    "duration_ms": 787,
 }
 
 ENVIRONMENT_READY_EXAMPLE = {
@@ -451,6 +486,36 @@ REQUEST_COMPONENT_EXAMPLES = {
         ),
         "metadata": {"team": "research", "reviewed": True},
     },
+    "SandboxCreateRequest": {
+        "system_environment": "hf-lint",
+        "ttl_seconds": 300,
+        "network_access": False,
+    },
+    "SandboxGetRequest": {"sandbox_id": SANDBOX_ID_EXAMPLE},
+    "SandboxDeleteRequest": {"sandbox_id": SANDBOX_ID_EXAMPLE},
+    "SandboxListRequest": {"state": "running", "limit": 20},
+    "SandboxExecRequest": {
+        "sandbox_id": SANDBOX_ID_EXAMPLE,
+        "command": (
+            "unzip -oq in.zip -d project "
+            "&& node /opt/hflint/lint.cjs project"
+        ),
+        "timeout_seconds": 120,
+        "wait_seconds": 60,
+    },
+    "SandboxExecResultRequest": {
+        "sandbox_id": SANDBOX_ID_EXAMPLE,
+        "exec_id": EXEC_ID_EXAMPLE,
+    },
+    "SandboxUploadRequest": {
+        "sandbox_id": SANDBOX_ID_EXAMPLE,
+        "file_id": FILE_ID_EXAMPLE,
+        "path": "in.zip",
+    },
+    "SandboxDownloadRequest": {
+        "sandbox_id": SANDBOX_ID_EXAMPLE,
+        "path": "project/report.json",
+    },
     "EnvironmentCreateRequest": {
         "name": "Data Analysis Workspace",
         "description": "A sandbox with common data-analysis packages.",
@@ -525,6 +590,14 @@ RESPONSE_COMPONENT_EXAMPLES = {
     "AgentVersionResponse": AGENT_VERSION_EXAMPLE,
     "ListResponse_AgentResponse_": AGENT_LIST_EXAMPLE,
     "ListResponse_AgentVersionResponse_": AGENT_VERSION_LIST_EXAMPLE,
+    "SandboxResponse": SANDBOX_RUNNING_EXAMPLE,
+    "ListResponse_SandboxResponse_": {
+        "data": [SANDBOX_RUNNING_EXAMPLE],
+        "has_more": False,
+        "first_id": SANDBOX_ID_EXAMPLE,
+        "last_id": SANDBOX_ID_EXAMPLE,
+    },
+    "ExecResponse": SANDBOX_EXEC_EXAMPLE,
     "EnvironmentResponse": ENVIRONMENT_READY_EXAMPLE,
     "ListResponse_EnvironmentResponse_": {
         "data": [ENVIRONMENT_READY_EXAMPLE],

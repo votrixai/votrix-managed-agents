@@ -25,20 +25,6 @@ RESCHEDULING = "rescheduling"
 TERMINATED = "terminated"
 SESSION_STATUSES = (IDLE, RUNNING, RESCHEDULING, TERMINATED)
 
-SANDBOX_PROVISIONING = "provisioning"
-SANDBOX_RUNNING = "running"
-SANDBOX_PAUSED = "paused"
-SANDBOX_TERMINATED = "terminated"
-SANDBOX_FAILED = "failed"
-SANDBOX_STATES = (
-    SANDBOX_PROVISIONING,
-    SANDBOX_RUNNING,
-    SANDBOX_PAUSED,
-    SANDBOX_TERMINATED,
-    SANDBOX_FAILED,
-)
-
-
 class Session(TimestampMixin, Base):
     """One conversation with an agent."""
 
@@ -90,7 +76,7 @@ class Session(TimestampMixin, Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    sandbox: Mapped[SessionSandbox | None] = relationship(
+    sandbox: Mapped["Sandbox | None"] = relationship(
         back_populates="session",
         lazy="raise",
         passive_deletes=True,
@@ -162,30 +148,3 @@ class SessionFile(Base):
     )
 
 
-class SessionSandbox(TimestampMixin, Base):
-    """The container a session runs in. One per session."""
-
-    __tablename__ = "session_sandboxes"
-    __table_args__ = (
-        UniqueConstraint("session_id", name="uq_session_sandboxes_session"),
-        CheckConstraint(
-            "state IN ('provisioning', 'running', 'paused', 'terminated', 'failed')",
-            name="ck_session_sandboxes_state",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    session_id: Mapped[str] = mapped_column(
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    provider: Mapped[str] = mapped_column(String(32), nullable=False)
-    external_sandbox_id: Mapped[str | None] = mapped_column(String(255))
-    state: Mapped[str] = mapped_column(String(32), nullable=False, default="provisioning")
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    session: Mapped[Session] = relationship(back_populates="sandbox", lazy="raise")

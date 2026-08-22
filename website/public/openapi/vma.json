@@ -3435,6 +3435,784 @@
         }
       }
     },
+    "/v1/sandbox/create": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Create Sandbox",
+        "description": "Create Sandbox for your Organization.",
+        "operationId": "create_sandbox_v1_sandbox_create_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxCreateRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "system_environment": "hf-lint",
+                    "ttl_seconds": 300,
+                    "network_access": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResponse"
+                },
+                "example": {
+                  "id": "sbx_1234567890abcdef1234567890abcdef",
+                  "type": "sandbox",
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "state": "running",
+                  "session_id": null,
+                  "ttl_seconds": 300,
+                  "network_access": true,
+                  "expires_at": "2026-08-13T14:35:00Z",
+                  "last_active_at": "2026-08-13T14:32:00Z",
+                  "error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"system_environment\": \"hf-lint\",\n  \"ttl_seconds\": 300,\n  \"network_access\": false\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/get": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Get Sandbox",
+        "operationId": "get_sandbox_v1_sandbox_get_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxGetRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "sandbox_id": "sbx_1234567890abcdef1234567890abcdef"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResponse"
+                },
+                "example": {
+                  "id": "sbx_1234567890abcdef1234567890abcdef",
+                  "type": "sandbox",
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "state": "running",
+                  "session_id": null,
+                  "ttl_seconds": 300,
+                  "network_access": true,
+                  "expires_at": "2026-08-13T14:35:00Z",
+                  "last_active_at": "2026-08-13T14:32:00Z",
+                  "error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Get Sandbox for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\"\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/list": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "List Sandboxes",
+        "description": "List Sandboxes for your Organization.",
+        "operationId": "list_sandboxes_v1_sandbox_list_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxListRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "state": "running",
+                    "limit": 20
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_SandboxResponse_"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "sbx_1234567890abcdef1234567890abcdef",
+                      "type": "sandbox",
+                      "environment_id": "env_1234567890abcdef1234567890abcdef",
+                      "state": "running",
+                      "session_id": null,
+                      "ttl_seconds": 300,
+                      "network_access": true,
+                      "expires_at": "2026-08-13T14:35:00Z",
+                      "last_active_at": "2026-08-13T14:32:00Z",
+                      "error": null,
+                      "created_at": "2026-08-13T14:30:00Z",
+                      "updated_at": "2026-08-13T14:32:00Z"
+                    }
+                  ],
+                  "has_more": false,
+                  "first_id": "sbx_1234567890abcdef1234567890abcdef",
+                  "last_id": "sbx_1234567890abcdef1234567890abcdef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"state\": \"running\",\n  \"limit\": 20\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/delete": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Delete Sandbox",
+        "operationId": "delete_sandbox_v1_sandbox_delete_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxDeleteRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "sandbox_id": "sbx_1234567890abcdef1234567890abcdef"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResponse"
+                },
+                "example": {
+                  "id": "sess_1234567890abcdef1234567890abcdef",
+                  "deleted": true
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Delete Sandbox for your Organization.",
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\"\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/exec": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Exec Command",
+        "description": "Exec Command for your Organization.",
+        "operationId": "exec_command_v1_sandbox_exec_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxExecRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
+                    "command": "unzip -oq in.zip -d project && node /opt/hflint/lint.cjs project",
+                    "timeout_seconds": 120,
+                    "wait_seconds": 60
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecResponse"
+                },
+                "example": {
+                  "id": "exec_1234567890abcdef1234567890abcdef",
+                  "type": "exec",
+                  "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
+                  "state": "succeeded",
+                  "exit_code": 0,
+                  "stdout": "{\"rule_count\": 81, \"errors\": 0, \"warnings\": 3}",
+                  "stderr": "",
+                  "stdout_truncated": false,
+                  "stderr_truncated": false,
+                  "dir": "/home/user/execs/exec_1234567890abcdef1234567890abcdef",
+                  "duration_ms": 787
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\",\n  \"command\": \"unzip -oq in.zip -d project && node /opt/hflint/lint.cjs project\",\n  \"timeout_seconds\": 120,\n  \"wait_seconds\": 60\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/get_result": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Get Result",
+        "description": "Get Result for your Organization.",
+        "operationId": "get_result_v1_sandbox_get_result_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxExecResultRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
+                    "exec_id": "exec_1234567890abcdef1234567890abcdef"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecResponse"
+                },
+                "example": {
+                  "id": "exec_1234567890abcdef1234567890abcdef",
+                  "type": "exec",
+                  "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
+                  "state": "succeeded",
+                  "exit_code": 0,
+                  "stdout": "{\"rule_count\": 81, \"errors\": 0, \"warnings\": 3}",
+                  "stderr": "",
+                  "stdout_truncated": false,
+                  "stderr_truncated": false,
+                  "dir": "/home/user/execs/exec_1234567890abcdef1234567890abcdef",
+                  "duration_ms": 787
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\",\n  \"exec_id\": \"exec_1234567890abcdef1234567890abcdef\"\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/upload": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Upload File",
+        "description": "Upload File for your Organization.",
+        "operationId": "upload_file_v1_sandbox_upload_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxUploadRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
+                    "file_id": "file_1234567890abcdef1234567890abcdef",
+                    "path": "in.zip"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResponse"
+                },
+                "example": {
+                  "id": "sbx_1234567890abcdef1234567890abcdef",
+                  "type": "sandbox",
+                  "environment_id": "env_1234567890abcdef1234567890abcdef",
+                  "state": "running",
+                  "session_id": null,
+                  "ttl_seconds": 300,
+                  "network_access": true,
+                  "expires_at": "2026-08-13T14:35:00Z",
+                  "last_active_at": "2026-08-13T14:32:00Z",
+                  "error": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:32:00Z"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\",\n  \"file_id\": \"file_1234567890abcdef1234567890abcdef\",\n  \"path\": \"in.zip\"\n}"
+          }
+        ]
+      }
+    },
+    "/v1/sandbox/download": {
+      "post": {
+        "tags": [
+          "sandbox"
+        ],
+        "summary": "Download File",
+        "description": "Download File for your Organization.",
+        "operationId": "download_file_v1_sandbox_download_post",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxDownloadRequest"
+              },
+              "examples": {
+                "sample_request": {
+                  "summary": "Sample request",
+                  "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
+                  "value": {
+                    "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
+                    "path": "project/report.json"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileResponse"
+                },
+                "example": {
+                  "id": "file_1234567890abcdef1234567890abcdef",
+                  "type": "file",
+                  "filename": "source-material.pdf",
+                  "mime_type": "application/pdf",
+                  "size_bytes": 184320,
+                  "sha256": "90b30e2de3a3d4f11f59bc4863f4d80fba129b5f650f85d9d60b24287d6fef27",
+                  "scope": null,
+                  "created_at": "2026-08-13T14:30:00Z",
+                  "updated_at": "2026-08-13T14:30:00Z"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "id": "request-json",
+            "lang": "json",
+            "label": "Request JSON",
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\",\n  \"path\": \"project/report.json\"\n}"
+          }
+        ]
+      }
+    },
     "/v1/files": {
       "post": {
         "tags": [
@@ -6064,6 +6842,72 @@
         "type": "object",
         "title": "EnvironmentUpdateRequest"
       },
+      "ExecResponse": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "exec",
+            "default": "exec"
+          },
+          "sandbox_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stdout": {
+            "type": "string",
+            "default": ""
+          },
+          "stderr": {
+            "type": "string",
+            "default": ""
+          },
+          "stdout_truncated": {
+            "type": "boolean",
+            "default": false
+          },
+          "stderr_truncated": {
+            "type": "boolean",
+            "default": false
+          },
+          "dir": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "sandbox_id",
+          "state",
+          "dir"
+        ],
+        "title": "ExecResponse"
+      },
       "Failed": {
         "properties": {
           "type": {
@@ -6176,7 +7020,10 @@
         "properties": {
           "type": {
             "type": "string",
-            "const": "session",
+            "enum": [
+              "session",
+              "sandbox"
+            ],
             "default": "session"
           },
           "id": {
@@ -6527,6 +7374,46 @@
           "data"
         ],
         "title": "ListResponse[FileResponse]"
+      },
+      "ListResponse_SandboxResponse_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SandboxResponse"
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean",
+            "default": false
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListResponse[SandboxResponse]"
       },
       "ListResponse_SessionResponse_": {
         "properties": {
@@ -6931,6 +7818,344 @@
           "tool_use_ids"
         ],
         "title": "RequiresAction"
+      },
+      "SandboxCreateRequest": {
+        "properties": {
+          "environment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "system_environment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "maximum": 3600.0,
+            "minimum": 30.0,
+            "default": 300
+          },
+          "network_access": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SandboxCreateRequest"
+      },
+      "SandboxDeleteRequest": {
+        "properties": {
+          "sandbox_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sandbox_id"
+        ],
+        "title": "SandboxDeleteRequest"
+      },
+      "SandboxDownloadRequest": {
+        "properties": {
+          "sandbox_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sandbox_id",
+          "path"
+        ],
+        "title": "SandboxDownloadRequest"
+      },
+      "SandboxExecRequest": {
+        "properties": {
+          "sandbox_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 65536,
+            "minLength": 1
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "maximum": 900.0,
+            "minimum": 1.0,
+            "default": 120
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "maximum": 120.0,
+            "minimum": 0.0,
+            "default": 60
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sandbox_id",
+          "command"
+        ],
+        "title": "SandboxExecRequest"
+      },
+      "SandboxExecResultRequest": {
+        "properties": {
+          "sandbox_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "exec_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sandbox_id",
+          "exec_id"
+        ],
+        "title": "SandboxExecResultRequest"
+      },
+      "SandboxGetRequest": {
+        "properties": {
+          "sandbox_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sandbox_id"
+        ],
+        "title": "SandboxGetRequest"
+      },
+      "SandboxListRequest": {
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "provisioning",
+                  "running",
+                  "paused",
+                  "terminated",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "include_session_owned": {
+            "type": "boolean",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "default": 20
+          },
+          "before_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SandboxListRequest"
+      },
+      "SandboxResponse": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "sandbox",
+            "default": "sandbox"
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ttl_seconds": {
+            "type": "integer"
+          },
+          "network_access": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "environment_id",
+          "state",
+          "ttl_seconds",
+          "network_access",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SandboxResponse"
+      },
+      "SandboxUploadRequest": {
+        "properties": {
+          "sandbox_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "file_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sandbox_id",
+          "file_id",
+          "path"
+        ],
+        "title": "SandboxUploadRequest"
       },
       "SendEventsRequest": {
         "properties": {
@@ -7901,6 +9126,11 @@
       "name": "memory-stores",
       "description": "Keep shared knowledge available across Sessions.",
       "x-displayName": "Memory Stores"
+    },
+    {
+      "name": "sandbox",
+      "description": "Run commands in a sandbox you hold directly, with no Agent in it.",
+      "x-displayName": "Sandbox"
     },
     {
       "name": "sessions",

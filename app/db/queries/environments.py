@@ -81,6 +81,32 @@ async def get_environment(
     return result.scalar_one_or_none()
 
 
+async def get_environment_by_name(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    name: str,
+) -> Environment | None:
+    """The one live environment an organization has under this name.
+
+    Names are not unique in general — an edited recipe is registered beside
+    the old one on purpose. This is for the names VMA mints itself, where
+    there is exactly one and it is found by the name rather than by an id
+    nobody stored.
+    """
+    result = await db.execute(
+        select(Environment)
+        .where(
+            Environment.organization_id == organization_id,
+            Environment.name == name,
+            Environment.archived_at.is_(None),
+        )
+        .order_by(Environment.created_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_environments(
     db: AsyncSession,
     *,

@@ -13,13 +13,14 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.config import get_settings
 from app.db.models import (
     MemoryStore,
+    Sandbox,
     Session,
     SessionEvent,
     SessionFile,
     SessionMemoryStore,
-    SessionSandbox,
 )
-from app.db.models.sessions import IDLE, RUNNING, SANDBOX_PROVISIONING
+from app.db.models.sandboxes import SANDBOX_PROVISIONING, SANDBOX_TERMINATED
+from app.db.models.sessions import IDLE, RUNNING
 from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
 from app.models.sessions import STOP_REQUIRES_ACTION
 from app.utils.id_generator import new_id
@@ -524,17 +525,22 @@ async def create_sandbox(
     session: Session,
     *,
     provider: str,
+    ttl_seconds: int,
     external_sandbox_id: str | None = None,
     expires_at: datetime | None = None,
-) -> SessionSandbox:
-    sandbox = SessionSandbox(
+    network_access: bool = True,
+) -> Sandbox:
+    sandbox = Sandbox(
         id=new_id("sbx"),
         organization_id=session.organization_id,
         session_id=session.id,
+        environment_id=session.environment_id,
         provider=provider,
         external_sandbox_id=external_sandbox_id,
         state=SANDBOX_PROVISIONING,
+        ttl_seconds=ttl_seconds,
         expires_at=expires_at,
+        network_access=network_access,
     )
     db.add(sandbox)
     await db.flush()
@@ -546,11 +552,11 @@ async def get_sandbox(
     *,
     session_id: str,
     organization_id: str,
-) -> SessionSandbox | None:
+) -> Sandbox | None:
     result = await db.execute(
-        select(SessionSandbox).where(
-            SessionSandbox.session_id == session_id,
-            SessionSandbox.organization_id == organization_id,
+        select(Sandbox).where(
+            Sandbox.session_id == session_id,
+            Sandbox.organization_id == organization_id,
         )
     )
     return result.scalar_one_or_none()
@@ -558,7 +564,7 @@ async def get_sandbox(
 
 async def update_sandbox_state(
     db: AsyncSession,
-    sandbox: SessionSandbox,
+    sandbox: Sandbox,
     *,
     state: str,
     external_sandbox_id: str | None = None,
@@ -576,16 +582,16 @@ async def update_sandbox_state(
     await db.flush()
 
 
-async def list_expired_sandboxes(db: AsyncSession, *, limit: int = 100) -> list[SessionSandbox]:
-    """Sandboxes past their expiry — the janitor's input."""
+async def list_expired_sandboxes(db: AsyncSession, *, limit: int = 100) -> list[Sandbox]:
+    """Sandboxes past their expiry, of either kind — the janitor's input."""
     result = await db.execute(
-        select(SessionSandbox)
+        select(Sandbox)
         .where(
-            SessionSandbox.expires_at.is_not(None),
-            SessionSandbox.expires_at <= _now(),
-            SessionSandbox.state != "terminated",
+            Sandbox.expires_at.is_not(None),
+            Sandbox.expires_at <= _now(),
+            Sandbox.state != SANDBOX_TERMINATED,
         )
-        .order_by(SessionSandbox.expires_at)
+        .order_by(Sandbox.expires_at)
         .limit(limit)
     )
     return list(result.scalars().all())

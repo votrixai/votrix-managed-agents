@@ -102,7 +102,7 @@ def to_file(file: File) -> FileResponse:
         mime_type=file.mime_type,
         size_bytes=file.size_bytes,
         sha256=file.sha256,
-        scope=FileScope(id=file.scope_id) if file.scope_id else None,
+        scope=FileScope.for_id(file.scope_id) if file.scope_id else None,
         created_at=file.created_at,
         updated_at=file.updated_at,
     )
