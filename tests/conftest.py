@@ -346,7 +346,12 @@ def sandboxes(monkeypatch):
             }
         )
         row = await sessions_q.create_sandbox(
-            db, session, provider="e2b", external_sandbox_id="sbx_fake"
+            db,
+            session,
+            provider="e2b",
+            external_sandbox_id="sbx_fake",
+            ttl_seconds=900,
+            network_access=True,
         )
         await sessions_q.update_sandbox_state(db, row, state="running")
         return cls("sbx_fake", session.id, session.organization_id)

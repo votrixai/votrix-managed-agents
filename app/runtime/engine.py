@@ -922,6 +922,45 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
     return level
 
 
+def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str | None:
+    """How hard to think, from the spec that named the model.
+
+    It rides on the model spec rather than beside it because it is not separable
+    from the model: `low` means a different number of tokens on each of them,
+    and on two of the sixteen it means nothing at all. A Session that carries
+    one carries the other.
+
+    Note what the caller passes in — `session.model or version.model` — so a
+    Session naming a model replaces the Agent's spec whole rather than merging
+    with it. A Session that sets an id and no level gets the default, not the
+    Agent's level. That is how the id already behaved, and splitting the rule
+    per field would mean a Session could inherit half of a spec it overrode.
+
+    Raises rather than quietly dropping an unusable level. The gateway's own
+    behaviour here is to map to the nearest supported setting and say nothing,
+    which is the failure this refuses to pass on: a caller that asked for `high`
+    on a model with no dial would be shown `high` everywhere and get whatever
+    the model felt like, with nothing anywhere to say the two disagreed.
+    """
+    requested = None if isinstance(spec, str) else spec.get("thinking")
+
+    if requested is None:
+        return DEFAULT_THINKING if entry.thinking else None
+
+    level = str(requested).strip().lower()
+    if level not in THINKING_LEVELS:
+        allowed = ", ".join(THINKING_LEVELS)
+        raise UnsupportedThinkingError(
+            f"Unknown thinking level {requested!r}. Allowed: {allowed}"
+        )
+    if not entry.thinking:
+        raise UnsupportedThinkingError(
+            f"Model {entry.id!r} takes no thinking level — it reasons as it sees fit "
+            "and the gateway exposes no dial for it"
+        )
+    return level
+
+
 def _require_key(key: str) -> str:
     if not key:
         raise MissingProviderKeyError(

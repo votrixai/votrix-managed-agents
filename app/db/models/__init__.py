@@ -21,6 +21,16 @@ from app.db.models.accounts import (
 from app.db.models.base import Base, TimestampMixin
 from app.db.models.files import File
 from app.db.models.environments import Environment
+from app.db.models.sandboxes import (
+    LIVE_SANDBOX_STATES,
+    SANDBOX_FAILED,
+    SANDBOX_PAUSED,
+    SANDBOX_PROVISIONING,
+    SANDBOX_RUNNING,
+    SANDBOX_STATES,
+    SANDBOX_TERMINATED,
+    Sandbox,
+)
 from app.db.models.memory import (
     MEMORY_ACCESS_MODES,
     MEMORY_ACCESS_READ_ONLY,
@@ -42,12 +52,10 @@ from app.db.models.memory import (
     SessionMemoryStore,
 )
 from app.db.models.sessions import (
-    SANDBOX_STATES,
     SESSION_STATUSES,
     Session,
     SessionEvent,
     SessionFile,
-    SessionSandbox,
 )
 from app.db.models.skills import Skill
 from app.db.models.vma_api_keys import VMA_API_SCOPE, VmaApiKey
@@ -66,6 +74,7 @@ __all__ = [
     "AgentVersion",
     "Base",
     "Environment",
+    "LIVE_SANDBOX_STATES",
     "File",
     "MemoryStore",
     "MEMORY_ACCESS_MODES",
@@ -83,11 +92,16 @@ __all__ = [
     "OrganizationMember",
     "SANDBOX_STATES",
     "SESSION_STATUSES",
+    "Sandbox",
+    "SANDBOX_FAILED",
+    "SANDBOX_PAUSED",
+    "SANDBOX_PROVISIONING",
+    "SANDBOX_RUNNING",
+    "SANDBOX_TERMINATED",
     "Session",
     "SessionEvent",
     "SessionFile",
     "SessionMemoryStore",
-    "SessionSandbox",
     "Skill",
     "TimestampMixin",
     "VOLUME_DELETED",

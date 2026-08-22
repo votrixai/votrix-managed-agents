@@ -32,6 +32,7 @@ from app.routers import (
     memory,
     organization_api_keys,
     organizations,
+    sandbox,
     sessions,
     skills,
 )
@@ -44,6 +45,7 @@ ROUTERS = (
     agents.router,
     sessions.router,
     environments.router,
+    sandbox.router,
     files.router,
     skills.router,
     memory.router,

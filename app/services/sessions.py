@@ -33,7 +33,7 @@ from app.db.models import (
     Session,
     SessionEvent,
     SessionFile,
-    SessionSandbox,
+    Sandbox as SandboxRow,
 )
 from app.db.models.memory import MEMORY_ACCESS_READ_WRITE
 from app.db.queries import agents as agents_q
@@ -317,10 +317,44 @@ async def archive_session(db: AsyncSession, *, session_id: str, organization_id:
 
 
 async def delete_session(db: AsyncSession, *, session_id: str, organization_id: str) -> Session:
+    """Delete the conversation, and the container it was living in.
+
+    The container has to go first. Deleting the session cascades its sandbox
+    row away, and that row holds the only record of the container's provider
+    id — so a session deleted without this leaves a container running at the
+    provider that nothing can ever name again. They do not expire: a container
+    past its timeout is paused, not collected, and a paused one is kept
+    indefinitely. That is where several hundred of ours went.
+
+    Killing it is best effort. A container that has already gone, or a
+    provider that will not answer, must not stop someone deleting their own
+    conversation — the row goes either way, so the alternative is a session
+    nobody can get rid of.
+    """
     session = await get_session(db, session_id=session_id, organization_id=organization_id)
+    await _kill_sandbox(db, session)
     await sessions_q.delete_session(db, session)
     await db.commit()
     return session
+
+
+async def _kill_sandbox(db: AsyncSession, session: Session) -> None:
+    row = await sessions_q.get_sandbox(
+        db, session_id=session.id, organization_id=session.organization_id
+    )
+    if row is None or not row.external_sandbox_id:
+        return
+    try:
+        await Sandbox.from_id(
+            row.external_sandbox_id, session.id, session.organization_id
+        ).kill()
+    except Exception as exc:
+        logger.warning(
+            "session_sandbox_not_killed",
+            session_id=session.id,
+            sandbox_id=row.external_sandbox_id,
+            error=type(exc).__name__,
+        )
 
 
 async def send_events(
@@ -1369,7 +1403,7 @@ async def _require_agent(db: AsyncSession, *, agent_id: str, organization_id: st
     return agent
 
 
-def _sandbox_is_gone(sandbox: SessionSandbox) -> bool:
+def _sandbox_is_gone(sandbox: SandboxRow) -> bool:
     """True once the sandbox can no longer be used.
 
     Only what we know for certain. `expires_at` looks like it belongs here and
