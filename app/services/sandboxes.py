@@ -50,7 +50,6 @@ from app.models.sandbox import (
     MAX_OUTPUT_CHARS,
 )
 from app.services import environments as environments_service
-from app.services import system_environments
 from app.utils.id_generator import new_id
 from app.utils.sandbox import WORKDIR, Image
 from app.utils.sandbox import Sandbox as Container
@@ -83,8 +82,7 @@ async def create_sandbox(
     db: AsyncSession,
     *,
     organization_id: str,
-    environment_id: str | None = None,
-    system_environment: str | None = None,
+    environment_id: str,
     ttl_seconds: int,
     network_access: bool,
 ) -> Sandbox:
@@ -95,10 +93,7 @@ async def create_sandbox(
     container it may or may not have.
     """
     environment = await _environment(
-        db,
-        organization_id=organization_id,
-        environment_id=environment_id,
-        system_environment=system_environment,
+        db, organization_id=organization_id, environment_id=environment_id
     )
 
     live = await sandboxes_q.count_live(db, organization_id=organization_id)
@@ -342,21 +337,15 @@ async def download_file(
 
 
 async def _environment(
-    db: AsyncSession,
-    *,
-    organization_id: str,
-    environment_id: str | None,
-    system_environment: str | None,
+    db: AsyncSession, *, organization_id: str, environment_id: str
 ) -> Environment:
-    """The image to start, from whichever of the two ways the caller named it."""
-    if system_environment:
-        return await system_environments.resolve(
-            db, organization_id=organization_id, slug=system_environment
-        )
-    if not environment_id:
-        raise InvalidRequest(
-            "give exactly one of environment_id or system_environment"
-        )
+    """The image to start.
+
+    Named by the caller, always. This service builds images from a list of
+    packages and has no opinion about what they hold — a registry of
+    ready-made ones here would mean keeping other people's recipes, which is
+    how a runtime turns into a cupboard.
+    """
     found = await environments_q.get_environment(
         db, environment_id=environment_id, organization_id=organization_id
     )

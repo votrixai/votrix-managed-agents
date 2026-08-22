@@ -14,7 +14,7 @@ its id, and a caller that does not lets the TTL collect it.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from app.models.common import ApiModel
 
@@ -45,15 +45,7 @@ EXEC_TIMED_OUT = "timed_out"
 
 
 class SandboxCreateRequest(ApiModel):
-    """Which image to start, said one of two ways.
-
-    `environment_id` names a recipe the caller registered. `system_environment`
-    names one VMA ships and builds itself — those exist for images whose build
-    has to verify something a package list cannot express. Exactly one.
-    """
-
-    environment_id: str | None = Field(default=None, min_length=1, max_length=64)
-    system_environment: str | None = Field(default=None, min_length=1, max_length=64)
+    environment_id: str = Field(min_length=1, max_length=64)
     ttl_seconds: int = Field(
         default=300, ge=MIN_TTL_SECONDS, le=MAX_TTL_SECONDS
     )
@@ -63,19 +55,6 @@ class SandboxCreateRequest(ApiModel):
     # command someone wrote deliberately to be more restricted than one a
     # model chose. A caller who knows its workload needs nothing turns it off.
     network_access: bool = True
-
-    @model_validator(mode="after")
-    def _exactly_one_image(self) -> "SandboxCreateRequest":
-        named = [
-            field
-            for field in (self.environment_id, self.system_environment)
-            if field
-        ]
-        if len(named) != 1:
-            raise ValueError(
-                "give exactly one of environment_id or system_environment"
-            )
-        return self
 
 
 class SandboxGetRequest(ApiModel):

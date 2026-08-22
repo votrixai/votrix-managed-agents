@@ -127,8 +127,14 @@ def containers(monkeypatch):
     return started
 
 
+# The environment every test starts its containers from. Held here so `make`
+# does not have to be handed it at each of thirty call sites.
+_ENVIRONMENT: dict[str, str] = {}
+
+
 @pytest_asyncio.fixture
-async def client(db, containers, builds):
+async def client(db, containers, builds, environment):
+    _ENVIRONMENT["id"] = environment.id
     app.dependency_overrides[get_db] = lambda: db
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -138,7 +144,7 @@ async def client(db, containers, builds):
 
 
 async def make(client, headers, **body):
-    body.setdefault("system_environment", "hf-lint")
+    body.setdefault("environment_id", _ENVIRONMENT["id"])
     response = await client.post("/v1/sandbox/create", headers=headers, json=body)
     assert response.status_code == 200, response.text
     return response.json()
@@ -153,14 +159,16 @@ def container_for(sandbox: dict) -> FakeContainer:
 # --- creating ---------------------------------------------------------------
 
 
-async def test_a_sandbox_names_the_image_a_system_environment_ships(client, headers):
+async def test_a_sandbox_starts_from_the_environment_it_was_given(
+    client, headers, environment
+):
     sandbox = await make(client, headers)
 
     assert sandbox["state"] == "running"
-    assert FakeContainer.started[0]["image"] == "votrix-hf-lint"
+    assert sandbox["environment_id"] == environment.id
 
 
-async def test_the_ttl_is_written_into_the_provider_not_just_the_row(client, headers):
+async def test_the_ttl_is_written_into_the_provider_not_just_the_row(client, headers, environment):
     """It is what bounds a leak, so it has to be enforced where the container is."""
 
     sandbox = await make(client, headers, ttl_seconds=120)
@@ -169,7 +177,7 @@ async def test_the_ttl_is_written_into_the_provider_not_just_the_row(client, hea
     assert sandbox["ttl_seconds"] == 120
 
 
-async def test_the_network_is_on_unless_turned_off(client, headers):
+async def test_the_network_is_on_unless_turned_off(client, headers, environment):
     """A sandbox that cannot reach the network cannot install anything.
 
     It also matches the containers agents run in, which have always had the
@@ -183,32 +191,45 @@ async def test_the_network_is_on_unless_turned_off(client, headers):
     assert FakeContainer.started[1]["network_access"] is False
 
 
-async def test_a_system_environment_is_registered_once_and_reused(client, headers):
+async def test_a_system_environment_is_registered_once_and_reused(client, headers, environment):
     first = await make(client, headers)
     second = await make(client, headers)
 
     assert first["environment_id"] == second["environment_id"]
 
 
-async def test_an_unknown_system_environment_is_refused(client, headers):
+async def test_an_unknown_environment_is_refused(client, headers, environment):
     response = await client.post(
         "/v1/sandbox/create",
         headers=headers,
-        json={"system_environment": "does-not-exist"},
+        json={"environment_id": "env_does_not_exist"},
     )
-    assert response.status_code == 400
-    assert "hf-lint" in response.text, "it should say what is available"
+    assert response.status_code == 404
 
 
-async def test_naming_neither_image_or_both_is_refused(client, headers):
-    for body in ({}, {"environment_id": "env_1", "system_environment": "hf-lint"}):
-        response = await client.post(
-            "/v1/sandbox/create", headers=headers, json=body
-        )
-        assert response.status_code == 422, body
+async def test_an_environment_is_required(client, headers, environment):
+    """This service keeps no ready-made images to fall back on."""
+
+    response = await client.post("/v1/sandbox/create", headers=headers, json={})
+    assert response.status_code == 422
 
 
-async def test_a_tenant_cannot_hold_more_than_the_cap(client, headers, monkeypatch):
+async def test_another_tenants_environment_is_not_reachable(
+    client, headers, environment, other_tenant
+):
+    """It exists, and a 403 would confirm that it does."""
+
+    _other_org, other_headers = other_tenant
+    response = await client.post(
+        "/v1/sandbox/create",
+        headers=other_headers,
+        json={"environment_id": environment.id},
+    )
+
+    assert response.status_code == 404
+
+
+async def test_a_tenant_cannot_hold_more_than_the_cap(client, headers, environment, monkeypatch):
     from app.config import get_settings
 
     monkeypatch.setattr(
@@ -218,7 +239,7 @@ async def test_a_tenant_cannot_hold_more_than_the_cap(client, headers, monkeypat
     await make(client, headers)
     await make(client, headers)
     response = await client.post(
-        "/v1/sandbox/create", headers=headers, json={"system_environment": "hf-lint"}
+        "/v1/sandbox/create", headers=headers, json={"environment_id": environment.id}
     )
 
     assert response.status_code == 409
@@ -239,7 +260,7 @@ async def run(client, headers, sandbox, command="echo hi", **body):
     return response.json()
 
 
-async def test_the_command_is_never_part_of_a_shell_line(client, headers):
+async def test_the_command_is_never_part_of_a_shell_line(client, headers, environment):
     """It travels base64-encoded and is decoded into a file inside the sandbox.
 
     A command carrying quotes, newlines or a `$(...)` is ordinary here — an
@@ -265,7 +286,7 @@ async def test_the_command_is_never_part_of_a_shell_line(client, headers):
     assert nasty in decoded, "the command never reached the sandbox"
 
 
-async def test_one_command_is_one_round_trip(client, headers):
+async def test_one_command_is_one_round_trip(client, headers, environment):
     """Setting up, launching, waiting and reporting are one call.
 
     They were five. Each is a round trip to the provider — measured between
@@ -279,7 +300,7 @@ async def test_one_command_is_one_round_trip(client, headers):
     assert len(container_for(sandbox).commands) - before == 1
 
 
-async def test_reading_a_result_is_also_one_round_trip(client, headers):
+async def test_reading_a_result_is_also_one_round_trip(client, headers, environment):
     """It used to probe for the directory first, then collect."""
     sandbox = await make(client, headers)
     pending = await run(client, headers, sandbox)
@@ -295,7 +316,7 @@ async def test_reading_a_result_is_also_one_round_trip(client, headers):
     assert len(container.commands) - before == 1
 
 
-async def test_a_result_for_an_exec_that_never_ran_is_not_found(client, headers):
+async def test_a_result_for_an_exec_that_never_ran_is_not_found(client, headers, environment):
     sandbox = await make(client, headers)
     container_for(sandbox).found = False
 
@@ -308,7 +329,7 @@ async def test_a_result_for_an_exec_that_never_ran_is_not_found(client, headers)
     assert response.status_code == 404
 
 
-async def test_a_finished_command_reports_its_output_and_code(client, headers):
+async def test_a_finished_command_reports_its_output_and_code(client, headers, environment):
     sandbox = await make(client, headers)
     container = container_for(sandbox)
     container.finish(rc=0, stdout=b'{"ok": true}')
@@ -322,7 +343,7 @@ async def test_a_finished_command_reports_its_output_and_code(client, headers):
     assert result["duration_ms"] == 2000
 
 
-async def test_a_nonzero_exit_is_failed_not_an_error(client, headers):
+async def test_a_nonzero_exit_is_failed_not_an_error(client, headers, environment):
     """The command ran. What it decided is the caller's business, not ours."""
     sandbox = await make(client, headers)
     container_for(sandbox).finish(rc=1, stderr=b"boom")
@@ -334,7 +355,7 @@ async def test_a_nonzero_exit_is_failed_not_an_error(client, headers):
     assert result["stderr"] == "boom"
 
 
-async def test_a_command_killed_by_its_timeout_says_so(client, headers):
+async def test_a_command_killed_by_its_timeout_says_so(client, headers, environment):
     sandbox = await make(client, headers)
     container_for(sandbox).finish(rc=124)
 
@@ -343,7 +364,7 @@ async def test_a_command_killed_by_its_timeout_says_so(client, headers):
     assert result["state"] == "timed_out"
 
 
-async def test_output_is_bounded_before_it_reaches_this_process(client, headers):
+async def test_output_is_bounded_before_it_reaches_this_process(client, headers, environment):
     """The cap is applied in the container, and the caller is told it was.
 
     Capping the response instead would mean holding the whole thing first,
@@ -386,7 +407,7 @@ async def test_a_command_still_running_comes_back_running_and_is_found_later(
     assert response.json()["id"] == pending["id"]
 
 
-async def test_two_commands_do_not_share_a_directory(client, headers):
+async def test_two_commands_do_not_share_a_directory(client, headers, environment):
     sandbox = await make(client, headers)
 
     first = await run(client, headers, sandbox)
@@ -395,7 +416,7 @@ async def test_two_commands_do_not_share_a_directory(client, headers):
     assert first["dir"] != second["dir"]
 
 
-async def test_the_wait_happens_in_the_container_not_here(client, headers):
+async def test_the_wait_happens_in_the_container_not_here(client, headers, environment):
     """One round trip, however long the wait — the sleeping is not ours."""
     sandbox = await make(client, headers)
 
@@ -408,7 +429,7 @@ async def test_the_wait_happens_in_the_container_not_here(client, headers):
 # --- lifetime ---------------------------------------------------------------
 
 
-async def test_deleting_kills_the_container_and_closes_the_row(client, headers):
+async def test_deleting_kills_the_container_and_closes_the_row(client, headers, environment):
     sandbox = await make(client, headers)
     container = container_for(sandbox)
 
@@ -442,7 +463,7 @@ async def test_a_deleted_sandbox_refuses_work_rather_than_starting_another(
     assert "terminated" in response.text
 
 
-async def test_a_sandbox_past_its_expiry_is_paused_not_gone(client, headers, db):
+async def test_a_sandbox_past_its_expiry_is_paused_not_gone(client, headers, environment, db):
     """Nothing is collected on a timer.
 
     Past its timeout the provider pauses the container — the filesystem stays
@@ -476,7 +497,7 @@ async def test_a_sandbox_past_its_expiry_is_paused_not_gone(client, headers, db)
     assert worked.status_code == 200, "a paused container wakes rather than refusing"
 
 
-async def test_listing_shows_what_this_tenant_holds(client, headers):
+async def test_listing_shows_what_this_tenant_holds(client, headers, environment):
     await make(client, headers)
     await make(client, headers)
 
@@ -486,7 +507,7 @@ async def test_listing_shows_what_this_tenant_holds(client, headers):
     assert len(response.json()["data"]) == 2
 
 
-async def test_another_tenant_cannot_reach_this_one(client, headers, other_tenant):
+async def test_another_tenant_cannot_reach_this_one(client, headers, environment, other_tenant):
     sandbox = await make(client, headers)
     _, other_headers = other_tenant
 
@@ -650,7 +671,7 @@ async def test_listing_leaves_out_what_the_caller_cannot_end(
 
 
 async def test_the_limit_counts_containers_of_both_sorts(
-    client, headers, session_sandbox, monkeypatch
+    client, headers, environment, session_sandbox, monkeypatch
 ):
     """The bug that made keeping two tables worth ending.
 
@@ -665,7 +686,7 @@ async def test_the_limit_counts_containers_of_both_sorts(
 
     await make(client, headers)  # one API-held, plus the conversation's = 2
     response = await client.post(
-        "/v1/sandbox/create", headers=headers, json={"system_environment": "hf-lint"}
+        "/v1/sandbox/create", headers=headers, json={"environment_id": environment.id}
     )
 
     assert response.status_code == 409

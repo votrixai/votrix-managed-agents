@@ -3467,7 +3467,7 @@
                   "summary": "Sample request",
                   "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
                   "value": {
-                    "system_environment": "hf-lint",
+                    "environment_id": "env_1234567890abcdef1234567890abcdef",
                     "ttl_seconds": 300,
                     "network_access": false
                   }
@@ -3529,7 +3529,7 @@
             "id": "request-json",
             "lang": "json",
             "label": "Request JSON",
-            "source": "{\n  \"system_environment\": \"hf-lint\",\n  \"ttl_seconds\": 300,\n  \"network_access\": false\n}"
+            "source": "{\n  \"environment_id\": \"env_1234567890abcdef1234567890abcdef\",\n  \"ttl_seconds\": 300,\n  \"network_access\": false\n}"
           }
         ]
       }
@@ -3856,7 +3856,7 @@
                   "description": "A representative JSON request body. Replace any example resource IDs with IDs from your Organization.",
                   "value": {
                     "sandbox_id": "sbx_1234567890abcdef1234567890abcdef",
-                    "command": "unzip -oq in.zip -d project && node /opt/hflint/lint.cjs project",
+                    "command": "python analyse.py data.csv > report.json",
                     "timeout_seconds": 120,
                     "wait_seconds": 60
                   }
@@ -3917,7 +3917,7 @@
             "id": "request-json",
             "lang": "json",
             "label": "Request JSON",
-            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\",\n  \"command\": \"unzip -oq in.zip -d project && node /opt/hflint/lint.cjs project\",\n  \"timeout_seconds\": 120,\n  \"wait_seconds\": 60\n}"
+            "source": "{\n  \"sandbox_id\": \"sbx_1234567890abcdef1234567890abcdef\",\n  \"command\": \"python analyse.py data.csv > report.json\",\n  \"timeout_seconds\": 120,\n  \"wait_seconds\": 60\n}"
           }
         ]
       }
@@ -7822,28 +7822,9 @@
       "SandboxCreateRequest": {
         "properties": {
           "environment_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "system_environment": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
           },
           "ttl_seconds": {
             "type": "integer",
@@ -7858,6 +7839,9 @@
         },
         "additionalProperties": false,
         "type": "object",
+        "required": [
+          "environment_id"
+        ],
         "title": "SandboxCreateRequest"
       },
       "SandboxDeleteRequest": {

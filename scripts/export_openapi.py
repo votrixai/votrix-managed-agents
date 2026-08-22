@@ -487,7 +487,7 @@ REQUEST_COMPONENT_EXAMPLES = {
         "metadata": {"team": "research", "reviewed": True},
     },
     "SandboxCreateRequest": {
-        "system_environment": "hf-lint",
+        "environment_id": ENVIRONMENT_ID_EXAMPLE,
         "ttl_seconds": 300,
         "network_access": False,
     },
@@ -496,10 +496,7 @@ REQUEST_COMPONENT_EXAMPLES = {
     "SandboxListRequest": {"state": "running", "limit": 20},
     "SandboxExecRequest": {
         "sandbox_id": SANDBOX_ID_EXAMPLE,
-        "command": (
-            "unzip -oq in.zip -d project "
-            "&& node /opt/hflint/lint.cjs project"
-        ),
+        "command": "python analyse.py data.csv > report.json",
         "timeout_seconds": 120,
         "wait_seconds": 60,
     },

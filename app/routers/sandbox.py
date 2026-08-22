@@ -73,7 +73,6 @@ async def create_sandbox(
         db,
         organization_id=organization_id,
         environment_id=body.environment_id,
-        system_environment=body.system_environment,
         ttl_seconds=body.ttl_seconds,
         network_access=body.network_access,
     )
