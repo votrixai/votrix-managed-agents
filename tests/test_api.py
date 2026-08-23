@@ -6,7 +6,8 @@ handlers — with only the database and E2B swapped out.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest_asyncio
@@ -14,11 +15,13 @@ from fastapi import HTTPException, status
 from httpx import ASGITransport, AsyncClient
 
 from app import human_auth
-from app.main import app
 from app.db.queries import organizations as organizations_q
 from app.db.queries import vma_api_keys as api_keys_q
+from app.main import app
 from app.routers import health as health_router
 from app.routers.deps import get_console_principal, get_db, get_organization_id
+from app.services import sessions as sessions_service
+from app.utils.openrouter_analytics import OpenRouterSessionUsage
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
 
@@ -518,6 +521,35 @@ async def test_a_session_without_a_model_follows_the_agent(created):
 async def test_a_session_never_exposes_its_internals(created):
     for hidden in ("organization_id", "lock_version", "lease_expires_at"):
         assert hidden not in created
+
+
+async def test_session_usage_is_a_live_cumulative_provider_snapshot(
+    client, headers, created, monkeypatch
+):
+    class Reader:
+        async def get_session_usage(self, **kwargs):
+            assert kwargs["session_id"] == created["id"]
+            return OpenRouterSessionUsage(
+                usage_usd=Decimal("0.0842"),
+                as_of=datetime(2026, 8, 22, 12, tzinfo=UTC),
+            )
+
+    monkeypatch.setattr(sessions_service, "_session_usage_reader", Reader)
+
+    response = await client.get(
+        f"/v1/sessions/{created['id']}/usage", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "session_id": created["id"],
+        "type": "session_usage",
+        "account_id": created["account_id"],
+        "usage_usd": "0.0842",
+        "snapshot": "cumulative",
+        "source": "openrouter",
+        "as_of": "2026-08-22T12:00:00Z",
+    }
 
 
 async def test_a_missing_session_is_a_404(client, headers):

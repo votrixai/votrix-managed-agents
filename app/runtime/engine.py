@@ -31,6 +31,7 @@ from app.config import get_settings
 from app.db.models import AgentVersion, Session
 from app.models import events as event_types
 from app.models.llm import (
+    ANTHROPIC,
     DEEPSEEK,
     DEFAULT_THINKING,
     MODEL_CATALOG,
@@ -861,6 +862,12 @@ def _build_chat_model(
     from langchain_openrouter import ChatOpenRouter
 
     options: dict[str, Any] = {}
+
+    # Anthropic does not cache prompts implicitly. Ask OpenRouter for automatic
+    # caching at the request root; it advances the breakpoint as the DeepAgent
+    # conversation grows. The omitted TTL keeps the default five-minute cache.
+    if entry.provider == ANTHROPIC:
+        options["model_kwargs"] = {"cache_control": {"type": "ephemeral"}}
 
     # DeepSeek traffic is intentionally confined to its first-party endpoint.
     # If the OpenRouter workspace's data policy stops admitting that endpoint,

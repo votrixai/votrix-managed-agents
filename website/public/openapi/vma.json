@@ -1943,6 +1943,81 @@
         "description": "Delete Session for your Organization."
       }
     },
+    "/v1/sessions/{session_id}/usage": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Retrieve Session Usage",
+        "description": "Read OpenRouter's latest reported USD spend for this Session. The response is queried live and is not assembled from locally stored turn costs.\n\n`usage_usd` is a cumulative lifetime snapshot as of `as_of`, not the cost of the last response. To settle incrementally, persist the last settled snapshot in the billing system and debit only the positive difference.",
+        "operationId": "retrieve_session_usage_v1_sessions__session_id__usage_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier of the session addressed by this request.",
+            "example": "sess_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenRouter's current cumulative USD snapshot for the Session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionUsageResponse"
+                },
+                "example": {
+                  "session_id": "sess_1234567890abcdef1234567890abcdef",
+                  "type": "session_usage",
+                  "account_id": "acct_1234567890abcdef1234567890abcdef",
+                  "usage_usd": "0.0842",
+                  "snapshot": "cumulative",
+                  "source": "openrouter",
+                  "as_of": "2026-08-13T14:32:00Z"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{session_id}/archive": {
       "post": {
         "tags": [
@@ -8700,6 +8775,55 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SessionUpdateRequest"
+      },
+      "SessionUsageResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The Session whose OpenRouter usage is represented by this snapshot."
+          },
+          "type": {
+            "type": "string",
+            "const": "session_usage",
+            "default": "session_usage"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "The Account whose OpenRouter key funded this Session."
+          },
+          "usage_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "OpenRouter's cumulative lifetime spend for this Session, in USD."
+          },
+          "snapshot": {
+            "type": "string",
+            "const": "cumulative",
+            "default": "cumulative",
+            "description": "Snapshot semantics. Always `cumulative`."
+          },
+          "source": {
+            "type": "string",
+            "const": "openrouter",
+            "default": "openrouter",
+            "description": "The service that supplied the usage snapshot. Always `openrouter`."
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When VMA took this live OpenRouter snapshot."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "account_id",
+          "usage_usd",
+          "as_of"
+        ],
+        "title": "SessionUsageResponse",
+        "description": "A live OpenRouter cumulative USD usage snapshot for one Session."
       },
       "SkillResponse": {
         "properties": {
