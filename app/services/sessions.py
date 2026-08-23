@@ -15,9 +15,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
+from functools import lru_cache
 from pathlib import PurePosixPath
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any
 from urllib.parse import quote
 
 import structlog
@@ -36,10 +40,11 @@ from app.db.models import (
     Sandbox as SandboxRow,
 )
 from app.db.models.memory import MEMORY_ACCESS_READ_WRITE
+from app.db.queries import DEFAULT_PAGE_SIZE, Page
+from app.db.queries import accounts as accounts_q
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as environments_q
 from app.db.queries import sessions as sessions_q
-from app.db.queries import DEFAULT_PAGE_SIZE, Page
 from app.models import events as event_types
 from app.models.errors import (
     Conflict,
@@ -48,6 +53,7 @@ from app.models.errors import (
     SandboxUnavailable,
     SessionBusy,
     SessionCancelled,
+    UsageUnavailable,
 )
 from app.models.sessions import (
     IDLE,
@@ -57,12 +63,17 @@ from app.models.sessions import (
     STOP_REQUIRES_ACTION,
     TERMINATED,
 )
+from app.services import accounts as accounts_service
 from app.services import agents as agents_service
 from app.services import environments as environments_service
 from app.services import event_broker
 from app.services import files as files_service
 from app.services import memory as memory_service
-from app.services import accounts as accounts_service
+from app.utils.openrouter_analytics import (
+    OpenRouterAnalytics,
+    OpenRouterAnalyticsClient,
+    OpenRouterAnalyticsError,
+)
 from app.utils.sandbox import OUTPUTS_DIR, UPLOADS_DIR, Image, Sandbox
 from app.utils.timing import timed
 from app.utils.volume import (
@@ -128,6 +139,13 @@ Emit = Callable[[str, dict[str, Any]], Awaitable[SessionEvent]]
 Publish = Callable[[str, str], Awaitable[None]]
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionUsageSnapshot:
+    account_id: str
+    usage_usd: Decimal
+    as_of: datetime
 
 # Built on first dispatch and kept for the life of the process.
 _tasks_client: Any | None = None
@@ -263,6 +281,77 @@ async def get_session(db: AsyncSession, *, session_id: str, organization_id: str
     if session is None:
         raise NotFound(f"Session {session_id} not found")
     return session
+
+
+async def get_session_usage(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    organization_id: str,
+    analytics: OpenRouterAnalytics | None = None,
+) -> SessionUsageSnapshot:
+    """Read a provider-authoritative cumulative cost snapshot for one Session.
+
+    Nothing is written locally. The owning Account's key hash is included in the
+    provider query so the snapshot is pinned to the same billing boundary as the
+    model requests that produced it.
+    """
+    session = await get_session(
+        db, session_id=session_id, organization_id=organization_id
+    )
+    if session.account_id is None:
+        # Historical Sessions predate pinned Accounts. They spent through the
+        # Organization default, which is the same fallback the runtime uses.
+        account = await accounts_q.get_default_account(
+            db, organization_id=organization_id
+        )
+        if account is None:
+            raise UsageUnavailable(
+                f"Session {session_id} has no Account whose usage can be read"
+            )
+    else:
+        account = await accounts_service.get_account(
+            db,
+            organization_id=organization_id,
+            account_id=session.account_id,
+        )
+    if account.credential is None:
+        raise UsageUnavailable(
+            f"Session {session_id}'s Account has no provider credential"
+        )
+
+    account_id = account.id
+    key_hash = account.credential.key_hash
+    started_at = session.created_at
+    # Do not occupy a database connection while OpenRouter aggregates usage.
+    await db.rollback()
+    try:
+        usage = await (analytics or _session_usage_reader()).get_session_usage(
+            session_id=session_id,
+            api_key_hash=key_hash,
+            started_at=started_at,
+        )
+    except OpenRouterAnalyticsError as exc:
+        logger.warning(
+            "session_usage_unavailable",
+            session_id=session_id,
+            provider="openrouter",
+            error_type=type(exc).__name__,
+        )
+        raise UsageUnavailable(
+            "OpenRouter could not provide a complete Session usage snapshot"
+        ) from None
+
+    return SessionUsageSnapshot(
+        account_id=account_id,
+        usage_usd=usage.usage_usd,
+        as_of=usage.as_of,
+    )
+
+
+@lru_cache(maxsize=1)
+def _session_usage_reader() -> OpenRouterAnalyticsClient:
+    return OpenRouterAnalyticsClient(get_settings().openrouter_management_key)
 
 
 async def list_sessions(
