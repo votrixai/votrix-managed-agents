@@ -10,6 +10,8 @@ export const docs = defineDocs({
       'index.mdx',
       'quickstart.md',
       'core-concepts.md',
+      'agents.md',
+      'environments.md',
       'accounts.md',
       'agent-versioning.md',
       'memory-stores.md',
