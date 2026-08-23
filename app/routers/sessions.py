@@ -1,12 +1,14 @@
 import time
-from typing import Annotated, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Annotated
 
 from fastapi import APIRouter, Header, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import session_scope
-from app.db.models import Session as SessionRow, SessionEvent, SessionFile
+from app.db.models import Session as SessionRow
+from app.db.models import SessionEvent, SessionFile
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
@@ -24,6 +26,7 @@ from app.models.sessions import (
     SessionMemoryStoreResourceResponse,
     SessionResponse,
     SessionUpdateRequest,
+    SessionUsageResponse,
 )
 from app.routers.deps import Db, OrganizationId
 from app.routers.files import to_file
@@ -80,6 +83,32 @@ async def list_sessions(
 async def retrieve_session(session_id: str, db: Db, organization_id: OrganizationId):
     session = await service.get_session(db, session_id=session_id, organization_id=organization_id)
     return await to_session(db, session)
+
+
+@router.get("/{session_id}/usage", response_model=SessionUsageResponse)
+async def retrieve_session_usage(
+    session_id: str,
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """Return OpenRouter's latest cumulative USD snapshot for this Session.
+
+    VMA queries the provider on every request and does not persist per-response
+    costs. `usage_usd` is the whole Session total as of `as_of`, not the cost of
+    its last turn. Consumers that settle incrementally should store their last
+    settled snapshot and debit only the positive difference.
+    """
+    usage = await service.get_session_usage(
+        db,
+        session_id=session_id,
+        organization_id=organization_id,
+    )
+    return SessionUsageResponse(
+        session_id=session_id,
+        account_id=usage.account_id,
+        usage_usd=usage.usage_usd,
+        as_of=usage.as_of,
+    )
 
 
 @router.post("/{session_id}", response_model=SessionResponse)

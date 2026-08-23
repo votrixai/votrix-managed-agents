@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import Field
@@ -131,6 +132,23 @@ class SessionResponse(ApiModel):
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+
+
+class SessionUsageResponse(ApiModel):
+    """OpenRouter's current cumulative USD spend for one Session.
+
+    This is a live provider snapshot, not a locally accumulated receipt. Calling
+    the endpoint again returns the Session's new lifetime total; subtract two
+    readings to settle only the spend since the earlier one.
+    """
+
+    session_id: str
+    type: Literal["session_usage"] = "session_usage"
+    account_id: str
+    usage_usd: Decimal
+    snapshot: Literal["cumulative"] = "cumulative"
+    source: Literal["openrouter"] = "openrouter"
+    as_of: datetime
 
 
 class SessionBusyError(ApiModel):
