@@ -4,16 +4,18 @@ This repository contains the active Votrix Managed Agents service under `app/`
 and its isolated test suite under `tests/`. The superseded implementation was
 removed from the main branch and remains recoverable from Git history.
 
-> **Rewrite status (2026-07-30):** this is an integration branch, not the
-> previously documented public-beta release. Authentication, several resource
-> families, SDK packaging, and the checked-in Cloud Run deployment files have
-> not yet been brought across. Treat `app/`, `tests/`, and the
-> [rewrite status](docs/rewrite-status.md) as the source of truth.
+> **Source-of-truth order (2026-08-23):** use `app/` and `tests/` for active
+> behavior, the generated OpenAPI document for the public HTTP contract, and
+> the public guides for supported workflows. The dated
+> [rewrite status](docs/rewrite-status.md) summarizes the same implementation;
+> superseded behavior belongs only to Git history.
 
 ## What the rewrite implements
 
-- Organization-scoped Agents with immutable versions and optimistic updates.
+- Organization-scoped Agents with immutable versions.
 - E2B-backed Environments whose package recipes build reusable images.
+- Accounts that own encrypted OpenRouter inference keys, spending limits, and
+  provider usage snapshots.
 - Sessions that pin an Agent version and keep one E2B sandbox for their
   lifetime.
 - An append-only Session event log, resumable SSE, interrupt handling, and a
@@ -60,7 +62,8 @@ During a turn:
 
 Session event -> lease claim -> inline call or signed Cloud Tasks callback
               -> Deep Agents graph -> model and sandbox tools
-              -> durable output events -> polling SSE readers
+              -> durable output events -> SSE readers woken by PostgreSQL
+                                          notifications or polling fallback
 ```
 
 The active code is deliberately layered:
@@ -118,12 +121,21 @@ header.
 
 ### Runtime credentials
 
-A Session is provisioned with E2B when it is created, so an end-to-end agent run
-needs:
+A Session is provisioned with E2B when it is created, and every Session spends
+through an Account-owned OpenRouter inference key. An end-to-end local run
+therefore needs:
 
 ```dotenv
 E2B_API_KEY=...
-ANTHROPIC_API_KEY=...  # or GEMINI_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY
+OPENROUTER_MANAGEMENT_KEY=...
+VMA_ENCRYPTION_KEY=...
+```
+
+After bootstrapping the local Organization above, provision its default Account
+and encrypted inference key once:
+
+```bash
+uv run python -m scripts.backfill_default_accounts
 ```
 
 Files, Skill packages, attached inputs, and collected outputs also need private
@@ -137,8 +149,9 @@ S3_BUCKET_NAME=...
 ```
 
 Model IDs come from the hard-coded catalog in `app/models/llm.py`. A caller
-selects a model ID; provider keys stay in service configuration and never enter
-Agent or Session rows.
+selects a model ID, while the selected Session Account supplies the encrypted
+OpenRouter inference key used for the turn. `FIRECRAWL_API_KEY` is additionally
+required only for Agents that declare the web toolset.
 
 ### Turn dispatch
 
@@ -255,6 +268,8 @@ Current rewrite documentation:
 - [Rewrite status](docs/rewrite-status.md)
 - [Core architecture](docs/votrix-core-architecture.md)
 - [API reference](docs/api/index.mdx)
+- [Agents](docs/agents.md)
+- [Environments](docs/environments.md)
 - [Memory Stores](docs/memory-stores.md)
 - [Memory Stores on E2B Volumes](docs/memory-volumes.md)
 - [Agent versioning](docs/agent-versioning.md)
@@ -279,13 +294,13 @@ CI fails when the snapshot drifts from the active application.
 
 - Organization/owner and model endpoints are registered placeholders.
 - MCP definitions are persisted but not loaded. The stored `multiagent` roster
-  is not consumed; Deep Agents' built-in general-purpose `task` delegation is
-  still available independently.
+  is not consumed, and the built-in general-purpose `task` subagent is disabled.
 - Vaults, deployments, webhooks, quotas, and audit/usage ledgers have not been
   implemented in the active service.
 - E2B is the only active sandbox backend; there is no no-shell local fallback.
-- Event streaming polls durable rows; the old in-process/PostgreSQL preview bus
-  is not part of the rewrite.
+- Event streaming reads durable rows and uses PostgreSQL notifications when
+  configured, with polling as the loss-safe fallback. Token previews are
+  ephemeral notifications and are replaced by the final durable message.
 - Cloud Tasks reduces duplicate enqueueing, but the callback payload does not
   carry the task generation and external side effects are not exactly once.
 - Cloud dispatch commits input before enqueueing and has no outbox or

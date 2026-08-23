@@ -3,7 +3,7 @@ title: Implementation Status
 description: Current API, runtime, deployment, security, and validation status.
 ---
 
-Snapshot: 2026-08-01
+Snapshot: 2026-08-23
 
 ## Sources of truth
 
@@ -26,16 +26,21 @@ The active service implements:
 - Agents and immutable Agent versions;
 - Environments and E2B image builds;
 - Sessions, durable events, event retrieval, and resumable SSE;
+- Accounts, encrypted OpenRouter inference keys, spending limits, and live
+  provider usage snapshots;
+- directly managed Sandboxes and command execution;
 - Files and Skill archives;
 - live and end-of-turn output capture;
 - Memory Store lifecycle;
 - CMA-compatible Memories and immutable Memory Versions;
 - E2B Volume-backed, creation-time Memory Store mounts.
 
-Organization, membership, and model-catalog routes remain placeholders. The
-database owns VMA API-key lifecycle records, but request authentication and
-API-key management routes are not wired yet. Vaults, deployments, webhooks,
-quotas, and audit/usage ledgers are not implemented.
+Public Organization, membership, and model-catalog routes remain placeholders.
+Public resource requests authenticate with database-backed VMA API keys. The
+first-party Developer Console also has bearer-token and membership-scoped API
+key lifecycle routes that are intentionally hidden from the public OpenAPI
+contract. Vault resources, public deployment resources, webhooks, quotas, and
+local audit/usage ledgers are not implemented.
 
 ## Memory runtime
 
@@ -57,14 +62,19 @@ The service uses:
 - SQLite or PostgreSQL relational state;
 - private S3-compatible File and Skill storage;
 - inline turns or OIDC-authenticated Cloud Tasks push dispatch;
-- durable-row polling for SSE;
-- an API-only Cloud Run release path with a dedicated migration job.
+- PostgreSQL notifications that wake SSE readers, with durable-row polling as
+  the fallback;
+- separate API and Cloud Tasks worker Cloud Run services with a dedicated
+  migration job.
 
 ## Security boundary
 
 Public resource requests authenticate a database-backed `x-api-key`. The key
 record supplies `organization_id`, and every tenant-owned query is scoped with
 that server-derived value; callers do not submit a separate Organization ID.
+First-party Console requests instead verify a Supabase bearer token and the
+user's membership in the selected Organization. API keys cannot use that
+Console-only path.
 Cloud Tasks callbacks use a separate boundary: cloud mode verifies the Google
 OIDC audience and service-account email.
 
