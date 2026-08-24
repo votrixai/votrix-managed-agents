@@ -222,6 +222,83 @@
         }
       }
     },
+    "/v1/accounts/usage": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Retrieve Organization Usage",
+        "description": "Return a current USD usage snapshot summed across every Account in the Organization. The response includes cumulative lifetime usage and the current daily, weekly, and monthly windows, plus an Account breakdown for reconciliation.\n\n`usage_usd` is the complete cumulative Organization total. Treat `as_of` as the timestamp of one live upstream snapshot; values can increase as recently completed work is reported. Suspended Accounts remain included because their historical usage still belongs to the Organization.\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, Session assignment, usage, spending limits, and suspension.",
+        "operationId": "retrieve_organization_usage_v1_accounts_usage_get",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your VMA API key. It identifies the Organization this request can access.",
+            "example": "vma_example_key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current Organization usage and its Account breakdown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationUsageResponse"
+                },
+                "example": {
+                  "organization_id": "org_1234567890abcdef1234567890abcdef",
+                  "type": "organization_usage",
+                  "usage_usd": "8.40",
+                  "usage_daily_usd": "0.75",
+                  "usage_weekly_usd": "3.10",
+                  "usage_monthly_usd": "8.40",
+                  "as_of": "2026-08-13T14:32:00Z",
+                  "accounts": [
+                    {
+                      "account_id": "acct_1234567890abcdef1234567890abcdef",
+                      "name": "Website Builder",
+                      "status": "active",
+                      "is_default": false,
+                      "usage_usd": "8.40",
+                      "usage_daily_usd": "0.75",
+                      "usage_weekly_usd": "3.10",
+                      "usage_monthly_usd": "8.40"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                },
+                "example": {
+                  "detail": [
+                    {
+                      "loc": [
+                        "body",
+                        "name"
+                      ],
+                      "msg": "Field required",
+                      "type": "missing"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/accounts/{account_id}": {
       "get": {
         "tags": [
@@ -558,6 +635,11 @@
                     "model": "claude-sonnet-5",
                     "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
                     "description": "Creates concise, source-backed research briefs.",
+                    "tools": [
+                      {
+                        "type": "agent_toolset_20260401"
+                      }
+                    ],
                     "metadata": {
                       "team": "research"
                     }
@@ -585,7 +667,11 @@
                   },
                   "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
-                  "tools": [],
+                  "tools": [
+                    {
+                      "type": "agent_toolset_20260401"
+                    }
+                  ],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
@@ -622,13 +708,13 @@
             }
           }
         },
-        "description": "Create Agent for your Organization.",
+        "description": "Create a reusable, versioned Agent definition for your Organization. `name` and `model` are required. Every Agent that runs a turn must also declare `{\"type\":\"agent_toolset_20260401\"}` in `tools`; creation stores the definition, while the runtime exercises it when a Session receives work.\n\nRead the [Agents guide](/docs/agents) for runnable definitions, models, toolsets, custom tools, Skills, and output paths.",
         "x-codeSamples": [
           {
             "id": "request-json",
             "lang": "json",
             "label": "Request JSON",
-            "source": "{\n  \"name\": \"Research Assistant\",\n  \"model\": \"claude-sonnet-5\",\n  \"system\": \"Research the topic carefully and save the final brief in outputs/brief.md.\",\n  \"description\": \"Creates concise, source-backed research briefs.\",\n  \"metadata\": {\n    \"team\": \"research\"\n  }\n}"
+            "source": "{\n  \"name\": \"Research Assistant\",\n  \"model\": \"claude-sonnet-5\",\n  \"system\": \"Research the topic carefully and save the final brief in outputs/brief.md.\",\n  \"description\": \"Creates concise, source-backed research briefs.\",\n  \"tools\": [\n    {\n      \"type\": \"agent_toolset_20260401\"\n    }\n  ],\n  \"metadata\": {\n    \"team\": \"research\"\n  }\n}"
           }
         ]
       },
@@ -759,7 +845,11 @@
                       },
                       "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
                       "description": "Creates concise, source-backed research briefs.",
-                      "tools": [],
+                      "tools": [
+                        {
+                          "type": "agent_toolset_20260401"
+                        }
+                      ],
                       "mcp_servers": [],
                       "skills": [],
                       "multiagent": null,
@@ -897,7 +987,11 @@
                       },
                       "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
                       "description": "Creates concise, source-backed research briefs.",
-                      "tools": [],
+                      "tools": [
+                        {
+                          "type": "agent_toolset_20260401"
+                        }
+                      ],
                       "mcp_servers": [],
                       "skills": [],
                       "multiagent": null,
@@ -947,7 +1041,7 @@
           "agents"
         ],
         "summary": "Retrieve Agent",
-        "description": "Retrieve the active Agent version, or a specific version selected by the `version` query parameter.",
+        "description": "Retrieve the active Agent version, or a specific version selected by the `version` query parameter.\n\nRead the [Agents guide](/docs/agents) for runnable definitions, models, toolsets, custom tools, Skills, and output paths.",
         "operationId": "retrieve_agent_v1_agents__agent_id__get",
         "parameters": [
           {
@@ -1005,7 +1099,11 @@
                   },
                   "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
-                  "tools": [],
+                  "tools": [
+                    {
+                      "type": "agent_toolset_20260401"
+                    }
+                  ],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
@@ -1048,7 +1146,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Change only the supplied Agent fields and return the resulting version.",
+        "description": "Change only the supplied Agent fields and return the resulting version.\n\nRead the [Agents guide](/docs/agents) for runnable definitions, models, toolsets, custom tools, Skills, and output paths.",
         "operationId": "update_agent_v1_agents__agent_id__patch",
         "parameters": [
           {
@@ -1113,7 +1211,11 @@
                   },
                   "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
-                  "tools": [],
+                  "tools": [
+                    {
+                      "type": "agent_toolset_20260401"
+                    }
+                  ],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
@@ -1165,7 +1267,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Change only the supplied Agent fields and return the resulting version.",
+        "description": "Change only the supplied Agent fields and return the resulting version.\n\nRead the [Agents guide](/docs/agents) for runnable definitions, models, toolsets, custom tools, Skills, and output paths.",
         "operationId": "update_agent_v1_agents__agent_id__post",
         "parameters": [
           {
@@ -1230,7 +1332,11 @@
                   },
                   "system": "Research the topic carefully, cite sources, and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
-                  "tools": [],
+                  "tools": [
+                    {
+                      "type": "agent_toolset_20260401"
+                    }
+                  ],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
@@ -1325,7 +1431,11 @@
                   },
                   "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
                   "description": "Creates concise, source-backed research briefs.",
-                  "tools": [],
+                  "tools": [
+                    {
+                      "type": "agent_toolset_20260401"
+                    }
+                  ],
                   "mcp_servers": [],
                   "skills": [],
                   "multiagent": null,
@@ -2877,7 +2987,7 @@
           "environments"
         ],
         "summary": "Create Environment",
-        "description": "Create an Environment for Session sandboxes. Wait for `build_state` to become `ready` before starting a Session.",
+        "description": "Create an Environment for Session sandboxes. An empty package recipe uses the base image immediately; declaring packages starts an asynchronous image build. Wait for `build_state` to become `ready` before starting a Session.\n\nRead the [Environments guide](/docs/environments) for package recipes, machine settings, build states, polling, and rebuild behavior.",
         "operationId": "create_environment_v1_environments_post",
         "parameters": [
           {
@@ -3227,7 +3337,7 @@
           "environments"
         ],
         "summary": "Update Environment",
-        "description": "Update an Environment. Existing Sessions keep the setup with which they started; later Sessions use the update.",
+        "description": "Update an Environment. Existing Sessions keep the setup with which they started; later Sessions use the update. Supplying `config` replaces the complete nested recipe rather than patching individual settings.\n\nRead the [Environments guide](/docs/environments) for package recipes, machine settings, build states, polling, and rebuild behavior.",
         "operationId": "update_environment_v1_environments__environment_id__post",
         "parameters": [
           {
@@ -6018,12 +6128,72 @@
         "title": "AccountUsageResponse",
         "description": "A current USD usage snapshot for one Account."
       },
+      "AccountUsageSummary": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "The Account represented by this row."
+          },
+          "name": {
+            "type": "string",
+            "description": "The Account's display name."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "active",
+              "suspended"
+            ],
+            "description": "The Account's current lifecycle status."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether Sessions use this Account when `account_id` is omitted."
+          },
+          "usage_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Cumulative Account usage in USD."
+          },
+          "usage_daily_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Account usage in the current daily window, in USD."
+          },
+          "usage_weekly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Account usage in the current weekly window, in USD."
+          },
+          "usage_monthly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Account usage in the current monthly window, in USD."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "name",
+          "status",
+          "is_default",
+          "usage_usd",
+          "usage_daily_usd",
+          "usage_weekly_usd",
+          "usage_monthly_usd"
+        ],
+        "title": "AccountUsageSummary",
+        "description": "One Account's contribution to an Organization usage snapshot."
+      },
       "AgentCreateRequest": {
         "properties": {
           "name": {
             "type": "string",
             "maxLength": 255,
-            "minLength": 1
+            "minLength": 1,
+            "description": "Human-readable Agent name, from 1 through 255 characters."
           },
           "model": {
             "anyOf": [
@@ -6034,7 +6204,8 @@
                 "additionalProperties": true,
                 "type": "object"
               }
-            ]
+            ],
+            "description": "Model ID string, or an object with `id` and optional `thinking`. A bare string is shorthand for `{\"id\": ...}`."
           },
           "system": {
             "anyOf": [
@@ -6044,7 +6215,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Instructions applied to every turn run by this Agent version."
           },
           "description": {
             "anyOf": [
@@ -6061,21 +6233,24 @@
               "additionalProperties": true,
               "type": "object"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Toolset and custom-tool declarations. Every Agent that runs a turn must include `{\"type\":\"agent_toolset_20260401\"}`."
           },
           "mcp_servers": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "type": "array"
+            "type": "array",
+            "description": "MCP definitions stored with the Agent version. The current runtime does not load them."
           },
           "skills": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Uploaded Skill references such as `{\"skill_id\":\"skill_...\"}`; at most 20 are installed when a Session starts."
           },
           "multiagent": {
             "anyOf": [
@@ -6086,15 +6261,18 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Multi-agent configuration stored with the version but not used by the current runtime."
           },
           "metadata": {
             "additionalProperties": true,
-            "type": "object"
+            "type": "object",
+            "description": "Application-owned metadata stored with the Agent version."
           },
           "runtime": {
             "additionalProperties": true,
-            "type": "object"
+            "type": "object",
+            "description": "Configuration stored with the Agent version but not interpreted by the current runtime."
           }
         },
         "additionalProperties": false,
@@ -6103,7 +6281,8 @@
           "name",
           "model"
         ],
-        "title": "AgentCreateRequest"
+        "title": "AgentCreateRequest",
+        "description": "The versioned definition accepted when creating an Agent. Include the Agent toolset shown below for an Agent that can run turns."
       },
       "AgentCustomToolUseEvent": {
         "properties": {
@@ -6759,32 +6938,36 @@
       "EnvironmentConfig": {
         "properties": {
           "packages": {
-            "$ref": "#/components/schemas/PackagesConfig"
+            "$ref": "#/components/schemas/PackagesConfig",
+            "description": "Packages installed into the image through apt, cargo, gem, go, npm, or pip."
           },
           "cpu": {
             "type": "integer",
             "maximum": 8.0,
             "minimum": 1.0,
-            "default": 2
+            "default": 2,
+            "description": "CPU count baked into a custom Environment image. Defaults to 2."
           },
           "memory_mb": {
             "type": "integer",
             "maximum": 8192.0,
             "minimum": 512.0,
-            "default": 1024
+            "default": 1024,
+            "description": "Memory in MiB baked into a custom Environment image. Defaults to 1,024."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "EnvironmentConfig",
-        "description": "The sandbox settings shared by Sessions using this Environment."
+        "description": "The complete package and machine recipe shared by Sessions using this Environment."
       },
       "EnvironmentCreateRequest": {
         "properties": {
           "name": {
             "type": "string",
             "maxLength": 255,
-            "minLength": 1
+            "minLength": 1,
+            "description": "Human-readable Environment name, from 1 through 255 characters."
           },
           "description": {
             "anyOf": [
@@ -6797,7 +6980,8 @@
             ]
           },
           "config": {
-            "$ref": "#/components/schemas/EnvironmentConfig"
+            "$ref": "#/components/schemas/EnvironmentConfig",
+            "description": "Complete package and machine recipe. Omit it to use the base Environment."
           }
         },
         "additionalProperties": false,
@@ -6805,7 +6989,8 @@
         "required": [
           "name"
         ],
-        "title": "EnvironmentCreateRequest"
+        "title": "EnvironmentCreateRequest",
+        "description": "The name, description, and optional image recipe used to create an Environment."
       },
       "EnvironmentResponse": {
         "properties": {
@@ -6831,10 +7016,12 @@
             ]
           },
           "config": {
-            "$ref": "#/components/schemas/EnvironmentConfig"
+            "$ref": "#/components/schemas/EnvironmentConfig",
+            "description": "The complete stored package and machine recipe."
           },
           "build_state": {
-            "type": "string"
+            "type": "string",
+            "description": "Image state: `building`, `ready`, or `failed`. Only `ready` can back a new Session."
           },
           "build_error": {
             "anyOf": [
@@ -6844,7 +7031,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Image-build failure details when `build_state` is `failed`; otherwise null."
           },
           "created_at": {
             "type": "string",
@@ -6876,7 +7064,8 @@
           "created_at",
           "updated_at"
         ],
-        "title": "EnvironmentResponse"
+        "title": "EnvironmentResponse",
+        "description": "An Environment recipe and its current asynchronous image-build state."
       },
       "EnvironmentUpdateRequest": {
         "properties": {
@@ -6910,12 +7099,14 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Complete replacement recipe. Include every package list and machine setting the updated Environment should keep."
           }
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "EnvironmentUpdateRequest"
+        "title": "EnvironmentUpdateRequest",
+        "description": "Fields to change on an Environment. A supplied config replaces the complete previous recipe."
       },
       "ExecResponse": {
         "properties": {
@@ -7830,48 +8021,114 @@
         "type": "object",
         "title": "MemoryStoreUpdateRequest"
       },
+      "OrganizationUsageResponse": {
+        "properties": {
+          "organization_id": {
+            "type": "string",
+            "description": "The Organization represented by this snapshot."
+          },
+          "type": {
+            "type": "string",
+            "const": "organization_usage",
+            "default": "organization_usage",
+            "description": "Resource type. Always `organization_usage`."
+          },
+          "usage_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Cumulative usage summed across all Accounts, in USD."
+          },
+          "usage_daily_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Current daily usage summed across all Accounts, in USD."
+          },
+          "usage_weekly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Current weekly usage summed across all Accounts, in USD."
+          },
+          "usage_monthly_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "description": "Current monthly usage summed across all Accounts, in USD."
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When VMA completed this live usage snapshot."
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountUsageSummary"
+            },
+            "type": "array",
+            "description": "The Account rows whose values make up the totals."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "organization_id",
+          "usage_usd",
+          "usage_daily_usd",
+          "usage_weekly_usd",
+          "usage_monthly_usd",
+          "as_of",
+          "accounts"
+        ],
+        "title": "OrganizationUsageResponse",
+        "description": "A current USD usage snapshot summed across every Organization Account."
+      },
       "PackagesConfig": {
         "properties": {
           "apt": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Packages passed to apt install."
           },
           "cargo": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Packages passed to cargo install."
           },
           "gem": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Packages passed to gem install."
           },
           "go": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Packages passed to go install."
           },
           "npm": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Packages installed globally with npm."
           },
           "pip": {
             "items": {
               "type": "string"
             },
-            "type": "array"
+            "type": "array",
+            "description": "Packages passed to pip install."
           }
         },
         "additionalProperties": false,
         "type": "object",
-        "title": "PackagesConfig"
+        "title": "PackagesConfig",
+        "description": "Packages installed while building an Environment image. Entries use each manager's own version syntax and unpinned entries select that manager's current version."
       },
       "RequiresAction": {
         "properties": {

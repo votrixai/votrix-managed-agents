@@ -156,6 +156,27 @@ ACCOUNT_USAGE_EXAMPLE = {
     "limit_usd": "20.00",
     "limit_remaining_usd": "11.60",
 }
+ACCOUNT_USAGE_SUMMARY_EXAMPLE = {
+    "account_id": ACCOUNT_ID_EXAMPLE,
+    "name": "Website Builder",
+    "status": "active",
+    "is_default": False,
+    "usage_usd": "8.40",
+    "usage_daily_usd": "0.75",
+    "usage_weekly_usd": "3.10",
+    "usage_monthly_usd": "8.40",
+}
+ORGANIZATION_USAGE_EXAMPLE = {
+    "organization_id": ORGANIZATION_ID_EXAMPLE,
+    "type": "organization_usage",
+    "usage_usd": "8.40",
+    "usage_daily_usd": "0.75",
+    "usage_weekly_usd": "3.10",
+    "usage_monthly_usd": "8.40",
+    "as_of": UPDATED_AT_EXAMPLE,
+    "accounts": [ACCOUNT_USAGE_SUMMARY_EXAMPLE],
+}
+AGENT_TOOLSET_EXAMPLE = {"type": "agent_toolset_20260401"}
 AGENT_ACTIVE_EXAMPLE = {
     "id": AGENT_ID_EXAMPLE,
     "type": "agent",
@@ -167,7 +188,7 @@ AGENT_ACTIVE_EXAMPLE = {
         "outputs/brief.md."
     ),
     "description": "Creates concise, source-backed research briefs.",
-    "tools": [],
+    "tools": [AGENT_TOOLSET_EXAMPLE],
     "mcp_servers": [],
     "skills": [],
     "multiagent": None,
@@ -185,7 +206,7 @@ AGENT_VERSION_EXAMPLE = {
     "model": {"id": "claude-sonnet-5"},
     "system": AGENT_ACTIVE_EXAMPLE["system"],
     "description": AGENT_ACTIVE_EXAMPLE["description"],
-    "tools": [],
+    "tools": [AGENT_TOOLSET_EXAMPLE],
     "mcp_servers": [],
     "skills": [],
     "multiagent": None,
@@ -486,6 +507,7 @@ REQUEST_COMPONENT_EXAMPLES = {
             "outputs/brief.md."
         ),
         "description": "Creates concise, source-backed research briefs.",
+        "tools": [AGENT_TOOLSET_EXAMPLE],
         "metadata": {"team": "research"},
     },
     "AgentUpdateRequest": {
@@ -586,6 +608,7 @@ REQUEST_COMPONENT_EXAMPLES = {
 RESPONSE_COMPONENT_EXAMPLES = {
     "AccountResponse": ACCOUNT_ACTIVE_EXAMPLE,
     "AccountUsageResponse": ACCOUNT_USAGE_EXAMPLE,
+    "OrganizationUsageResponse": ORGANIZATION_USAGE_EXAMPLE,
     "ListResponse_AccountResponse_": {
         "data": [ACCOUNT_ACTIVE_EXAMPLE],
         "has_more": False,
@@ -665,6 +688,14 @@ ACCOUNT_GUIDE_REFERENCE = (
     "\n\nRead the [Accounts guide](/docs/accounts) for default Account behavior, "
     "Session assignment, usage, spending limits, and suspension."
 )
+AGENT_GUIDE_REFERENCE = (
+    "\n\nRead the [Agents guide](/docs/agents) for runnable definitions, "
+    "models, toolsets, custom tools, Skills, and output paths."
+)
+ENVIRONMENT_GUIDE_REFERENCE = (
+    "\n\nRead the [Environments guide](/docs/environments) for package recipes, "
+    "machine settings, build states, polling, and rebuild behavior."
+)
 
 
 OPERATION_DESCRIPTIONS = {
@@ -714,6 +745,18 @@ OPERATION_DESCRIPTIONS = {
         "individual Agent turn."
         + ACCOUNT_GUIDE_REFERENCE
     ),
+    ("get", "/v1/accounts/usage"): (
+        "Return a current USD usage snapshot summed across every Account in "
+        "the Organization. The response includes cumulative lifetime usage "
+        "and the current daily, weekly, and monthly windows, plus an Account "
+        "breakdown for reconciliation.\n\n"
+        "`usage_usd` is the complete cumulative Organization total. Treat "
+        "`as_of` as the timestamp of one live upstream snapshot; values "
+        "can increase as recently completed work is reported. Suspended "
+        "Accounts remain included because their historical usage still belongs "
+        "to the Organization."
+        + ACCOUNT_GUIDE_REFERENCE
+    ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
         "Stop a non-default Account from funding further Agent work. The "
         "Account keeps the same ID, spending limit, and usage history, and its "
@@ -737,12 +780,23 @@ OPERATION_DESCRIPTIONS = {
     ("get", "/v1/agents/{agent_id}"): (
         "Retrieve the active Agent version, or a specific version selected by "
         "the `version` query parameter."
+        + AGENT_GUIDE_REFERENCE
+    ),
+    ("post", "/v1/agents"): (
+        "Create a reusable, versioned Agent definition for your Organization. "
+        "`name` and `model` are required. Every Agent that runs a turn must also "
+        "declare `{\"type\":\"agent_toolset_20260401\"}` in `tools`; creation stores "
+        "the definition, while the runtime exercises it when a Session receives "
+        "work."
+        + AGENT_GUIDE_REFERENCE
     ),
     ("patch", "/v1/agents/{agent_id}"): (
         "Change only the supplied Agent fields and return the resulting version."
+        + AGENT_GUIDE_REFERENCE
     ),
     ("post", "/v1/agents/{agent_id}"): (
         "Change only the supplied Agent fields and return the resulting version."
+        + AGENT_GUIDE_REFERENCE
     ),
     ("post", "/v1/sessions/{session_id}/events"): (
         "Add client events to a Session. A new message is refused with `409` "
@@ -775,12 +829,17 @@ OPERATION_DESCRIPTIONS = {
         "to `uploads/` and defaults to the File's filename."
     ),
     ("post", "/v1/environments"): (
-        "Create an Environment for Session sandboxes. Wait for `build_state` "
-        "to become `ready` before starting a Session."
+        "Create an Environment for Session sandboxes. An empty package recipe "
+        "uses the base image immediately; declaring packages starts an "
+        "asynchronous image build. Wait for `build_state` to become `ready` "
+        "before starting a Session."
+        + ENVIRONMENT_GUIDE_REFERENCE
     ),
     ("post", "/v1/environments/{environment_id}"): (
         "Update an Environment. Existing Sessions keep the setup with which "
-        "they started; later Sessions use the update."
+        "they started; later Sessions use the update. Supplying `config` replaces "
+        "the complete nested recipe rather than patching individual settings."
+        + ENVIRONMENT_GUIDE_REFERENCE
     ),
     ("delete", "/v1/environments/{environment_id}"): (
         "Delete an Environment that is not referenced by a Session."
@@ -842,6 +901,11 @@ OPERATION_SUCCESS_RESPONSES = {
         "200",
         "A current USD usage snapshot for the requested Account.",
         ACCOUNT_USAGE_EXAMPLE,
+    ),
+    ("get", "/v1/accounts/usage"): (
+        "200",
+        "Current Organization usage and its Account breakdown.",
+        ORGANIZATION_USAGE_EXAMPLE,
     ),
     ("get", "/v1/sessions/{session_id}/usage"): (
         "200",
@@ -924,13 +988,41 @@ COMPONENT_DESCRIPTIONS = {
     "AccountUsageResponse": (
         "A current USD usage snapshot for one Account."
     ),
+    "AccountUsageSummary": (
+        "One Account's contribution to an Organization usage snapshot."
+    ),
+    "OrganizationUsageResponse": (
+        "A current USD usage snapshot summed across every Organization Account."
+    ),
     "SessionUsageResponse": (
         "A live OpenRouter cumulative USD usage snapshot for one Session."
     ),
     "ListResponse_AccountResponse_": (
         "A cursor page of Accounts ordered from oldest to newest."
     ),
-    "EnvironmentConfig": "The sandbox settings shared by Sessions using this Environment.",
+    "AgentCreateRequest": (
+        "The versioned definition accepted when creating an Agent. Include the "
+        "Agent toolset shown below for an Agent that can run turns."
+    ),
+    "EnvironmentCreateRequest": (
+        "The name, description, and optional image recipe used to create an Environment."
+    ),
+    "EnvironmentConfig": (
+        "The complete package and machine recipe shared by Sessions using this "
+        "Environment."
+    ),
+    "EnvironmentResponse": (
+        "An Environment recipe and its current asynchronous image-build state."
+    ),
+    "EnvironmentUpdateRequest": (
+        "Fields to change on an Environment. A supplied config replaces the "
+        "complete previous recipe."
+    ),
+    "PackagesConfig": (
+        "Packages installed while building an Environment image. Entries use "
+        "each manager's own version syntax and unpinned entries select that "
+        "manager's current version."
+    ),
     "FileResource": (
         "A File attached when a Session is created. `path` is relative to "
         "`uploads/` and defaults to the File's filename."
@@ -999,6 +1091,46 @@ PROPERTY_DESCRIPTIONS = {
     ("AccountUsageResponse", "limit_remaining_usd"): (
         "The amount remaining under the Account's limit, or `null` when uncapped."
     ),
+    ("AccountUsageSummary", "account_id"): "The Account represented by this row.",
+    ("AccountUsageSummary", "name"): "The Account's display name.",
+    ("AccountUsageSummary", "status"): "The Account's current lifecycle status.",
+    ("AccountUsageSummary", "is_default"): (
+        "Whether Sessions use this Account when `account_id` is omitted."
+    ),
+    ("AccountUsageSummary", "usage_usd"): "Cumulative Account usage in USD.",
+    ("AccountUsageSummary", "usage_daily_usd"): (
+        "Account usage in the current daily window, in USD."
+    ),
+    ("AccountUsageSummary", "usage_weekly_usd"): (
+        "Account usage in the current weekly window, in USD."
+    ),
+    ("AccountUsageSummary", "usage_monthly_usd"): (
+        "Account usage in the current monthly window, in USD."
+    ),
+    ("OrganizationUsageResponse", "organization_id"): (
+        "The Organization represented by this snapshot."
+    ),
+    ("OrganizationUsageResponse", "type"): (
+        "Resource type. Always `organization_usage`."
+    ),
+    ("OrganizationUsageResponse", "usage_usd"): (
+        "Cumulative usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "usage_daily_usd"): (
+        "Current daily usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "usage_weekly_usd"): (
+        "Current weekly usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "usage_monthly_usd"): (
+        "Current monthly usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "as_of"): (
+        "When VMA completed this live usage snapshot."
+    ),
+    ("OrganizationUsageResponse", "accounts"): (
+        "The Account rows whose values make up the totals."
+    ),
     ("ListResponse_AccountResponse_", "data"): (
         "Accounts in this page, ordered from oldest to newest."
     ),
@@ -1010,6 +1142,74 @@ PROPERTY_DESCRIPTIONS = {
     ),
     ("ListResponse_AccountResponse_", "last_id"): (
         "ID of the last Account in this page, or `null` for an empty page."
+    ),
+    ("AgentCreateRequest", "name"): (
+        "Human-readable Agent name, from 1 through 255 characters."
+    ),
+    ("AgentCreateRequest", "model"): (
+        "Model ID string, or an object with `id` and optional `thinking`. A bare "
+        "string is shorthand for `{\"id\": ...}`."
+    ),
+    ("AgentCreateRequest", "system"): (
+        "Instructions applied to every turn run by this Agent version."
+    ),
+    ("AgentCreateRequest", "tools"): (
+        "Toolset and custom-tool declarations. Every Agent that runs a turn must "
+        "include `{\"type\":\"agent_toolset_20260401\"}`."
+    ),
+    ("AgentCreateRequest", "skills"): (
+        "Uploaded Skill references such as `{\"skill_id\":\"skill_...\"}`; at most "
+        "20 are installed when a Session starts."
+    ),
+    ("AgentCreateRequest", "mcp_servers"): (
+        "MCP definitions stored with the Agent version. The current runtime does "
+        "not load them."
+    ),
+    ("AgentCreateRequest", "multiagent"): (
+        "Multi-agent configuration stored with the version but not used by the "
+        "current runtime."
+    ),
+    ("AgentCreateRequest", "metadata"): (
+        "Application-owned metadata stored with the Agent version."
+    ),
+    ("AgentCreateRequest", "runtime"): (
+        "Configuration stored with the Agent version but not interpreted by the "
+        "current runtime."
+    ),
+    ("EnvironmentCreateRequest", "name"): (
+        "Human-readable Environment name, from 1 through 255 characters."
+    ),
+    ("EnvironmentCreateRequest", "config"): (
+        "Complete package and machine recipe. Omit it to use the base Environment."
+    ),
+    ("EnvironmentUpdateRequest", "config"): (
+        "Complete replacement recipe. Include every package list and machine "
+        "setting the updated Environment should keep."
+    ),
+    ("EnvironmentConfig", "packages"): (
+        "Packages installed into the image through apt, cargo, gem, go, npm, or pip."
+    ),
+    ("EnvironmentConfig", "cpu"): (
+        "CPU count baked into a custom Environment image. Defaults to 2."
+    ),
+    ("EnvironmentConfig", "memory_mb"): (
+        "Memory in MiB baked into a custom Environment image. Defaults to 1,024."
+    ),
+    ("PackagesConfig", "apt"): "Packages passed to apt install.",
+    ("PackagesConfig", "cargo"): "Packages passed to cargo install.",
+    ("PackagesConfig", "gem"): "Packages passed to gem install.",
+    ("PackagesConfig", "go"): "Packages passed to go install.",
+    ("PackagesConfig", "npm"): "Packages installed globally with npm.",
+    ("PackagesConfig", "pip"): "Packages passed to pip install.",
+    ("EnvironmentResponse", "config"): (
+        "The complete stored package and machine recipe."
+    ),
+    ("EnvironmentResponse", "build_state"): (
+        "Image state: `building`, `ready`, or `failed`. Only `ready` can back a "
+        "new Session."
+    ),
+    ("EnvironmentResponse", "build_error"): (
+        "Image-build failure details when `build_state` is `failed`; otherwise null."
     ),
     ("SessionCreateRequest", "account_id"): (
         "The Account assigned to this Session. Omit it to use the Organization's "

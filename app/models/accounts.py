@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -71,4 +72,32 @@ class AccountUsageResponse(ApiModel):
     limit_remaining_usd: Decimal | None = None
 
 
-__all__ = ["AccountCreateRequest", "AccountResponse", "AccountUsageResponse"]
+class AccountUsageSummary(ApiModel):
+    account_id: str
+    name: str
+    status: Literal["provisioning", "active", "suspended"]
+    is_default: bool
+    usage_usd: Decimal
+    usage_daily_usd: Decimal
+    usage_weekly_usd: Decimal
+    usage_monthly_usd: Decimal
+
+
+class OrganizationUsageResponse(ApiModel):
+    organization_id: str
+    type: Literal["organization_usage"] = "organization_usage"
+    usage_usd: Decimal
+    usage_daily_usd: Decimal
+    usage_weekly_usd: Decimal
+    usage_monthly_usd: Decimal
+    as_of: datetime
+    accounts: list[AccountUsageSummary]
+
+
+__all__ = [
+    "AccountCreateRequest",
+    "AccountResponse",
+    "AccountUsageResponse",
+    "AccountUsageSummary",
+    "OrganizationUsageResponse",
+]

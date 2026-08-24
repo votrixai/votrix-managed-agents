@@ -4,6 +4,8 @@
     "index",
     "quickstart",
     "core-concepts",
+    "agents",
+    "environments",
     "accounts",
     "---Guides---",
     "agent-versioning",

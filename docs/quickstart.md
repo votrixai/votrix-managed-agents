@@ -3,9 +3,10 @@ title: Quickstart
 description: Create an Agent, start a Session, and send its first job.
 ---
 
-This walkthrough makes five API calls. You need a VMA API key and a model ID
-available to your Organization. Replace every `YOUR_...` value before sending
-the requests.
+This walkthrough makes five API calls. You need a VMA API key. It uses
+`claude-sonnet-5` as a concrete model ID; replace it if your Organization uses
+a different supported model. Replace every `YOUR_...` value before sending the
+requests.
 
 Keep API keys on a trusted server. Send the key in the `x-api-key` header on
 every request.
@@ -19,16 +20,21 @@ curl --request POST \
   --header 'x-api-key: YOUR_API_KEY' \
   --data '{
     "name": "Research assistant",
-    "model": "YOUR_MODEL_ID",
-    "system": "Research the topic carefully and save the final brief in outputs/brief.md."
+    "model": "claude-sonnet-5",
+    "system": "Research the topic carefully and save the final brief in outputs/brief.md.",
+    "tools": [{"type":"agent_toolset_20260401"}]
   }'
 ```
 
-Save the returned Agent `id` as `YOUR_AGENT_ID`.
+Save the returned Agent `id` as `YOUR_AGENT_ID`. The declared Agent toolset is
+required for turns and gives the Agent its sandbox filesystem and shell tools.
+See [Agents](/docs/agents) for models, tool permissions, custom tools, and
+Skills.
 
 ## 2. Create an Environment
 
-An Environment describes the sandbox the Agent will use.
+An Environment describes the sandbox the Agent will use. This minimal request
+uses the base image and becomes ready immediately.
 
 ```bash
 curl --request POST \
@@ -38,9 +44,11 @@ curl --request POST \
   --data '{"name":"General workspace"}'
 ```
 
-Save the returned Environment `id` as `YOUR_ENVIRONMENT_ID`. If its
-`build_state` is `building`, retrieve it again and wait for `ready` before
-starting a Session.
+Save the returned Environment `id` as `YOUR_ENVIRONMENT_ID`. A custom
+Environment can declare packages, CPU, and memory; it returns
+`build_state: "building"` until its image is ready. See
+[Environments](/docs/environments) for a complete build recipe and polling
+flow.
 
 ## 3. Start a Session
 
@@ -98,6 +106,7 @@ Files created as deliverables can be listed with:
 GET /v1/files?scope_id=YOUR_SESSION_ID
 ```
 
-Next, read [Core Concepts](/docs/core-concepts), learn the event flow in
+Next, configure more capabilities in [Agents](/docs/agents), build a custom
+[Environment](/docs/environments), learn the event flow in
 [Session Events](/docs/session-events), or explore every request and response
 in the [API Reference](/docs/api).
