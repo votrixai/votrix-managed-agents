@@ -71,6 +71,7 @@ async def list_sandboxes(
     organization_id: str,
     state: str | None = None,
     include_session_owned: bool = False,
+    session_id: str | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
     before_id: str | None = None,
     after_id: str | None = None,
@@ -80,9 +81,18 @@ async def list_sandboxes(
     Session-owned ones are left out unless asked for: the caller cannot end
     them here, and a listing full of rows it may not act on is noise. They are
     listed properly under `/v1/sessions`.
+
+    ``session_id`` narrows to the single container one conversation owns, and
+    overrides the exclusion above — the caller has named the row it wants, so
+    withholding it on the grounds that it belongs to a Session would answer a
+    question nobody asked. It lands on the partial unique index on that column,
+    which is the same access path the service uses internally; without it a
+    caller wanting one container has to page through every container there is.
     """
     stmt = select(Sandbox).where(Sandbox.organization_id == organization_id)
-    if not include_session_owned:
+    if session_id is not None:
+        stmt = stmt.where(Sandbox.session_id == session_id)
+    elif not include_session_owned:
         stmt = stmt.where(Sandbox.session_id.is_(None))
     if state is not None:
         stmt = stmt.where(Sandbox.state == state)

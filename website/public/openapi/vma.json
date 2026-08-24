@@ -8069,6 +8069,17 @@
             "type": "boolean",
             "default": false
           },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "limit": {
             "type": "integer",
             "maximum": 1000.0,
@@ -8603,6 +8614,16 @@
           },
           "last_event_seq": {
             "type": "integer"
+          },
+          "sandbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "resources": {
             "items": {

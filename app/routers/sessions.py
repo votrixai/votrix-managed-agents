@@ -10,6 +10,7 @@ from app.db.engine import session_scope
 from app.db.models import Session as SessionRow
 from app.db.models import SessionEvent, SessionFile
 from app.db.queries import DEFAULT_PAGE_SIZE
+from app.db.queries import sessions as sessions_q
 from app.models import events as event_models
 from app.models.common import DeletedResponse, ListResponse, page_of
 from app.models.events import (
@@ -32,6 +33,12 @@ from app.routers.deps import Db, OrganizationId
 from app.routers.files import to_file
 from app.services import sessions as service
 from app.utils.sandbox import UPLOADS_DIR
+
+class _Unset:
+    """Tells "the caller did not say" apart from "there is no container"."""
+
+
+_UNSET = _Unset()
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 
@@ -71,8 +78,19 @@ async def list_sessions(
         before_id=before_id,
         after_id=after_id,
     )
+    # One query for the page rather than one per row: `to_session` resolves the
+    # container itself when it is not told, and a listing is exactly where that
+    # becomes a query per line.
+    sandboxes = await sessions_q.get_sandbox_ids(
+        db,
+        session_ids=[session.id for session in sessions.items],
+        organization_id=organization_id,
+    )
     return ListResponse(
-        data=[await to_session(db, session) for session in sessions.items],
+        data=[
+            await to_session(db, session, sandbox_id=sandboxes.get(session.id))
+            for session in sessions.items
+        ],
         has_more=sessions.has_more,
         first_id=sessions.first_id,
         last_id=sessions.last_id,
@@ -384,13 +402,29 @@ def to_session_file_resource(row: SessionFile) -> SessionFileResourceResponse:
     )
 
 
-async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
+async def to_session(
+    db: AsyncSession,
+    session: SessionRow,
+    *,
+    sandbox_id: str | None | _Unset = _UNSET,
+) -> SessionResponse:
     """Written out by hand rather than via `from_attributes`.
 
     A column has to be named here to be published, which is what keeps
     `organization_id`, `lock_version` and the rest from leaking into responses
     the moment someone adds one.
+
+    `sandbox_id` is looked up here unless the caller already has it. A listing
+    resolves a whole page in one query and passes each in; anything answering
+    about one Session lets this do it. Passing `None` explicitly states there
+    is no container, and is not the same as leaving it out.
     """
+    if isinstance(sandbox_id, _Unset):
+        sandbox = await sessions_q.get_sandbox(
+            db, session_id=session.id, organization_id=session.organization_id
+        )
+        sandbox_id = sandbox.id if sandbox is not None else None
+
     files = await service.list_session_files(db, session_id=session.id)
     memory_stores = await service.list_session_memory_stores(
         db, session_id=session.id
@@ -423,6 +457,7 @@ async def to_session(db: AsyncSession, session: SessionRow) -> SessionResponse:
         status=session.status,
         stop_reason=session.stop_reason,
         last_event_seq=session.last_event_seq,
+        sandbox_id=sandbox_id,
         resources=resources,
         created_at=session.created_at,
         updated_at=session.updated_at,
