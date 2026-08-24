@@ -30,7 +30,6 @@ import shlex
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import Environment, File, Sandbox
 from app.db.models.sandboxes import (
     LIVE_SANDBOX_STATES,
@@ -95,14 +94,6 @@ async def create_sandbox(
     environment = await _environment(
         db, organization_id=organization_id, environment_id=environment_id
     )
-
-    live = await sandboxes_q.count_live(db, organization_id=organization_id)
-    cap = get_settings().max_sandboxes_per_organization
-    if live >= cap:
-        raise Conflict(
-            f"This organization already holds {live} sandboxes, which is the "
-            f"limit of {cap}. Delete one before creating another."
-        )
 
     image = Image.from_environment(environment) or Image.base()
     row = await sandboxes_q.create_sandbox(

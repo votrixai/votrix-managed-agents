@@ -18,6 +18,7 @@ from app.models.errors import (
     MemoryStoreUnavailable,
     NotFound,
     PayloadTooLarge,
+    ProviderRateLimited,
     SandboxUnavailable,
     SessionBusy,
 )
@@ -201,6 +202,18 @@ def _install_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=409,
             content={"error": {"type": "session_busy", "message": str(exc)}},
+        )
+
+    @app.exception_handler(ProviderRateLimited)
+    async def _provider_rate_limited(
+        request: Request, exc: ProviderRateLimited
+    ) -> JSONResponse:
+        # No `Retry-After`: what frees a slot is somebody else's container
+        # finishing, and this service has no idea when that is. A guessed
+        # number would send every waiting client back at the same wrong moment.
+        return JSONResponse(
+            status_code=429,
+            content={"error": {"type": "rate_limit_error", "message": str(exc)}},
         )
 
     @app.exception_handler(SandboxUnavailable)

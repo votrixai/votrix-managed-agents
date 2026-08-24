@@ -1051,6 +1051,12 @@ async def capture_file(
         )
     except ValueError as exc:
         raise NotFound(f"{path!r} is not a file in this session's outputs") from exc
+    except RuntimeError as exc:
+        # The file is there and the container would not hand it over. That is
+        # not a 404, and calling it one sent a caller looking for a file it had
+        # already found — say what actually failed instead.
+        logger.exception("output_capture_failed", session_id=session_id, path=path)
+        raise Conflict(f"{path!r} could not be read from the sandbox: {exc}") from exc
     await db.commit()
     return file
 

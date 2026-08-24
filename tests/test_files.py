@@ -639,7 +639,7 @@ class FakeContainer:
         import shlex as _shlex
         from types import SimpleNamespace
 
-        from app.utils.sandbox import OUTPUTS_DIR
+        from app.utils.sandbox import OUTPUTS_DIR, _DIGEST_MISSING
 
         if command.startswith("cd ") and "sha256sum" in command:
             # `<size> <sha256>  ./<path>` — one line per file, size and hash
@@ -650,11 +650,17 @@ class FakeContainer:
                 for path, blob in sorted(self.files.items())
             ]
             return SimpleNamespace(stdout="\n".join(lines), stderr="", exit_code=0)
-        if command.startswith("sha256sum "):
-            path = _shlex.split(command)[1].removeprefix(f"{OUTPUTS_DIR}/")
+        if command.startswith("if [ ! -e "):
+            # `_digest` asks in one shell line whether the file is there and,
+            # if it is, what it hashes to — because an empty answer used to
+            # have to mean both "no such file" and "the hasher fell over".
+            path = _shlex.split(command)[4].removeprefix(f"{OUTPUTS_DIR}/")
             blob = self.files.get(path)
-            out = "" if blob is None else f"{hashlib.sha256(blob).hexdigest()}  {path}"
-            return SimpleNamespace(stdout=out, exit_code=0)
+            if blob is None:
+                return SimpleNamespace(stdout=f"{_DIGEST_MISSING}\n", exit_code=0)
+            return SimpleNamespace(
+                stdout=f"{hashlib.sha256(blob).hexdigest()}  {path}", exit_code=0
+            )
         if "curl" in command and "-X PUT" in command:
             source = re.search(r"-T (\S+)", command).group(1).strip("'\"")
             url = command.rsplit(" ", 1)[-1].strip("'\"")

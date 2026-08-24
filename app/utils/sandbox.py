@@ -37,6 +37,7 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from e2b import AsyncSandbox, AsyncTemplate, CommandExitException
+from e2b.exceptions import RateLimitException
 from httpcore import LocalProtocolError, NetworkError as HttpcoreNetworkError
 from httpcore import ProtocolError as HttpcoreProtocolError
 from httpx import TransportError as HttpxTransportError
@@ -49,6 +50,7 @@ from app.db.models.environments import BUILDING, FAILED, READY
 from app.db.queries import environments as environments_q
 from app.db.queries import files as files_q
 from app.db.queries import sessions as sessions_q
+from app.models.errors import ProviderRateLimited
 from app.db.queries import skills as skills_q
 from app.utils import storage
 from app.utils.timing import timed
@@ -58,6 +60,11 @@ from app.utils.volume import SandboxVolumeMount
 # which unprivileged user the agent runs as. Swapping the image means revisiting
 # all three together, so they move as one — a code change, not configuration.
 BASE_IMAGE = "base"
+
+# Markers the digest command writes instead of failing, so one exit code does
+# not have to carry three different meanings.
+_DIGEST_MISSING = "__VX_NO_SUCH_FILE__"
+_DIGEST_FAILED = "__VX_HASH_FAILED__"
 WORKDIR = "/home/user"
 GUEST_USER = "user"
 
@@ -341,6 +348,24 @@ async def _resolve_skills(
     return skills
 
 
+async def _start_container(**kwargs: Any):
+    """Start one E2B container, and keep the provider's refusal legible.
+
+    E2B answers a full account with a 429 naming its own concurrency limit.
+    That is worth passing on: it is not a bug, it is not this account's data,
+    and the caller can act on it. Letting the SDK exception travel turned it
+    into a 500 whose body said "Internal Server Error" — which is how the real
+    limit stayed invisible while everyone looked for one of ours.
+    """
+    try:
+        return await AsyncSandbox.create(**kwargs)
+    except RateLimitException as exc:
+        raise ProviderRateLimited(
+            f"The container provider is rate limiting this account: {exc}"
+        ) from exc
+
+
+
 class Image:
     """The image an environment's sessions start from.
 
@@ -569,7 +594,7 @@ class Sandbox:
             if skill_ids
             else []
         )
-        native = await AsyncSandbox.create(
+        native = await _start_container(
             template=image.image_id,
             timeout=get_settings().sandbox_timeout_seconds,
             api_key=get_settings().e2b_api_key,
@@ -676,7 +701,7 @@ class Sandbox:
                 "deny_out": [_ALL_TRAFFIC],
             }
 
-        native = await AsyncSandbox.create(
+        native = await _start_container(
             template=image.image_id,
             timeout=ttl_seconds,
             api_key=get_settings().e2b_api_key,
@@ -1000,12 +1025,44 @@ class Sandbox:
         )
 
     async def _digest(self, path: str) -> str | None:
+        """The file's sha256, or None if there is no such file.
+
+        None has to mean exactly that and nothing else. The earlier form ended
+        `2>/dev/null || true`, which flattened every outcome into an empty
+        string: a missing `sha256sum`, a command that timed out, a path in a
+        container the caller did not mean to be in, all arrived here looking
+        like a file that was not there. Callers then reported "not found" for a
+        file the agent could see in `ls`, and the only honest reading of that
+        is that the tool is broken.
+
+        So the existence test is separate and explicit, and anything else is
+        raised with what the shell actually said.
+        """
+        # The command always exits 0, and that is not laziness: `run` lets a
+        # non-zero exit out as an E2B `CommandExitException`, which would
+        # travel as an unhandled error and lose the one thing worth reporting.
+        # So each outcome is written into stdout and read back here — the
+        # difference from the old `2>/dev/null || true` is that the outcomes
+        # stay *distinguishable* instead of all becoming the empty string.
+        quoted = shlex.quote(path)
         result = await self.run(
-            f"sha256sum {shlex.quote(path)} 2>/dev/null || true",
+            f"if [ ! -e {quoted} ]; then echo {_DIGEST_MISSING}; "
+            f"else sha256sum {quoted} 2>&1 || echo {_DIGEST_FAILED}; fi",
             idempotent=True,
         )
-        digest = (result.stdout or "").split(" ", 1)[0].strip()
-        return digest or None
+        stdout = (result.stdout or "").strip()
+        if stdout.startswith(_DIGEST_MISSING):
+            return None
+
+        digest = stdout.split(" ", 1)[0].strip().lower()
+        if len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
+            return digest
+
+        # `2>&1` means whatever sha256sum complained about is in here — "Is a
+        # directory", "command not found", a kill. Say it rather than deciding
+        # on the caller's behalf that the file is not there.
+        detail = stdout.replace(_DIGEST_FAILED, "").strip() or "no output"
+        raise RuntimeError(f"Could not hash {path} in the sandbox: {detail}")
 
     async def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
         """One file, out of the container and into this process.

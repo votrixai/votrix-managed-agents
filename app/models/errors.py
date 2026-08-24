@@ -53,6 +53,17 @@ class SessionCancelled(ServiceError):
     """
 
 
+class ProviderRateLimited(ServiceError):
+    """The container provider refused: too many at once for this account.
+
+    Its own limit, not one of ours, and it is the account's to raise. Kept
+    separate from `Conflict` because nothing about the request was wrong and
+    nothing in this service's state has to change — the same call works once
+    something finishes or the plan is bigger. Without it E2B's 429 arrived as
+    a bare 500, which says nothing a caller can act on.
+    """
+
+
 class SandboxUnavailable(ServiceError):
     """The session's sandbox is gone. The session cannot continue."""
 
