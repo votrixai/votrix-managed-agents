@@ -126,6 +126,12 @@ class SessionResponse(ApiModel):
     status: str
     stop_reason: dict[str, Any] | None = None
     last_event_seq: int
+    # The container this Session runs in. Created with the Session and kept for
+    # its whole life, so it is stated here rather than left to be discovered:
+    # a caller that wants to run something against the conversation's own files
+    # would otherwise have to list every sandbox and filter, which is the same
+    # answer reached the long way round.
+    sandbox_id: str | None = None
     resources: list[
         SessionFileResourceResponse | SessionMemoryStoreResourceResponse
     ] = Field(default_factory=list)

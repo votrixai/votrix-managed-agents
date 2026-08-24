@@ -72,6 +72,11 @@ class SandboxListRequest(ApiModel):
     # Containers a conversation owns are left out by default: they cannot be
     # deleted here and are listed properly under `/v1/sessions`.
     include_session_owned: bool = False
+    # Narrow to the one container a conversation owns. Implies
+    # `include_session_owned` — asking for a Session's sandbox and being told
+    # about none of them would be a strange way to answer. At most one row
+    # comes back; the partial unique index on `session_id` is what says so.
+    session_id: str | None = Field(default=None, max_length=64)
     limit: int = Field(default=20, ge=1, le=1000)
     before_id: str | None = Field(default=None, max_length=64)
     after_id: str | None = Field(default=None, max_length=64)

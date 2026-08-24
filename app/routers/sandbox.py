@@ -98,10 +98,16 @@ async def list_sandboxes(
     db: Db,
     organization_id: OrganizationId,
 ):
-    """Every container this organization has made, so a leak is visible."""
+    """Every container this organization has made, so a leak is visible.
+
+    Pass `session_id` to ask about one conversation's container instead. That
+    is the cheap way to the same answer: without it a caller after one row has
+    to page through all of them and filter on the way past.
+    """
     found = await service.list_sandboxes(
         db,
         organization_id=organization_id,
+        session_id=body.session_id,
         state=body.state,
         include_session_owned=body.include_session_owned,
         limit=body.limit,

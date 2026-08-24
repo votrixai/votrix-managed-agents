@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -545,6 +545,31 @@ async def create_sandbox(
     db.add(sandbox)
     await db.flush()
     return sandbox
+
+
+async def get_sandbox_ids(
+    db: AsyncSession,
+    *,
+    session_ids: Sequence[str],
+    organization_id: str,
+) -> dict[str, str]:
+    """Which container each of these conversations owns.
+
+    A batch of the lookup `get_sandbox` does one at a time, because the session
+    listing needs the answer for a whole page and asking per row would put a
+    query behind every line of it. The partial unique index on `session_id`
+    is what makes one row per session a fact rather than an assumption.
+    """
+
+    if not session_ids:
+        return {}
+    result = await db.execute(
+        select(Sandbox.session_id, Sandbox.id).where(
+            Sandbox.session_id.in_(list(session_ids)),
+            Sandbox.organization_id == organization_id,
+        )
+    )
+    return {session_id: sandbox_id for session_id, sandbox_id in result.all()}
 
 
 async def get_sandbox(
