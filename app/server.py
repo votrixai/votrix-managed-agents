@@ -21,6 +21,7 @@ from app.models.errors import (
     ProviderRateLimited,
     SandboxUnavailable,
     SessionBusy,
+    UsageUnavailable,
 )
 from app.routers import (
     accounts,
@@ -155,6 +156,20 @@ def _install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(NotFound)
     async def _not_found(request: Request, exc: NotFound) -> JSONResponse:
         return JSONResponse(status_code=404, content={"error": {"type": "not_found", "message": str(exc)}})
+
+    @app.exception_handler(UsageUnavailable)
+    async def _usage_unavailable(
+        request: Request, exc: UsageUnavailable
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "type": "usage_unavailable",
+                    "message": str(exc),
+                }
+            },
+        )
 
     @app.exception_handler(Conflict)
     async def _conflict(request: Request, exc: Conflict) -> JSONResponse:

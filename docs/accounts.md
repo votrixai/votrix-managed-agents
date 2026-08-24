@@ -136,6 +136,24 @@ snapshot at request time rather than a receipt for one individual Agent turn.
 
 See [Retrieve Account Usage](/docs/api/accounts/retrieve_account_usage_v1_accounts__account_id__usage_get).
 
+### Read one Session's cumulative usage
+
+```text
+GET /v1/sessions/{session_id}/usage
+```
+
+This endpoint queries OpenRouter when you call it. VMA does not add up or store
+the costs from individual responses. Its `usage_usd` is the Session's cumulative
+lifetime spend as of `as_of`, with `snapshot: "cumulative"` and
+`source: "openrouter"` making those semantics explicit.
+
+For incremental settlement, keep one last-settled value in your billing system
+and debit `max(current_usage_usd - last_settled_usage_usd, 0)`. Daily, weekly,
+and monthly windows are not involved, so their boundary resets cannot change a
+Session bill.
+
+See [Retrieve Session Usage](/docs/api/sessions/retrieve_session_usage_v1_sessions__session_id__usage_get).
+
 ## Suspend and resume
 
 Suspend an additional Account when it should stop funding Agent work:

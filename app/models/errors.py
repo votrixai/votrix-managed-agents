@@ -79,3 +79,7 @@ class AccountUnavailable(Conflict):
 
 class MemoryStoreUnavailable(ServiceError):
     """The provider could not create, mount, or destroy a Memory Store Volume."""
+
+
+class UsageUnavailable(ServiceError):
+    """The provider could not return a complete usage snapshot right now."""

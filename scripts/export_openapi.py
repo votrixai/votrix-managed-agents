@@ -402,6 +402,15 @@ SESSION_ARCHIVED_EXAMPLE = {
     "updated_at": ARCHIVED_AT_EXAMPLE,
     "archived_at": ARCHIVED_AT_EXAMPLE,
 }
+SESSION_USAGE_EXAMPLE = {
+    "session_id": SESSION_ID_EXAMPLE,
+    "type": "session_usage",
+    "account_id": ACCOUNT_ID_EXAMPLE,
+    "usage_usd": "0.0842",
+    "snapshot": "cumulative",
+    "source": "openrouter",
+    "as_of": UPDATED_AT_EXAMPLE,
+}
 
 USER_MESSAGE_EVENT_EXAMPLE = {
     "id": "evt_1234567890abcdef1234567890abc001",
@@ -629,6 +638,7 @@ RESPONSE_COMPONENT_EXAMPLES = {
         "type": "memory_store_deleted",
     },
     "SessionResponse": SESSION_ACTIVE_EXAMPLE,
+    "SessionUsageResponse": SESSION_USAGE_EXAMPLE,
     "ListResponse_SessionResponse_": {
         "data": [SESSION_ACTIVE_EXAMPLE],
         "has_more": False,
@@ -742,6 +752,15 @@ OPERATION_DESCRIPTIONS = {
         "List the Session's ordered event history. Use `after_seq` to request "
         "only events after a sequence already processed."
     ),
+    ("get", "/v1/sessions/{session_id}/usage"): (
+        "Read OpenRouter's latest reported USD spend for this Session. The "
+        "response is queried live and is not assembled from locally stored "
+        "turn costs.\n\n"
+        "`usage_usd` is a cumulative lifetime snapshot as of `as_of`, not the "
+        "cost of the last response. To settle incrementally, persist the last "
+        "settled snapshot in the billing system and debit only the positive "
+        "difference."
+    ),
     ("get", "/v1/sessions/{session_id}/events/stream"): (
         "Follow Session events as server-sent events. Resume with `after_seq` "
         "or `Last-Event-ID`; without a cursor, the stream starts at the first "
@@ -824,6 +843,11 @@ OPERATION_SUCCESS_RESPONSES = {
         "A current USD usage snapshot for the requested Account.",
         ACCOUNT_USAGE_EXAMPLE,
     ),
+    ("get", "/v1/sessions/{session_id}/usage"): (
+        "200",
+        "OpenRouter's current cumulative USD snapshot for the Session.",
+        SESSION_USAGE_EXAMPLE,
+    ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
         "200",
         "The same Account with `status: \"suspended\"`.",
@@ -899,6 +923,9 @@ COMPONENT_DESCRIPTIONS = {
     ),
     "AccountUsageResponse": (
         "A current USD usage snapshot for one Account."
+    ),
+    "SessionUsageResponse": (
+        "A live OpenRouter cumulative USD usage snapshot for one Session."
     ),
     "ListResponse_AccountResponse_": (
         "A cursor page of Accounts ordered from oldest to newest."
@@ -994,6 +1021,24 @@ PROPERTY_DESCRIPTIONS = {
     ),
     ("SessionResponse", "model"): (
         "The Session model override, or `null` when the Agent version supplies it."
+    ),
+    ("SessionUsageResponse", "session_id"): (
+        "The Session whose OpenRouter usage is represented by this snapshot."
+    ),
+    ("SessionUsageResponse", "account_id"): (
+        "The Account whose OpenRouter key funded this Session."
+    ),
+    ("SessionUsageResponse", "usage_usd"): (
+        "OpenRouter's cumulative lifetime spend for this Session, in USD."
+    ),
+    ("SessionUsageResponse", "snapshot"): (
+        "Snapshot semantics. Always `cumulative`."
+    ),
+    ("SessionUsageResponse", "source"): (
+        "The service that supplied the usage snapshot. Always `openrouter`."
+    ),
+    ("SessionUsageResponse", "as_of"): (
+        "When VMA took this live OpenRouter snapshot."
     ),
 }
 

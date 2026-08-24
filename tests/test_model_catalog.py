@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.llm import DEEPSEEK, MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import ANTHROPIC, DEEPSEEK, MODEL_CATALOG, OPENROUTER_SLUGS
 from app.runtime.engine import UnknownModelError, _build_chat_model
 
 
@@ -72,6 +72,25 @@ def test_every_catalog_model_builds_one_gateway_client():
         OPENROUTER_SLUGS[m.id] for m in MODEL_CATALOG
     ]
     assert {client.session_id for client in built} == {"sess_gateway_test"}
+
+
+def test_only_anthropic_models_enable_automatic_prompt_caching():
+    """Claude needs an explicit request-root cache control; the others do not."""
+    built = {
+        model.id: _build_chat_model(
+            model.id,
+            api_key="sk-or-v1-test",
+            session_id="sess_gateway_test",
+        )
+        for model in MODEL_CATALOG
+    }
+
+    for model in MODEL_CATALOG:
+        params = built[model.id]._default_params
+        if model.provider == ANTHROPIC:
+            assert params["cache_control"] == {"type": "ephemeral"}, model.id
+        else:
+            assert "cache_control" not in params, model.id
 
 
 def test_deepseek_models_are_restricted_to_the_first_party_provider():
