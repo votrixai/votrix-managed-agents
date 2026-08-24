@@ -14,6 +14,8 @@ from app.models.accounts import (
     AccountCreateRequest,
     AccountResponse,
     AccountUsageResponse,
+    AccountUsageSummary,
+    OrganizationUsageResponse,
 )
 from app.routers.deps import Db, OrganizationId
 from app.services import accounts as service
@@ -63,6 +65,39 @@ async def list_accounts(
         after_id=after_id,
     )
     return page_of(found, to_account)
+
+
+@router.get("/usage", response_model=OrganizationUsageResponse)
+async def retrieve_organization_usage(
+    db: Db,
+    organization_id: OrganizationId,
+):
+    """Provider-authoritative usage across every Account in this Organization."""
+    usage = await service.get_organization_usage(
+        db,
+        organization_id=organization_id,
+    )
+    return OrganizationUsageResponse(
+        organization_id=organization_id,
+        usage_usd=usage.usage_usd,
+        usage_daily_usd=usage.usage_daily_usd,
+        usage_weekly_usd=usage.usage_weekly_usd,
+        usage_monthly_usd=usage.usage_monthly_usd,
+        as_of=usage.as_of,
+        accounts=[
+            AccountUsageSummary(
+                account_id=row.account_id,
+                name=row.name,
+                status=row.status,
+                is_default=row.is_default,
+                usage_usd=row.usage_usd,
+                usage_daily_usd=row.usage_daily_usd,
+                usage_weekly_usd=row.usage_weekly_usd,
+                usage_monthly_usd=row.usage_monthly_usd,
+            )
+            for row in usage.accounts
+        ],
+    )
 
 
 @router.get("/{account_id}", response_model=AccountResponse)

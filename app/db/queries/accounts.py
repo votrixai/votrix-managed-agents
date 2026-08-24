@@ -118,6 +118,20 @@ async def list_accounts(
     )
 
 
+async def list_all_accounts(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+) -> list[OrganizationAccount]:
+    """All Account billing boundaries for one Organization, oldest first."""
+    result = await db.execute(
+        select(OrganizationAccount)
+        .where(OrganizationAccount.organization_id == organization_id)
+        .order_by(OrganizationAccount.created_at.asc(), OrganizationAccount.id.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def attach_credential(
     db: AsyncSession,
     *,
@@ -168,5 +182,6 @@ __all__ = [
     "get_by_idempotency_key",
     "get_default_account",
     "list_accounts",
+    "list_all_accounts",
     "set_status",
 ]
