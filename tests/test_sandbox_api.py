@@ -229,21 +229,58 @@ async def test_another_tenants_environment_is_not_reachable(
     assert response.status_code == 404
 
 
-async def test_a_tenant_cannot_hold_more_than_the_cap(client, headers, environment, monkeypatch):
-    from app.config import get_settings
+async def test_an_organization_may_hold_as_many_as_it_asks_for(client, headers, environment):
+    """There is no per-organization ceiling, on purpose.
 
-    monkeypatch.setattr(
-        get_settings(), "max_sandboxes_per_organization", 2, raising=False
+    There used to be one — twenty, counted over rows this service had never
+    been told to delete. Nothing ever put a row back, so the number only rose:
+    it passed twenty a month before anyone noticed and then refused every
+    container the organization asked for, sessions and tool sandboxes alike,
+    while the provider itself was still handing them out in half a second.
+
+    Removing it means containers accumulate until something reaps them. That
+    is the trade this test records: the ceiling is gone and nothing here
+    replaces it.
+    """
+
+    made = [await make(client, headers) for _ in range(25)]
+
+    assert len({sandbox["id"] for sandbox in made}) == 25
+    listed = await client.post(
+        "/v1/sandbox/list", headers=headers, json={"limit": 100}
     )
+    assert len(listed.json()["data"]) == 25
 
-    await make(client, headers)
-    await make(client, headers)
+
+async def test_the_providers_own_limit_comes_back_as_a_429(
+    client, headers, environment, monkeypatch
+):
+    """What the router owes a provider refusal: the right status code.
+
+    The translation from E2B's SDK exception happens at the boundary that
+    calls it — see `test_the_providers_429_is_not_left_as_an_sdk_error`. This
+    is the other half: once raised, it must not come out as a 500 whose body
+    reads "Internal Server Error", which is how a real, actionable ceiling
+    stayed invisible.
+    """
+    from app.models.errors import ProviderRateLimited
+
+    async def _refuse(**kwargs):
+        raise ProviderRateLimited(
+            "The container provider is rate limiting this account: 429 — you "
+            "have reached the maximum number of concurrent E2B sandboxes (20)."
+        )
+
+    monkeypatch.setattr(service.Container, "start", staticmethod(_refuse))
+
     response = await client.post(
         "/v1/sandbox/create", headers=headers, json={"environment_id": environment.id}
     )
 
-    assert response.status_code == 409
-    assert "limit of 2" in response.text
+    assert response.status_code == 429
+    body = response.json()["error"]
+    assert body["type"] == "rate_limit_error"
+    assert "concurrent E2B sandboxes (20)" in body["message"]
 
 
 # --- exec -------------------------------------------------------------------
@@ -668,29 +705,6 @@ async def test_listing_leaves_out_what_the_caller_cannot_end(
 
     assert [row["session_id"] for row in default.json()["data"]] == [None]
     assert len(included.json()["data"]) == 2
-
-
-async def test_the_limit_counts_containers_of_both_sorts(
-    client, headers, environment, session_sandbox, monkeypatch
-):
-    """The bug that made keeping two tables worth ending.
-
-    The limit is about what an organization has running at the provider, and
-    the provider does not care which of ours asked for it.
-    """
-    from app.config import get_settings
-
-    monkeypatch.setattr(
-        get_settings(), "max_sandboxes_per_organization", 2, raising=False
-    )
-
-    await make(client, headers)  # one API-held, plus the conversation's = 2
-    response = await client.post(
-        "/v1/sandbox/create", headers=headers, json={"environment_id": environment.id}
-    )
-
-    assert response.status_code == 409
-    assert "limit of 2" in response.text
 
 
 # --- ending a conversation ends its container -------------------------------

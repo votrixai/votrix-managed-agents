@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Sandbox
-from app.db.models.sandboxes import LIVE_SANDBOX_STATES, SANDBOX_RUNNING
+from app.db.models.sandboxes import SANDBOX_RUNNING
 from app.db.queries import DEFAULT_PAGE_SIZE, Page, fetch_page
 from app.utils.id_generator import new_id
 
@@ -95,28 +95,6 @@ async def list_sandboxes(
         before_id=before_id,
         after_id=after_id,
     )
-
-
-async def count_live(db: AsyncSession, *, organization_id: str) -> int:
-    """How many containers this tenant is holding, of either sort.
-
-    Both, because the limit this answers is about what an organization has
-    running at the provider, and the provider does not care which of ours
-    asked for it. Counting only the API-held ones was the bug that made
-    keeping two tables worth ending.
-
-    `paused` counts too. A paused container still exists, still holds its
-    filesystem, and wakes on the next call.
-    """
-    result = await db.execute(
-        select(func.count())
-        .select_from(Sandbox)
-        .where(
-            Sandbox.organization_id == organization_id,
-            Sandbox.state.in_(LIVE_SANDBOX_STATES),
-        )
-    )
-    return int(result.scalar_one())
 
 
 async def touch(db: AsyncSession, sandbox: Sandbox) -> Sandbox:

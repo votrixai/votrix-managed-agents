@@ -149,11 +149,6 @@ class Settings(BaseSettings):
     # timeout so a maximum-length command has time to return before auto-pause.
     sandbox_timeout_seconds: int = 360
     sandbox_command_timeout_seconds: int = 300
-    # How many API-created sandboxes one organization may hold at once. These
-    # are billed per second of container life, and unlike a Session's container
-    # nothing else bounds how many a caller opens — a retry loop that never
-    # deletes would otherwise be limited only by the provider's own quota.
-    max_sandboxes_per_organization: int = 20
     # Long enough for a container to finish a transfer, short enough that a URL
     # in a log is worth nothing by the time anyone reads it.
     transfer_url_ttl_seconds: int = 600
