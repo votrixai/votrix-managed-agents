@@ -156,6 +156,26 @@ ACCOUNT_USAGE_EXAMPLE = {
     "limit_usd": "20.00",
     "limit_remaining_usd": "11.60",
 }
+ACCOUNT_USAGE_SUMMARY_EXAMPLE = {
+    "account_id": ACCOUNT_ID_EXAMPLE,
+    "name": "Website Builder",
+    "status": "active",
+    "is_default": False,
+    "usage_usd": "8.40",
+    "usage_daily_usd": "0.75",
+    "usage_weekly_usd": "3.10",
+    "usage_monthly_usd": "8.40",
+}
+ORGANIZATION_USAGE_EXAMPLE = {
+    "organization_id": ORGANIZATION_ID_EXAMPLE,
+    "type": "organization_usage",
+    "usage_usd": "8.40",
+    "usage_daily_usd": "0.75",
+    "usage_weekly_usd": "3.10",
+    "usage_monthly_usd": "8.40",
+    "as_of": UPDATED_AT_EXAMPLE,
+    "accounts": [ACCOUNT_USAGE_SUMMARY_EXAMPLE],
+}
 AGENT_TOOLSET_EXAMPLE = {"type": "agent_toolset_20260401"}
 AGENT_ACTIVE_EXAMPLE = {
     "id": AGENT_ID_EXAMPLE,
@@ -588,6 +608,7 @@ REQUEST_COMPONENT_EXAMPLES = {
 RESPONSE_COMPONENT_EXAMPLES = {
     "AccountResponse": ACCOUNT_ACTIVE_EXAMPLE,
     "AccountUsageResponse": ACCOUNT_USAGE_EXAMPLE,
+    "OrganizationUsageResponse": ORGANIZATION_USAGE_EXAMPLE,
     "ListResponse_AccountResponse_": {
         "data": [ACCOUNT_ACTIVE_EXAMPLE],
         "has_more": False,
@@ -722,6 +743,18 @@ OPERATION_DESCRIPTIONS = {
         "Usage remains available while an Account is suspended. Treat this "
         "response as a snapshot at request time, not as a receipt for one "
         "individual Agent turn."
+        + ACCOUNT_GUIDE_REFERENCE
+    ),
+    ("get", "/v1/accounts/usage"): (
+        "Return a current USD usage snapshot summed across every Account in "
+        "the Organization. The response includes cumulative lifetime usage "
+        "and the current daily, weekly, and monthly windows, plus an Account "
+        "breakdown for reconciliation.\n\n"
+        "`usage_usd` is the complete cumulative Organization total. Treat "
+        "`as_of` as the timestamp of one live upstream snapshot; values "
+        "can increase as recently completed work is reported. Suspended "
+        "Accounts remain included because their historical usage still belongs "
+        "to the Organization."
         + ACCOUNT_GUIDE_REFERENCE
     ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
@@ -869,6 +902,11 @@ OPERATION_SUCCESS_RESPONSES = {
         "A current USD usage snapshot for the requested Account.",
         ACCOUNT_USAGE_EXAMPLE,
     ),
+    ("get", "/v1/accounts/usage"): (
+        "200",
+        "Current Organization usage and its Account breakdown.",
+        ORGANIZATION_USAGE_EXAMPLE,
+    ),
     ("get", "/v1/sessions/{session_id}/usage"): (
         "200",
         "OpenRouter's current cumulative USD snapshot for the Session.",
@@ -949,6 +987,12 @@ COMPONENT_DESCRIPTIONS = {
     ),
     "AccountUsageResponse": (
         "A current USD usage snapshot for one Account."
+    ),
+    "AccountUsageSummary": (
+        "One Account's contribution to an Organization usage snapshot."
+    ),
+    "OrganizationUsageResponse": (
+        "A current USD usage snapshot summed across every Organization Account."
     ),
     "SessionUsageResponse": (
         "A live OpenRouter cumulative USD usage snapshot for one Session."
@@ -1046,6 +1090,46 @@ PROPERTY_DESCRIPTIONS = {
     ),
     ("AccountUsageResponse", "limit_remaining_usd"): (
         "The amount remaining under the Account's limit, or `null` when uncapped."
+    ),
+    ("AccountUsageSummary", "account_id"): "The Account represented by this row.",
+    ("AccountUsageSummary", "name"): "The Account's display name.",
+    ("AccountUsageSummary", "status"): "The Account's current lifecycle status.",
+    ("AccountUsageSummary", "is_default"): (
+        "Whether Sessions use this Account when `account_id` is omitted."
+    ),
+    ("AccountUsageSummary", "usage_usd"): "Cumulative Account usage in USD.",
+    ("AccountUsageSummary", "usage_daily_usd"): (
+        "Account usage in the current daily window, in USD."
+    ),
+    ("AccountUsageSummary", "usage_weekly_usd"): (
+        "Account usage in the current weekly window, in USD."
+    ),
+    ("AccountUsageSummary", "usage_monthly_usd"): (
+        "Account usage in the current monthly window, in USD."
+    ),
+    ("OrganizationUsageResponse", "organization_id"): (
+        "The Organization represented by this snapshot."
+    ),
+    ("OrganizationUsageResponse", "type"): (
+        "Resource type. Always `organization_usage`."
+    ),
+    ("OrganizationUsageResponse", "usage_usd"): (
+        "Cumulative usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "usage_daily_usd"): (
+        "Current daily usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "usage_weekly_usd"): (
+        "Current weekly usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "usage_monthly_usd"): (
+        "Current monthly usage summed across all Accounts, in USD."
+    ),
+    ("OrganizationUsageResponse", "as_of"): (
+        "When VMA completed this live usage snapshot."
+    ),
+    ("OrganizationUsageResponse", "accounts"): (
+        "The Account rows whose values make up the totals."
     ),
     ("ListResponse_AccountResponse_", "data"): (
         "Accounts in this page, ordered from oldest to newest."

@@ -116,6 +116,17 @@ and existing Sessions do not silently fall back to another Account.
 
 ## Read usage
 
+Read the whole Organization across every Account with:
+
+```text
+GET /v1/accounts/usage
+```
+
+The response contains the summed lifetime/current-period figures plus an
+`accounts` breakdown. It is a live provider snapshot rather than a locally
+estimated token cost, so an authorized billing system can consume it without
+duplicating VMA's provider-account aggregation rules.
+
 ```text
 GET /v1/accounts/{account_id}/usage
 ```

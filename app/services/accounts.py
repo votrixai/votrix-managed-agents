@@ -10,7 +10,10 @@ removing one removes that record. Suspension is how one stops spending.
 
 from __future__ import annotations
 
+import asyncio
 import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
 
@@ -37,6 +40,7 @@ from app.models.errors import (
     Conflict,
     InvalidRequest,
     NotFound,
+    UsageUnavailable,
 )
 from app.utils.secret_cipher import SecretCipher
 
@@ -46,6 +50,29 @@ DEFAULT_ACCOUNT_NAME = "Default"
 # is out for the same reason a provider console is: a name that looks like two
 # names is unreadable as attribution.
 _KEY_NAME_FORBIDDEN = re.compile(r"[:\s]")
+
+
+@dataclass(frozen=True, slots=True)
+class AccountUsageSnapshot:
+    account_id: str
+    name: str
+    status: str
+    is_default: bool
+    usage_usd: Decimal
+    usage_daily_usd: Decimal
+    usage_weekly_usd: Decimal
+    usage_monthly_usd: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizationUsageSnapshot:
+    organization_id: str
+    usage_usd: Decimal
+    usage_daily_usd: Decimal
+    usage_weekly_usd: Decimal
+    usage_monthly_usd: Decimal
+    as_of: datetime
+    accounts: tuple[AccountUsageSnapshot, ...]
 
 
 def key_name(
@@ -251,6 +278,94 @@ async def get_account_usage(
     return await (keys or _key_admin()).get_key_usage(key_hash)
 
 
+async def get_organization_usage(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    keys: OpenRouterKeyAdmin | None = None,
+) -> OrganizationUsageSnapshot:
+    """Provider-authoritative usage summed across every Organization Account.
+
+    Each Account has its own OpenRouter credential, so the only complete
+    Organization figure is the sum of those credential counters. Provider
+    reads happen after the database transaction is released.
+    """
+    accounts = await accounts_q.list_all_accounts(
+        db,
+        organization_id=organization_id,
+    )
+    descriptors: list[tuple[str, str, str, bool, Decimal | None, str | None]] = []
+    requested: list[tuple[str, str]] = []
+    snapshots: dict[str, OpenRouterKeyUsage] = {}
+    for account in accounts:
+        key_hash = account.credential.key_hash if account.credential is not None else None
+        descriptors.append(
+            (
+                account.id,
+                account.name,
+                account.status,
+                bool(account.is_default),
+                account.limit_usd,
+                key_hash,
+            )
+        )
+        if account.credential is None:
+            snapshots[account.id] = OpenRouterKeyUsage(
+                usage_usd=Decimal("0"),
+                usage_daily_usd=Decimal("0"),
+                usage_weekly_usd=Decimal("0"),
+                usage_monthly_usd=Decimal("0"),
+                limit_usd=account.limit_usd,
+                limit_remaining_usd=account.limit_usd,
+            )
+        else:
+            requested.append((account.id, account.credential.key_hash))
+
+    await db.rollback()
+    provider = keys or _key_admin()
+    try:
+        values = await asyncio.gather(
+            *(provider.get_key_usage(key_hash) for _, key_hash in requested)
+        )
+    except Exception:
+        # Provider exceptions can include request/response material. The public
+        # error says only which aggregate is unavailable.
+        raise UsageUnavailable(
+            f"Organization {organization_id} usage is temporarily unavailable"
+        ) from None
+    for (account_id, _), value in zip(requested, values, strict=True):
+        snapshots[account_id] = value
+
+    account_rows = tuple(
+        AccountUsageSnapshot(
+            account_id=account_id,
+            name=name,
+            status=status,
+            is_default=is_default,
+            usage_usd=snapshots[account_id].usage_usd,
+            usage_daily_usd=snapshots[account_id].usage_daily_usd,
+            usage_weekly_usd=snapshots[account_id].usage_weekly_usd,
+            usage_monthly_usd=snapshots[account_id].usage_monthly_usd,
+        )
+        for account_id, name, status, is_default, _limit, _key_hash in descriptors
+    )
+    return OrganizationUsageSnapshot(
+        organization_id=organization_id,
+        usage_usd=sum((row.usage_usd for row in account_rows), Decimal("0")),
+        usage_daily_usd=sum(
+            (row.usage_daily_usd for row in account_rows), Decimal("0")
+        ),
+        usage_weekly_usd=sum(
+            (row.usage_weekly_usd for row in account_rows), Decimal("0")
+        ),
+        usage_monthly_usd=sum(
+            (row.usage_monthly_usd for row in account_rows), Decimal("0")
+        ),
+        as_of=datetime.now(timezone.utc),
+        accounts=account_rows,
+    )
+
+
 async def require_spendable_account(
     db: AsyncSession, *, organization_id: str, account_id: str | None = None
 ) -> OrganizationAccount:
@@ -454,12 +569,15 @@ def _cipher() -> SecretCipher:
 
 
 __all__ = [
+    "AccountUsageSnapshot",
     "DEFAULT_ACCOUNT_NAME",
+    "OrganizationUsageSnapshot",
     "create_account",
     "create_default_account",
     "ensure_default_account",
     "get_account",
     "get_account_usage",
+    "get_organization_usage",
     "key_name",
     "list_accounts",
     "require_spendable_account",

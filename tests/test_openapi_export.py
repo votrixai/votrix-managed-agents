@@ -39,6 +39,11 @@ ACCOUNT_OPERATIONS = {
         "limit_remaining_usd",
         "suspended",
     ),
+    ("get", "/v1/accounts/usage"): (
+        "usage_usd",
+        "every Account",
+        "Suspended Accounts",
+    ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
         "default Account",
         "Existing Sessions",
@@ -306,6 +311,12 @@ def test_documentation_openapi_marks_the_api_key_as_required():
             assert api_key["schema"] == {"type": "string"}
 
 
+def test_billing_and_stripe_webhooks_are_not_vma_api_operations():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    assert not any(path.startswith("/v1/billing") for path in schema["paths"])
+    assert "/webhooks/stripe" not in schema["paths"]
+
+
 def test_account_reference_explains_each_public_operation_and_field():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
 
@@ -325,7 +336,9 @@ def test_account_reference_explains_each_public_operation_and_field():
     for component_name in (
         "AccountCreateRequest",
         "AccountResponse",
+        "AccountUsageSummary",
         "AccountUsageResponse",
+        "OrganizationUsageResponse",
         "ListResponse_AccountResponse_",
     ):
         component = schemas[component_name]
