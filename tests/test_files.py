@@ -1018,3 +1018,58 @@ def test_backend_forwards_every_async_protocol_method():
         f"LazyE2BBackend does not forward {missing} — DeepAgents calling any of "
         f"them gets the protocol's NotImplementedError instead of the sandbox"
     )
+
+
+def test_langchain_e2b_calls_nothing_deepagents_moved():
+    """`langchain-e2b` reaches into DeepAgents' private API. Hold it to it.
+
+    It imports seven underscore-prefixed names from
+    `deepagents.backends.sandbox` and subclasses `BaseSandbox` to inherit
+    more, none of which carries a compatibility promise. DeepAgents 0.6.11
+    turned `BaseSandbox._map_edit_error` into a module-level function while
+    `AsyncE2BSandbox.aedit` went on calling `self._map_edit_error(...)`, and
+    because `deepagents>=0.6.0,<0.7.0` admits both, the mismatch installs
+    cleanly and only shows up when an edit fails — the one path that reaches
+    the call. `app.utils.sandbox` puts that method back.
+
+    Asserting the shape rather than that one name is what makes this worth
+    keeping: every `self._x` either class resolves is checked, so the next
+    private method to move is a failing test here rather than an
+    `AttributeError` in front of the model. Attributes assigned on `self`
+    are the classes' own, so they are excluded; each class is read alone,
+    since the sync and async halves do not share a body.
+    """
+    import ast
+    import inspect
+
+    import app.utils.sandbox  # noqa: F401  — installs the patch under test
+    import langchain_e2b.sandbox as module
+    from langchain_e2b import AsyncE2BSandbox, E2BSandbox
+
+    bodies = {
+        node.name: node
+        for node in ast.parse(inspect.getsource(module)).body
+        if isinstance(node, ast.ClassDef)
+    }
+
+    unresolved: dict[str, list[str]] = {}
+    for cls in (AsyncE2BSandbox, E2BSandbox):
+        read: set[str] = set()
+        written: set[str] = set()
+        for node in ast.walk(bodies[cls.__name__]):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            ):
+                (written if isinstance(node.ctx, ast.Store) else read).add(node.attr)
+        missing = sorted(name for name in read - written if not hasattr(cls, name))
+        if missing:
+            unresolved[cls.__name__] = missing
+
+    assert not unresolved, (
+        f"langchain-e2b calls {unresolved} on itself and nothing defines them — "
+        f"a DeepAgents private method moved again. Each one is an AttributeError "
+        f"on whichever sandbox path reaches it; patch it in app/utils/sandbox.py "
+        f"the way _map_edit_error is patched"
+    )

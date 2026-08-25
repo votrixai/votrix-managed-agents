@@ -36,6 +36,7 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
+from deepagents.backends.sandbox import _map_edit_error
 from e2b import AsyncSandbox, AsyncTemplate, CommandExitException
 from e2b.exceptions import RateLimitException
 from httpcore import LocalProtocolError, NetworkError as HttpcoreNetworkError
@@ -55,6 +56,24 @@ from app.db.queries import skills as skills_q
 from app.utils import storage
 from app.utils.timing import timed
 from app.utils.volume import SandboxVolumeMount
+
+# Put `_map_edit_error` back where `langchain-e2b` still looks for it.
+#
+# DeepAgents 0.6.11 moved it off `BaseSandbox`, where it was a static
+# method, and made it a module-level function. `AsyncE2BSandbox.aedit`
+# still calls `self._map_edit_error(...)` — correct when it was written
+# against 0.6.10, and unchanged in every release since, including main.
+# Its own pin, `deepagents>=0.6.0,<0.7.0`, is too wide to keep the two
+# apart, so pip pairs it with the 0.6.12 we ask for and the call misses.
+#
+# Only the failing half of an edit reaches that line, which is why this
+# survived upstream CI and why it costs us the most: every edit the agent
+# gets wrong — a stale `old_string`, one that matches twice, a file that
+# is not there — arrives as `AttributeError` instead of the sentence
+# telling the model what to fix. `test_langchain_e2b_calls_nothing_deepagents_moved`
+# fails the moment either dependency moves another one of these.
+if not hasattr(AsyncE2BSandbox, "_map_edit_error"):
+    AsyncE2BSandbox._map_edit_error = staticmethod(_map_edit_error)
 
 # The base image, and the two facts that come with it: where work happens and
 # which unprivileged user the agent runs as. Swapping the image means revisiting
