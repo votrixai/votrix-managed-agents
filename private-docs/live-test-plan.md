@@ -118,7 +118,7 @@ Built once for the whole run, because they are the expensive part:
 | Fixture | Cost | Why once |
 | --- | --- | --- |
 | `server` | — | uvicorn **in-process**: the `web_search` stub has to reach the same interpreter, and SSE needs a real socket rather than an ASGI transport |
-| `organization` | — | one tenant row, written directly; `/v1/organizations` is still stubs |
+| `organization` | — | one tenant row, written directly; Organization creation is intentionally absent from the public API |
 | `environment` | ~0s | **no packages**, so it runs on the base image and there is no build to wait for |
 | `skill` | ~2s | upload and unpack once |
 | `uploads` | ~2s | the four files, uploaded once |

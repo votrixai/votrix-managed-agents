@@ -15,6 +15,7 @@ from app.config import get_settings
 class AuthenticatedUser:
     id: str
     app_metadata: dict[str, Any]
+    email: str | None = None
 
     @property
     def is_super_admin(self) -> bool:
@@ -77,7 +78,11 @@ async def authenticate_user(access_token: str) -> AuthenticatedUser:
     if not isinstance(user_id, str) or not user_id.strip():
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid user access token")
     metadata = payload.get("app_metadata")
+    email = payload.get("email")
     return AuthenticatedUser(
         id=user_id.strip(),
         app_metadata=metadata if isinstance(metadata, dict) else {},
+        email=email.strip().lower()
+        if isinstance(email, str) and email.strip()
+        else None,
     )

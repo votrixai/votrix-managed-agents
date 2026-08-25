@@ -98,7 +98,7 @@ Violating any of these is an incident.
   larger value requires updating the manifests, their test pins, the runbook's
   connection arithmetic, and the staging load evidence together.
 
-## API surfaces: one implementation, four contract tiers
+## API surfaces: isolated compositions and contract tiers
 
 The FastAPI codebase exposes surfaces with different audiences,
 authenticators, visibility, and compatibility disciplines. A shared process or
@@ -108,7 +108,7 @@ repository does not imply shared authorization.
 |---|---|---|---|---|
 | Public product API | `/v1/...` on the GA allowlist in `app/public_surface.py` | SDK and API integrations | Organization API key | Filtered OpenAPI and Fumadocs; public fields, status codes, errors, IDs, and event shapes are compatibility surfaces pinned by tests |
 | First-party builder | The same `/v1/...` resource handlers, called through the same-origin Developer Console BFF | VMA builder users | Supabase user JWT plus selected Organization, verified against live membership | User-auth headers are hidden from OpenAPI and are not an SDK contract; the browser never receives an Organization API key |
-| Hosted operator | `/internal/organizations/...` | VMA operators | Supabase superadmin JWT through `require_super_admin` | Private SOPs only; never an SDK surface |
+| Private Organization onboarding | `POST /internal/organizations` on the separate control-plane Cloud Run service | VMA Developer App server | Cloud Run IAM using Vercel OIDC and Google Workload Identity Federation, plus the signed-in user's Supabase JWT | Initial Organization only; no public hostname, schema, browser access, or SDK surface |
 | Infrastructure M2M | `/internal/sessions/.../process` on the private worker service | Cloud Tasks | Cloud Run IAM/OIDC plus Session generation fencing | No public schema; changes with deployment infrastructure |
 
 The edge also admits exact utility paths `/`, `/openapi.json`, `/health`, and
@@ -120,10 +120,11 @@ certificate behavior, and coordinated cutover live in
 Under the permanent domain contract, its Worker admits only `/`,
 `/openapi.json`, `/health[/...]`, and `/v1[/...]`, so `/internal/...` never
 reaches the API origin through that door.
-`vma.votrixai.com` is the builder frontend. The production Cloud Run `run.app`
-URL is the official operator door behind superadmin JWT unless the optional
-admin-host/origin-cloaking bundle in `private-docs/domains.md` is adopted.
-Hostnames remain routing; the authentication tiers above remain enforcement.
+`vma.votrixai.com` is the builder frontend. The public API Cloud Run service
+does not mount Organization provisioning. A separate private Cloud Run service
+mounts only the onboarding route and admits the Developer App's dedicated
+invoker identity. Hostnames remain routing; the authentication tiers above
+remain enforcement.
 `docs.vma.votrixai.com` is served as a Cloudflare Worker Static Assets site
 from the checked-in `website/wrangler.jsonc` deployment contract.
 
@@ -134,8 +135,8 @@ Rules:
 - Authentication boundaries remain explicit: an Organization API key never
   authenticates `/internal/...`; `/v1/...` derives its tenant either from the
   key record or from a verified Supabase user with live membership, and
-  `x-organization-id` never overrides a key tenant. Hosted operator superadmin
-  authentication and worker IAM/OIDC remain separate boundaries.
+  `x-organization-id` never overrides a key tenant. Organization-control-plane
+  IAM plus human authentication and worker IAM/OIDC remain separate boundaries.
 - SDKs are generated and validated only against the filtered public OpenAPI.
 - `/internal/...` is not versioned and is never documented as a public API.
 - The public Worker's broad `/v1/...` edge allowlist does not override the

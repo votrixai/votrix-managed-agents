@@ -25,7 +25,10 @@ steps:
         MIGRATION_JOB="${_SERVICE_NAME}-migrate"
         WORKER_SERVICE="${_SERVICE_NAME}-worker"
         WORKER_SERVICE_CONFIG="service.worker.${_APP_ENV}.yaml"
+        CONTROL_PLANE_SERVICE="${_SERVICE_NAME}-control-plane"
+        CONTROL_PLANE_CONFIG="service.control-plane.${_APP_ENV}.yaml"
         RUNTIME_SERVICE_ACCOUNT="vma-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
+        VERCEL_INVOKER_SERVICE_ACCOUNT="vma-developer-app-invoker@${PROJECT_ID}.iam.gserviceaccount.com"
         DATABASE_SECRET="vma-database-url-direct${_SECRET_SUFFIX}"
         DATABASE_SCHEMA="vma"
 
@@ -119,6 +122,26 @@ steps:
             --region="${_REGION}" \
             /dev/stdin \
             --quiet
+
+        echo "Deploying private $$CONTROL_PLANE_SERVICE service..."
+        sed \
+          -e "s|IMAGE_URL|$$IMAGE|" \
+          -e "s|__VMA_PUBLIC_BUILD_ID__|${SHORT_SHA}|" \
+          -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|" \
+          "$$CONTROL_PLANE_CONFIG" | \
+          gcloud run services replace \
+            --project="${PROJECT_ID}" \
+            --region="${_REGION}" \
+            /dev/stdin \
+            --quiet
+
+        echo "Allowing only the Developer App identity to invoke $$CONTROL_PLANE_SERVICE..."
+        gcloud run services add-iam-policy-binding "$$CONTROL_PLANE_SERVICE" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --member="serviceAccount:$$VERCEL_INVOKER_SERVICE_ACCOUNT" \
+          --role="roles/run.invoker" \
+          --quiet
 
         echo "Deploying ${_SERVICE_NAME} API service in hybrid mode..."
         sed \

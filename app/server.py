@@ -33,7 +33,6 @@ from app.routers import (
     llm,
     memory,
     organization_api_keys,
-    organizations,
     sandbox,
     sessions,
     skills,
@@ -42,7 +41,6 @@ from app.routers import (
 ROUTERS = (
     health.router,
     organization_api_keys.router,
-    organizations.router,
     accounts.router,
     agents.router,
     sessions.router,

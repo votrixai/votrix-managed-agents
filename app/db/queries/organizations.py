@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -10,6 +10,7 @@ from app.db.models import (
     MEMBER_ROLES,
     Organization,
     OrganizationMember,
+    OrganizationOnboardingRequest,
 )
 from app.utils.id_generator import new_id
 
@@ -124,3 +125,102 @@ async def update_member_role(
 async def delete_member(db: AsyncSession, member: OrganizationMember) -> None:
     await db.delete(member)
     await db.flush()
+
+
+async def user_has_active_membership(
+    db: AsyncSession,
+    *,
+    user_id: str,
+) -> bool:
+    """Whether this user already belongs to an Organization they can open."""
+    result = await db.execute(
+        select(
+            exists().where(
+                OrganizationMember.user_id == user_id,
+                Organization.id == OrganizationMember.organization_id,
+                Organization.archived_at.is_(None),
+            )
+        )
+    )
+    return bool(result.scalar())
+
+
+async def create_onboarding_request(
+    db: AsyncSession,
+    *,
+    requester_user_id: str,
+    requester_email: str | None,
+    requested_name: str,
+) -> OrganizationOnboardingRequest:
+    request = OrganizationOnboardingRequest(
+        id=new_id("orgreq"),
+        requester_user_id=requester_user_id,
+        requester_email=requester_email,
+        requested_name=requested_name,
+    )
+    db.add(request)
+    await db.flush()
+    return request
+
+
+async def get_onboarding_request_for_user(
+    db: AsyncSession,
+    *,
+    requester_user_id: str,
+) -> OrganizationOnboardingRequest | None:
+    result = await db.execute(
+        select(OrganizationOnboardingRequest).where(
+            OrganizationOnboardingRequest.requester_user_id
+            == requester_user_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def acquire_onboarding_lease(
+    db: AsyncSession,
+    *,
+    request_id: str,
+    lease_token: str,
+    now: datetime,
+    expires_at: datetime,
+) -> bool:
+    """Atomically choose one provisioning worker across all service instances."""
+    result = await db.execute(
+        update(OrganizationOnboardingRequest)
+        .where(
+            OrganizationOnboardingRequest.id == request_id,
+            OrganizationOnboardingRequest.completed_at.is_(None),
+            or_(
+                OrganizationOnboardingRequest.provisioning_lease_token.is_(None),
+                OrganizationOnboardingRequest.provisioning_lease_expires_at.is_(None),
+                OrganizationOnboardingRequest.provisioning_lease_expires_at <= now,
+            ),
+        )
+        .values(
+            provisioning_lease_token=lease_token,
+            provisioning_lease_expires_at=expires_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
+
+
+async def release_onboarding_lease(
+    db: AsyncSession,
+    *,
+    request_id: str,
+    lease_token: str,
+) -> None:
+    await db.execute(
+        update(OrganizationOnboardingRequest)
+        .where(
+            OrganizationOnboardingRequest.id == request_id,
+            OrganizationOnboardingRequest.provisioning_lease_token == lease_token,
+        )
+        .values(
+            provisioning_lease_token=None,
+            provisioning_lease_expires_at=None,
+        )
+        .execution_options(synchronize_session=False)
+    )

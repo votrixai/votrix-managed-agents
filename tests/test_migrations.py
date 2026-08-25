@@ -14,7 +14,7 @@ from app.config import clear_settings_cache
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PREVIOUS_HEAD = "b7e1c4d9a620"
 REWIRED_RELEASE_HEAD = "b7f2d4a91c53"
-CURRENT_HEAD = "b8d4f1a92c73"
+CURRENT_HEAD = "91b7c24d5e8f"
 
 
 def test_member_migration_preserves_existing_owner_and_has_one_head(
@@ -102,7 +102,11 @@ def test_member_migration_preserves_existing_owner_and_has_one_head(
             "2026-08-02 10:11:12+00:00",
         )
         assert "organization_owners" not in tables
-        assert {"organization_members", "vma_api_keys"} <= tables
+        assert {
+            "organization_members",
+            "organization_onboarding_requests",
+            "vma_api_keys",
+        } <= tables
         assert "slug" not in organization_columns
 
         command.downgrade(config, PREVIOUS_HEAD)

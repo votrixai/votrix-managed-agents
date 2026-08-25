@@ -101,12 +101,37 @@ check_registry() {
   fi
 }
 
-check_worker_manifest_is_private() {
+check_manifest_is_private() {
   MANIFEST=$1
+  ROLE=$2
   if grep -q "run.googleapis.com/invoker-iam-disabled" "${REPO_ROOT}/${MANIFEST}"; then
-    fail "worker manifest disables the Invoker IAM check: ${MANIFEST}"
+    fail "${ROLE} manifest disables the Invoker IAM check: ${MANIFEST}"
   else
-    ok "worker manifest keeps the Invoker IAM check enabled: ${MANIFEST}"
+    ok "${ROLE} manifest keeps the Invoker IAM check enabled: ${MANIFEST}"
+  fi
+}
+
+check_control_plane_environment() {
+  SERVICE=$1
+  ENVIRONMENT_REGION=$2
+
+  if ! gcloud run services describe "$SERVICE" \
+    --project="$PROJECT_ID" \
+    --region="$ENVIRONMENT_REGION" >/dev/null 2>&1; then
+    warn "Organization control plane is not deployed yet: ${SERVICE}"
+    return
+  fi
+
+  INVOKERS=$(gcloud run services get-iam-policy "$SERVICE" \
+    --project="$PROJECT_ID" \
+    --region="$ENVIRONMENT_REGION" \
+    --flatten='bindings[].members' \
+    --filter='bindings.role=roles/run.invoker' \
+    --format='value(bindings.members)' 2>/dev/null || true)
+  if [ "$INVOKERS" = "serviceAccount:${VERCEL_INVOKER_SERVICE_ACCOUNT}" ]; then
+    ok "only the Developer App identity may invoke the control plane: ${SERVICE}"
+  else
+    fail "control-plane Invoker policy is not exact: ${SERVICE}"
   fi
 }
 
@@ -135,7 +160,9 @@ for api in \
   cloudbuild.googleapis.com \
   cloudtasks.googleapis.com \
   artifactregistry.googleapis.com \
-  iam.googleapis.com
+  iam.googleapis.com \
+  iamcredentials.googleapis.com \
+  sts.googleapis.com
 do
   ENABLED=$(gcloud services list \
     --project="$PROJECT_ID" \
@@ -161,6 +188,21 @@ if gcloud iam service-accounts describe "$RUNTIME_SERVICE_ACCOUNT" \
   fi
 else
   fail "runtime service account is missing: ${RUNTIME_SERVICE_ACCOUNT}"
+fi
+
+if gcloud iam service-accounts describe "$VERCEL_INVOKER_SERVICE_ACCOUNT" \
+  --project="$PROJECT_ID" >/dev/null 2>&1; then
+  VERCEL_INVOKER_DISABLED=$(gcloud iam service-accounts describe \
+    "$VERCEL_INVOKER_SERVICE_ACCOUNT" \
+    --project="$PROJECT_ID" \
+    --format='value(disabled)' 2>/dev/null || true)
+  if [ "$VERCEL_INVOKER_DISABLED" = True ] || [ "$VERCEL_INVOKER_DISABLED" = true ]; then
+    fail "Developer App invoker service account is disabled: ${VERCEL_INVOKER_SERVICE_ACCOUNT}"
+  else
+    ok "Developer App invoker service account exists and is enabled"
+  fi
+else
+  fail "Developer App invoker service account is missing; run 9-setup-vercel-control-plane.sh"
 fi
 
 BUILD_SERVICE_ACCOUNT=$(gcloud builds get-default-service-account \
@@ -373,7 +415,12 @@ case "$TARGET" in
     check_environment_secrets ""
     check_manifest service.production.yaml "$PRODUCTION_REGION"
     check_manifest service.worker.production.yaml "$PRODUCTION_REGION"
-    check_worker_manifest_is_private service.worker.production.yaml
+    check_manifest service.control-plane.production.yaml "$PRODUCTION_REGION"
+    check_manifest_is_private service.worker.production.yaml worker
+    check_manifest_is_private service.control-plane.production.yaml control-plane
+    check_control_plane_environment \
+      "$PRODUCTION_CONTROL_PLANE_SERVICE" \
+      "$PRODUCTION_REGION"
     ;;
   staging)
     check_registry "$STAGING_REGION"
@@ -384,7 +431,12 @@ case "$TARGET" in
     check_environment_secrets "-staging"
     check_manifest service.staging.yaml "$STAGING_REGION"
     check_manifest service.worker.staging.yaml "$STAGING_REGION"
-    check_worker_manifest_is_private service.worker.staging.yaml
+    check_manifest service.control-plane.staging.yaml "$STAGING_REGION"
+    check_manifest_is_private service.worker.staging.yaml worker
+    check_manifest_is_private service.control-plane.staging.yaml control-plane
+    check_control_plane_environment \
+      "$STAGING_CONTROL_PLANE_SERVICE" \
+      "$STAGING_REGION"
     ;;
   all)
     check_registry "$PRODUCTION_REGION"
@@ -403,10 +455,20 @@ case "$TARGET" in
     check_environment_secrets "-staging"
     check_manifest service.production.yaml "$PRODUCTION_REGION"
     check_manifest service.worker.production.yaml "$PRODUCTION_REGION"
+    check_manifest service.control-plane.production.yaml "$PRODUCTION_REGION"
     check_manifest service.staging.yaml "$STAGING_REGION"
     check_manifest service.worker.staging.yaml "$STAGING_REGION"
-    check_worker_manifest_is_private service.worker.production.yaml
-    check_worker_manifest_is_private service.worker.staging.yaml
+    check_manifest service.control-plane.staging.yaml "$STAGING_REGION"
+    check_manifest_is_private service.worker.production.yaml worker
+    check_manifest_is_private service.worker.staging.yaml worker
+    check_manifest_is_private service.control-plane.production.yaml control-plane
+    check_manifest_is_private service.control-plane.staging.yaml control-plane
+    check_control_plane_environment \
+      "$PRODUCTION_CONTROL_PLANE_SERVICE" \
+      "$PRODUCTION_REGION"
+    check_control_plane_environment \
+      "$STAGING_CONTROL_PLANE_SERVICE" \
+      "$STAGING_REGION"
     ;;
 esac
 

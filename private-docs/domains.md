@@ -19,7 +19,7 @@ execution checklist records the cutover and cleanup evidence.
 | Production builder frontend | `vmaapp.votrixai.com` and `vma-developer-app.vercel.app` | `vma.votrixai.com` |
 | Staging builder frontend | `staging-vmaapp.votrixai.com` and `vma-developer-app-staging.vercel.app` | `staging.vma.votrixai.com` |
 | VMA documentation | `docs.votrixai.com` was configured in metadata and CORS but never deployed | `docs.vma.votrixai.com` |
-| Hosted operator API | Production Cloud Run `run.app` URL | Unchanged |
+| Private Organization control plane | — | Separate IAM-protected Cloud Run `run.app` URL; no public alias |
 
 The old custom frontend aliases have been detached from their Vercel
 deployments, removed from CORS, and deleted from Cloudflare DNS. They no longer
@@ -59,11 +59,11 @@ different account systems, SDKs, and developer audiences.
 
 ## The doors and the paths they admit
 
-One FastAPI codebase implements the routes, but each public hostname is a door
-that admits only its intended traffic. A hostname is routing and
-defense-in-depth, never the authorization boundary. Organization API keys,
-Supabase user or superadmin JWTs, and Cloud Run IAM remain the security
-boundaries described in `private-docs/architecture.md`.
+One repository implements the services, but each hostname is a door that admits
+only its intended traffic. A hostname is routing and defense-in-depth, never
+the authorization boundary. Organization API keys, Supabase user JWTs, and
+Cloud Run IAM remain the security boundaries described in
+`private-docs/architecture.md`.
 
 | Door | Audience | Paths admitted |
 |---|---|---|
@@ -72,7 +72,8 @@ boundaries described in `private-docs/architecture.md`.
 | `vma.votrixai.com` | Humans using the production builder | Vercel frontend pages; it is not an API origin |
 | `staging.vma.votrixai.com` | Humans using the staging builder | Vercel frontend pages; it is not an API origin |
 | `docs.vma.votrixai.com` | Developers reading VMA documentation | Documentation site paths only |
-| Production Cloud Run `run.app` URL | Operators | The API app, including `/internal/organizations/...`; superadmin JWT is required by the application |
+| Public API Cloud Run `run.app` URL | Cloudflare API Worker | The same public API app; it does not mount Organization provisioning routes |
+| Private Organization control-plane Cloud Run URL | VMA Developer App server only | `POST /internal/organizations` through Cloud Run IAM plus the signed-in user's Supabase JWT; never an SDK or browser entry point |
 | Private worker Cloud Run URL | Cloud Tasks and operators performing health checks | `/internal/work/...` through Cloud Run IAM/OIDC, plus service health probes; never an SDK or browser entry point |
 | `admin.vma.votrixai.com` | None in the default design | Does not exist unless the complete three-together bundle below ships |
 
@@ -98,6 +99,15 @@ The builder browser calls only its same-origin
 session and membership, then calls the public API door with the verified user
 token and selected Organization. VMA independently verifies both. The browser
 receives neither the Cloud Run origin nor an Organization API key.
+
+Initial Organization onboarding uses a different same-origin bridge:
+`POST /api/organizations`. The Developer App server exchanges its Vercel OIDC
+token through Google Workload Identity Federation, impersonates the narrowly
+scoped invoker service account, and sends the resulting Google ID token in
+`X-Serverless-Authorization` to the separate private control-plane service. It
+forwards the user's Supabase access token in `Authorization`; the control plane
+therefore verifies both the calling service and the human. The public API
+process and public Cloudflare doors never mount this provisioning route.
 
 ## Conditional admin host and origin cloaking
 

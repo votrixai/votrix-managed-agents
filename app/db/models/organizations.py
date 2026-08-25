@@ -61,3 +61,45 @@ class OrganizationMember(TimestampMixin, Base):
         nullable=False,
         default=MEMBER_ROLE_MEMBER,
     )
+
+
+class OrganizationOnboardingRequest(TimestampMixin, Base):
+    """One resumable self-service Organization creation per Supabase user.
+
+    The Organization and its provider credential cannot be written atomically:
+    OpenRouter is a second system. Keeping the request in VMA lets a browser or
+    function retry an ambiguous response without minting another Organization
+    or another provider key. Membership is granted only after the default
+    Account is active, so a half-provisioned Organization never appears in the
+    Developer Console.
+    """
+
+    __tablename__ = "organization_onboarding_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "requester_user_id",
+            name="uq_organization_onboarding_requests_user",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            name="uq_organization_onboarding_requests_organization",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    requester_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    requester_email: Mapped[str | None] = mapped_column(String(255))
+    requested_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "organizations.id",
+            name="fk_organization_onboarding_requests_organization",
+            ondelete="RESTRICT",
+        ),
+    )
+    provisioning_lease_token: Mapped[str | None] = mapped_column(String(64))
+    provisioning_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

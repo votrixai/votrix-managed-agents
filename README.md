@@ -16,6 +16,8 @@ removed from the main branch and remains recoverable from Git history.
 - E2B-backed Environments whose package recipes build reusable images.
 - Accounts that own encrypted OpenRouter inference keys, spending limits, and
   provider usage snapshots.
+- Resumable first-Organization onboarding through an IAM-protected control
+  plane used only by the VMA Developer App.
 - Sessions that pin an Agent version and keep one E2B sandbox for their
   lifetime.
 - An append-only Session event log, resumable SSE, interrupt handling, and a
@@ -29,8 +31,10 @@ removed from the main branch and remains recoverable from Git history.
 
 Implemented resource routes authenticate a database-backed `x-api-key` and
 derive the Organization from that credential. A caller cannot select a tenant
-with a separate header. Organization routes remain placeholders. MCP servers
-are stored but not loaded by the runtime, and `app.worker` also owns the lease
+with a separate header. Organization creation is deliberately absent from the
+public API; the separate `app.control_plane` composition admits only the
+Developer App's keyless, IAM-authenticated onboarding request. MCP servers are
+stored but not loaded by the runtime, and `app.worker` also owns the lease
 sweeper. See [Current gaps](#current-gaps).
 
 ## Architecture
@@ -70,7 +74,7 @@ The active code is deliberately layered:
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| App composition | `app/server.py`, `app/main.py` | Build FastAPI and install error handlers |
+| App composition | `app/server.py`, `app/main.py`, `app/control_plane.py` | Build the public API and isolated private control-plane apps |
 | HTTP | `app/routers/`, `app/models/` | Parse requests and shape responses |
 | Use cases | `app/services/` | Enforce domain rules and own commits |
 | Persistence | `app/db/models/`, `app/db/queries/` | Store rows and run tenant-scoped queries |
@@ -219,7 +223,8 @@ so it does not provide that same protection.
 
 The rewrite owns these relational tables:
 
-- `organizations`, `organization_members`, and `vma_api_keys`
+- `organizations`, `organization_members`, `organization_onboarding_requests`,
+  and `vma_api_keys`
 - `agents` and `agent_versions`
 - `environments`
 - `sessions`, `session_events`, `session_files`, and `session_sandboxes`
@@ -292,7 +297,8 @@ CI fails when the snapshot drifts from the active application.
 
 ## Current gaps
 
-- Organization/owner and model endpoints are registered placeholders.
+- Public Organization creation is intentionally unavailable; model endpoints
+  remain registered placeholders.
 - MCP definitions are persisted but not loaded. The stored `multiagent` roster
   is not consumed, and the built-in general-purpose `task` subagent is disabled.
 - Vaults, deployments, webhooks, quotas, and audit/usage ledgers have not been

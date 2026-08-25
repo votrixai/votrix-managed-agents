@@ -15,15 +15,20 @@ identity and a migration gate before every API-and-worker rollout.
 | Artifact Registry | `us-east4/votrix` production; `us-west2/votrix` staging |
 | Production API service | `votrix-managed-agents` |
 | Production worker service | `votrix-managed-agents-worker` |
+| Production Organization control plane | `votrix-managed-agents-control-plane` |
 | Staging API service | `votrix-managed-agents-staging` |
 | Staging worker service | `votrix-managed-agents-staging-worker` |
+| Staging Organization control plane | `votrix-managed-agents-staging-control-plane` |
 | Runtime service account | `vma-runtime@votrixai-480422.iam.gserviceaccount.com` |
+| Developer App invoker service account | `vma-developer-app-invoker@votrixai-480422.iam.gserviceaccount.com` |
 | Production Cloud Tasks queue | `us-east4/vma-turns` |
 | Staging Cloud Tasks queue | `us-west2/vma-turns-staging` |
 
-Each environment is split into an API service and a worker service. API
-instances accept HTTP/SSE traffic but never execute queued Agent turns. Worker
-instances expose a private OIDC turn endpoint plus health endpoints. Each worker
+Each environment is split into an API service, a worker service, and a minimal
+Organization control-plane service. API instances accept HTTP/SSE traffic but
+never execute queued Agent turns. Worker instances expose a private OIDC turn
+endpoint plus health endpoints. The control plane mounts only health and the
+initial-Organization onboarding route and remains behind Cloud Run IAM. Each worker
 admits at most 20 in-flight turn requests and keeps one
 best-effort sweeper for expired Session leases while an instance is active.
 Both roles keep CPU allocated, use one web process, and run the
@@ -31,9 +36,9 @@ same startup and database liveness probes. Each instance is pinned to one vCPU
 and 4 GiB memory; API instances accept 80 concurrent HTTP requests while worker
 instances use `containerConcurrency=20`.
 
-Production and staging both scale API and worker services from zero. Only the
-API services disable the Cloud Run Invoker IAM check; the worker services stay
-private. Cloud Tasks push requests drive worker autoscaling, while PostgreSQL
+Production and staging scale all services from zero. Only the API services
+disable the Cloud Run Invoker IAM check; workers and Organization control
+planes stay private. Cloud Tasks push requests drive worker autoscaling, while PostgreSQL
 Session leases remain the source of truth if a worker disappears. API request
 autoscaling and Agent-turn capacity are independent.
 
@@ -85,6 +90,21 @@ URL, grant the runtime identity `roles/run.invoker` on that private service, and
 only then render the final `cloud` worker and API revisions with that URL.
 Rerunning the setup command remains an idempotent IAM/queue repair path. No
 guessed URL or Secret Manager placeholder is used.
+
+Create the keyless Vercel-to-Google identity bridge used by the Developer App
+to invoke the private Organization control plane:
+
+```bash
+./scripts/gcloud/9-setup-vercel-control-plane.sh
+```
+
+The script creates a Workload Identity pool/provider, a dedicated invoker
+service account, and exact production/staging Vercel subject bindings. Its
+provider condition pins the immutable Vercel team and project IDs. It creates
+no service-account key and never grants `allUsers`; rerun it idempotently after
+the private Cloud Run services exist to repair their `roles/run.invoker`
+bindings. Copy its non-secret output values into the corresponding Vercel
+environment variables.
 
 Create the two untracked Secret Manager input files from the checked-in
 templates, then replace every placeholder:
@@ -265,7 +285,9 @@ Both scripts enforce the same sequence:
    Cloud Run actually assigned.
 5. Grant the runtime OIDC identity `roles/run.invoker` on the private worker.
 6. Render and replace the private worker in `cloud` mode with that URL.
-7. Render and replace the API service in `cloud` mode only after the worker is
+7. Render and replace the private Organization control plane and grant only the
+   dedicated Developer App service account `roles/run.invoker`.
+8. Render and replace the API service in `cloud` mode only after the worker is
    ready.
 
 After the first deployment of an environment, verify the final state:

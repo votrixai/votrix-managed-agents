@@ -49,6 +49,7 @@ REGION="${REGION_OVERRIDE:-$PRODUCTION_REGION}"
 REGISTRY="${REGION}-docker.pkg.dev"
 API_MANIFEST="${REPO_ROOT}/service.production.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.production.yaml"
+CONTROL_PLANE_MANIFEST="${REPO_ROOT}/service.control-plane.production.yaml"
 MIGRATION_JOB="${PRODUCTION_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-direct"
 DATABASE_SCHEMA="vma"
@@ -168,4 +169,24 @@ sed \
     /dev/stdin \
     --quiet
 
-echo "Production API and worker deployed: ${IMAGE}"
+echo "Deploying private ${PRODUCTION_CONTROL_PLANE_SERVICE} service..."
+sed \
+  -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
+  "$CONTROL_PLANE_MANIFEST" | \
+  gcloud run services replace \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    /dev/stdin \
+    --quiet
+
+echo "Allowing only the Developer App identity to invoke the control plane..."
+gcloud run services add-iam-policy-binding "$PRODUCTION_CONTROL_PLANE_SERVICE" \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --member="serviceAccount:${VERCEL_INVOKER_SERVICE_ACCOUNT}" \
+  --role="roles/run.invoker" \
+  --quiet
+
+echo "Production API, worker, and private control plane deployed: ${IMAGE}"

@@ -1,140 +1,84 @@
-# Superadmin Organization Onboarding SOP
+# Private Organization Onboarding SOP
 
-Internal only. Do not copy this runbook into the public documentation tree.
+Internal only. The filename is retained for existing runbook links; this is no
+longer a superadmin HTTP workflow.
 
-## Preconditions
+## Supported flow
 
-- The VMA database is migrated to the latest Alembic revision.
-- VMA has `VMA_SUPABASE_URL` and `VMA_SUPABASE_PUBLISHABLE_KEY` configured.
-- The operator signs in through Supabase with `app_metadata.super_admin = true`.
-- The future member has signed in at least once so their Supabase user UUID is known.
+A signed-in Developer App user with no active VMA membership may create exactly
+their initial Organization from the empty console state. The browser posts to
+the Developer App's same-origin `/api/organizations` BFF. The BFF:
 
-Use the superadmin's Supabase access token in the examples below. Never paste it into tickets, logs, or committed files.
+1. rejects cross-origin requests and requires the explicit onboarding action
+   header;
+2. verifies the Supabase session and forwards its short-lived access token;
+3. obtains a Vercel OIDC token server-side;
+4. exchanges it through Google Workload Identity Federation and impersonates
+   the dedicated control-plane invoker service account; and
+5. calls `POST /internal/organizations` on the private control-plane Cloud Run
+   service with both service and human authentication.
 
-```bash
-export VMA_ADMIN_TOKEN="<short-lived Supabase access token>"
-export VMA_BASE_URL="https://<private-or-production-vma-host>"
-```
+There is no public VMA Organization-creation route, Cloudflare path, SDK method,
+static Google service-account key, or browser-visible Cloud Run URL. Operators
+must not bypass this boundary by adding `allUsers` as a Cloud Run invoker.
 
-## 1. Create the Organization
+## Provisioning semantics
 
-Organization IDs must begin with `org_` and are permanent identifiers; choose them deliberately.
+The operation is durable and resumable for one Supabase user ID:
 
-```bash
-curl -sS -X POST "$VMA_BASE_URL/internal/organizations" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "org_acme",
-    "name": "Acme, Inc.",
-    "metadata": {"organization_tier": "pilot"}
-  }'
-```
+- one onboarding-request row is persisted before Organization or provider
+  effects;
+- an expiring database lease permits only one provisioning worker for that
+  request across all control-plane instances;
+- retries with the same normalized name resume the same Organization;
+- retries with a different name return a conflict;
+- the service creates the default Account and OpenRouter inference key before
+  granting the owner membership;
+- membership becomes visible only after the Account is active;
+- a user who already has an active membership cannot self-provision another
+  Organization; and
+- removing that membership later does not allow the onboarding request to be
+  replayed to regain access.
 
-A `409` means the ID already exists. Inspect the existing record rather than retrying with an altered identifier blindly.
+The request does not create or reveal an Organization API key. API keys remain
+a separate authenticated lifecycle for approved machine integrations.
 
-## 2. Grant one or more memberships
+## Deployment and IAM checks
 
-Repeat this request for every member. The supported roles are `owner`, `admin`,
-and `member`. Only a superadmin can add, change, or remove memberships in the
-first release.
+Run `scripts/gcloud/9-setup-vercel-control-plane.sh` once, then deploy through
+the normal staging or production script. Verify all of the following without
+creating a live Organization:
 
-```bash
-curl -sS -X POST "$VMA_BASE_URL/internal/organizations/org_acme/members" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "<Supabase user UUID>",
-    "email": "owner@acme.example",
-    "role": "owner"
-  }'
-```
+1. the public API returns `404` for `POST /v1/organizations`;
+2. an unauthenticated request to the private control-plane URL is rejected by
+   Cloud Run IAM;
+3. the private service has no `allUsers` invoker binding;
+4. only `vma-developer-app-invoker@votrixai-480422.iam.gserviceaccount.com`
+   has `roles/run.invoker` on that service; and
+5. the Workload Identity provider accepts only the immutable Vercel team and
+   project IDs, while service-account bindings name the exact production and
+   staging subjects.
 
-Confirm the complete membership list:
+## Recovery
 
-```bash
-curl -sS "$VMA_BASE_URL/internal/organizations/org_acme/members" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
-```
+If provisioning stops after the onboarding row or Organization is created,
+the user should submit the same Organization name again. Do not delete rows or
+mint a second provider key manually: the service resumes the stored request and
+reuses the Organization and Account rows it already recorded. A live lease can
+briefly return an in-progress conflict; a dead worker's lease expires after five
+minutes.
 
-The email is an operator-facing snapshot; authorization is based exclusively on `user_id`.
+If OpenRouter minted a key but the control plane stopped before storing its
+encrypted credential, VMA deliberately refuses to mint another. An operator
+must identify and revoke the orphaned provider key using the Account's expected
+provider-key name, then let the user retry.
 
-## 3. Create an Organization API key when required
+If retry still fails, inspect the onboarding request, Organization, default
+Account, and OpenRouter provider-key state as one unit. Keep owner membership
+absent until the default Account is active. Any manual database repair requires
+a reviewed incident procedure and an audit note; never expose the private route
+or a database credential to the user.
 
-Builder members use Supabase identity and do not receive this key. Create an
-API key only for server-to-server workloads or an approved API consumer
-integration.
-
-```bash
-curl -sS -X POST "$VMA_BASE_URL/internal/organizations/org_acme/api-keys" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Acme production integration",
-    "scopes": ["api"]
-  }'
-```
-
-The plaintext `secret` is returned exactly once. Capture it directly at the
-caller and remove it from shell history/output; VMA stores only its hash and
-does not require a Secret Manager integration. Do not give `api_keys:manage`
-or `worker` unless the integration explicitly requires it.
-
-List keys (only safe metadata is returned):
-
-```bash
-curl -sS "$VMA_BASE_URL/internal/organizations/org_acme/api-keys" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
-```
-
-Rotate a key and immediately store the new one-time `secret`:
-
-```bash
-curl -sS -X POST \
-  "$VMA_BASE_URL/internal/organizations/org_acme/api-keys/<key_id>/rotate" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
-```
-
-Rotation creates a successor and deliberately leaves the previous key active
-for a no-downtime cutover. Update every consumer, verify the new key, and then
-revoke the previous key explicitly.
-
-Revoke a key that is no longer required:
-
-```bash
-curl -sS -X POST \
-  "$VMA_BASE_URL/internal/organizations/org_acme/api-keys/<key_id>/revoke" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"reason": "Integration retired"}'
-```
-
-For the initial deployment bootstrap, or if hosted superadmin authentication is not yet available, use `scripts/bootstrap_api_key.py` from a trusted operator environment. That path creates an Organization management key and must not be used by end users.
-
-## 4. Verify owner access
-
-Ask the owner to sign into the VMA Developer Console. Expected behavior:
-
-- No organization creation option is shown.
-- The new Organization appears in the switcher.
-- The owner can manage Agents, Environments, Vaults, Skills, Files, and Sessions.
-- API key management returns `403` for owner credentials.
-
-## 5. Remove member access
-
-```bash
-curl -sS -X DELETE \
-  "$VMA_BASE_URL/internal/organizations/org_acme/members/<Supabase user UUID>" \
-  -H "Authorization: Bearer $VMA_ADMIN_TOKEN"
-```
-
-An Organization may have zero owners while being provisioned or suspended.
-Removing a membership does not revoke separate Organization API keys; review
-those independently.
-
-## Incident and offboarding checklist
-
-1. Remove affected membership records.
-2. Revoke or rotate any Organization API keys that may have been exposed through the authenticated `/v1/api_keys` lifecycle API or the trusted bootstrap procedure.
-3. Review the Organization audit ledger for the affected window.
-4. Archive the Organization only after confirming active work and retained data requirements.
+For local/operator-created test tenants, use `scripts/bootstrap_api_key.py` in
+a trusted environment. That path is not self-service onboarding and must not be
+used by end users.

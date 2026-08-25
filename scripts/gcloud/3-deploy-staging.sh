@@ -49,6 +49,7 @@ REGION="${REGION_OVERRIDE:-$STAGING_REGION}"
 REGISTRY="${REGION}-docker.pkg.dev"
 API_MANIFEST="${REPO_ROOT}/service.staging.yaml"
 WORKER_MANIFEST="${REPO_ROOT}/service.worker.staging.yaml"
+CONTROL_PLANE_MANIFEST="${REPO_ROOT}/service.control-plane.staging.yaml"
 MIGRATION_JOB="${STAGING_SERVICE}-migrate"
 DATABASE_SECRET="vma-database-url-direct-staging"
 DATABASE_SCHEMA="vma"
@@ -174,4 +175,24 @@ sed \
     /dev/stdin \
     --quiet
 
-echo "Staging API and worker deployed: ${IMAGE}"
+echo "Deploying private ${STAGING_CONTROL_PLANE_SERVICE} service..."
+sed \
+  -e "s|IMAGE_URL|${IMAGE}|" \
+  -e "s|__VMA_PUBLIC_BUILD_ID__|${TAG}|" \
+  -e "s|__VMA_GIT_COMMIT_SHA__|${FULL_COMMIT}|" \
+  "$CONTROL_PLANE_MANIFEST" | \
+  gcloud run services replace \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    /dev/stdin \
+    --quiet
+
+echo "Allowing only the Developer App identity to invoke the control plane..."
+gcloud run services add-iam-policy-binding "$STAGING_CONTROL_PLANE_SERVICE" \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --member="serviceAccount:${VERCEL_INVOKER_SERVICE_ACCOUNT}" \
+  --role="roles/run.invoker" \
+  --quiet
+
+echo "Staging API, worker, and private control plane deployed: ${IMAGE}"

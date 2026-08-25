@@ -21,6 +21,8 @@ def test_cloud_run_manifests_have_unique_environment_variable_names():
         "service.staging.yaml",
         "service.worker.production.yaml",
         "service.worker.staging.yaml",
+        "service.control-plane.production.yaml",
+        "service.control-plane.staging.yaml",
     ):
         manifest = yaml.safe_load(
             (ROOT / manifest_name).read_text(encoding="utf-8")
@@ -42,6 +44,8 @@ def test_cloud_run_minimum_instances_match_runtime_roles():
         "service.worker.production.yaml": "0",
         "service.staging.yaml": "0",
         "service.worker.staging.yaml": "0",
+        "service.control-plane.production.yaml": "0",
+        "service.control-plane.staging.yaml": "0",
     }
 
     for manifest_name, minimum in expected.items():
@@ -111,6 +115,8 @@ def test_hosted_deployments_use_the_stable_vma_schema():
         "service.staging.yaml",
         "service.worker.production.yaml",
         "service.worker.staging.yaml",
+        "service.control-plane.production.yaml",
+        "service.control-plane.staging.yaml",
     ):
         manifest = yaml.safe_load(
             (ROOT / manifest_name).read_text(encoding="utf-8")
@@ -308,10 +314,63 @@ def test_cloud_run_manifests_receive_the_full_git_commit():
         "service.staging.yaml",
         "service.worker.production.yaml",
         "service.worker.staging.yaml",
+        "service.control-plane.production.yaml",
+        "service.control-plane.staging.yaml",
     ):
         manifest = (ROOT / name).read_text(encoding="utf-8")
         assert "name: VMA_GIT_COMMIT_SHA" in manifest
         assert 'value: "__VMA_GIT_COMMIT_SHA__"' in manifest
+
+
+def test_control_plane_is_a_separate_iam_protected_runtime():
+    expected = {
+        "service.control-plane.production.yaml": {
+            "name": "votrix-managed-agents-control-plane",
+            "database": "vma-database-url",
+        },
+        "service.control-plane.staging.yaml": {
+            "name": "votrix-managed-agents-staging-control-plane",
+            "database": "vma-database-url-staging",
+        },
+    }
+
+    for manifest_name, values in expected.items():
+        manifest = yaml.safe_load(
+            (ROOT / manifest_name).read_text(encoding="utf-8")
+        )
+        assert manifest["metadata"]["name"] == values["name"]
+        assert "run.googleapis.com/invoker-iam-disabled" not in manifest.get(
+            "metadata", {}
+        ).get("annotations", {})
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["sh"]
+        assert container["args"] == ["scripts/start-control-plane.sh"]
+        env = {entry["name"]: entry for entry in container["env"]}
+        assert env["DATABASE_URL"]["valueFrom"]["secretKeyRef"]["name"] == values[
+            "database"
+        ]
+        assert "VMA_CHECKPOINT_DATABASE_URL" not in env
+        assert "E2B_API_KEY" not in env
+
+    public_app = (ROOT / "app/server.py").read_text(encoding="utf-8")
+    assert "control_plane_organizations" not in public_app
+
+
+def test_vercel_control_plane_identity_is_keyless_and_exactly_scoped():
+    setup = (ROOT / "scripts/gcloud/9-setup-vercel-control-plane.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "set -euo pipefail" in setup
+    assert "https://oidc.vercel.com/${VERCEL_TEAM_SLUG}" in setup
+    assert "assertion.owner_id == '${VERCEL_TEAM_ID}'" in setup
+    assert "assertion.project_id == '${VERCEL_PROJECT_ID}'" in setup
+    assert "environment:${environment}" in setup
+    assert 'for environment in production staging' in setup
+    assert 'role="roles/iam.workloadIdentityUser"' in setup
+    assert 'role="roles/run.invoker"' in setup
+    assert "allUsers" not in setup
+    assert "service-account-key" not in setup.lower()
 
 
 def test_release_paths_replace_the_git_commit_placeholder():

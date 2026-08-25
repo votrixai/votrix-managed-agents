@@ -5,6 +5,7 @@ from app.db.models.organizations import (
     MEMBER_ROLES,
     Organization,
     OrganizationMember,
+    OrganizationOnboardingRequest,
 )
 from app.db.models.agents import Agent, AgentVersion
 from app.db.models.accounts import (
@@ -90,6 +91,7 @@ __all__ = [
     "MEMBER_ROLES",
     "Organization",
     "OrganizationMember",
+    "OrganizationOnboardingRequest",
     "SANDBOX_STATES",
     "SESSION_STATUSES",
     "Sandbox",
