@@ -13,6 +13,9 @@ operator-provisioned Organization platform funding.
 
 ### Added
 
+- Provider-authoritative Organization usage aggregation across every Account,
+  including lifetime, daily, weekly, and monthly totals plus reconciliation rows.
+
 - Database-backed Organization API keys with one-time plaintext create/rotate
   responses, hashes at rest, expiration, independent revocation, last-used
   tracking, replacement links, and `api`, `api_keys:manage`, and `worker`

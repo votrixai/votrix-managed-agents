@@ -265,10 +265,10 @@ An Agent is a mutable pointer to an immutable snapshot:
 agents.active_version -> agent_versions.version
 ```
 
-Creation writes version `1`. An update must name the version it was based on;
-a stale version returns `409`. Omitted fields keep their active values, while
-provided fields replace the whole value. If the resulting snapshot is
-identical, no new version is written.
+Creation writes version `1`. An update does not submit a version number: it
+lands on the Agent version that is active when the request is accepted. Omitted
+fields keep their active values, while provided fields replace the whole value.
+If the resulting snapshot is identical, no new version is written.
 
 A Session stores `agent_id` and `agent_version` at creation. Later Agent edits
 do not change a running conversation.
@@ -439,6 +439,8 @@ are converted to Deep Agents interrupts.
 The active runtime also supports:
 
 - `read_image`, implemented with `gemini-3.6-flash`;
+- Firecrawl-backed `web_search` and `web_fetch` when the Agent declares
+  `web_toolset_20260401` and the deployment has a Firecrawl key;
 - custom tools that always pause for a client-supplied result;
 - Skills loaded by Deep Agents from `/home/user/skills`;
 - tool confirmations resumed through LangGraph `Command`.
@@ -447,11 +449,7 @@ Current limitations:
 
 - MCP server definitions are accepted and stored but not loaded.
 - the stored `multiagent` roster is accepted and versioned but not consumed;
-  Deep Agents' built-in general-purpose `task` delegation remains available
-  independently;
-- `web_fetch` is not installed.
-- `web_search` is installed when requested but currently raises
-  `NotImplementedError`; it is not production-ready.
+  Deep Agents' built-in general-purpose `task` subagent is disabled;
 - Only text content blocks are accepted on the current event surface.
 
 ### Output collection
@@ -486,33 +484,30 @@ The SSE route:
 
 - replays from the beginning when no cursor is supplied;
 - resumes after `after_seq` or `Last-Event-ID`;
-- polls up to 100 durable events every 300 ms;
+- reads up to 100 durable events at a time;
+- wakes through PostgreSQL `NOTIFY` when a session-mode listener is configured,
+  with polling as the fallback when a notification is unavailable or lost;
 - opens a fresh short database session per poll;
 - sends a keep-alive comment after 15 seconds of silence;
 - closes after 30 minutes or when the Session terminates.
 
-There is no process-local preview bus or PostgreSQL `NOTIFY` broker in the
-rewrite. SSE may add up to one poll interval of latency, but reconnecting does
-not lose already committed events.
+The notification carries only the Session ID; the durable event rows remain
+authoritative, so reconnecting or losing a notification does not lose a
+committed event. Token previews use a separate ephemeral notification channel.
+They are deliberately not durable and are replaced by the final Agent message.
 
 ## Model boundary
 
 `app/models/llm.py` contains a hard-coded catalog for Anthropic, Google,
-OpenAI, and DeepSeek models. `app/runtime/engine.py` maps each entry to its
-LangChain integration.
+OpenAI, and DeepSeek models plus each model's OpenRouter slug.
+`app/runtime/engine.py` sends every model through OpenRouter.
 
-Provider credentials are process settings:
-
-```text
-ANTHROPIC_API_KEY
-GEMINI_API_KEY
-OPENAI_API_KEY
-DEEPSEEK_API_KEY
-```
-
-A caller chooses a known model ID but never supplies a credential. There is no
-per-Organization Vault, BYOK binding, provider registry, fallback routing, or
-usage ledger in the active app.
+A caller chooses a known model ID but never supplies a credential in the Agent
+or Session definition. Every Session is pinned to an Account, and that Account's
+encrypted OpenRouter inference key funds each turn. The deployment's
+`OPENROUTER_MANAGEMENT_KEY` can provision Account keys but cannot run inference
+itself. Usage endpoints read provider snapshots rather than a local usage
+ledger.
 
 ## Background process
 
@@ -527,8 +522,10 @@ only makes failure visible before a client happens to send that input.
 
 `app/config.py` intentionally keeps a small settings surface:
 
-- database URL and PostgreSQL pool sizing;
-- one API key per supported model provider;
+- database, checkpoint, listener, and PostgreSQL pool settings;
+- first-party Console identity verification;
+- an OpenRouter management credential, encrypted Account-key wrapping, and the
+  optional Firecrawl web-tool credential;
 - S3-compatible storage credentials;
 - E2B credentials and bounded sandbox/output settings;
 - inline versus Cloud Tasks dispatch.
@@ -555,20 +552,18 @@ surface; `app/config.py` remains the source of truth.
 
 ## Current integration gaps
 
-The active core is internally coherent, but the repository around it is still
-mid-migration:
+The active core is internally coherent, with these remaining integration gaps:
 
-- authentication and authorization are not implemented;
-- Organization and model route handlers are placeholders;
-- several previous resource families have not been ported;
+- public Organization and model route handlers are placeholders;
+- MCP definitions and the stored `multiagent` roster are versioned but not
+  consumed by the runtime;
 - cloud dispatch has neither an enqueue outbox, a worker-side atomic claim, nor
   task-generation validation;
 - expired-lease takeover does not advance the generation;
 - a remotely missing E2B sandbox is not made terminal unless its database row
   is already missing or marked unusable;
 - `session.status_idle`, output collection, and row release are not yet one
-  atomic completion boundary;
-- production authentication and authorization remain unimplemented.
+  atomic completion boundary.
 
 The exact inventory and documentation authority are maintained in
 [rewrite status](./rewrite-status.md).

@@ -90,7 +90,6 @@ class ConsolePrincipal:
             MEMBER_ROLE_ADMIN,
         }
 
-
 async def get_organization_id(
     db: Db,
     x_api_key: Annotated[str | None, Header()] = None,

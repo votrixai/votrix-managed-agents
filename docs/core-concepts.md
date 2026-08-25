@@ -30,10 +30,15 @@ A reusable definition of how work should be done: its model, instructions,
 tools, and Skills. Agent changes create versions so existing Sessions can keep
 using the version with which they started.
 
+Read [Agents](/docs/agents) for a runnable definition and tool configuration.
+
 ### Environment
 
 The sandbox setup available to an Agent. A Session can start after its chosen
 Environment reports `build_state: "ready"`.
+
+Read [Environments](/docs/environments) for package recipes, machine settings,
+and the asynchronous build lifecycle.
 
 ### Account
 

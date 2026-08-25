@@ -39,6 +39,11 @@ ACCOUNT_OPERATIONS = {
         "limit_remaining_usd",
         "suspended",
     ),
+    ("get", "/v1/accounts/usage"): (
+        "usage_usd",
+        "every Account",
+        "Suspended Accounts",
+    ),
     ("post", "/v1/accounts/{account_id}/suspend"): (
         "default Account",
         "Existing Sessions",
@@ -204,14 +209,15 @@ def test_required_request_parameters_have_realistic_examples():
                     assert parameter.get("example"), parameter
 
 
-def test_agent_examples_do_not_invent_empty_configuration_items():
+def test_agent_examples_create_a_runnable_definition_without_empty_items():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
     create = schema["paths"]["/v1/agents"]["post"]
     request = create["requestBody"]["content"]["application/json"]["examples"][
         "sample_request"
     ]["value"]
 
-    for field in ("tools", "mcp_servers", "skills"):
+    assert request["tools"] == [{"type": "agent_toolset_20260401"}]
+    for field in ("mcp_servers", "skills"):
         assert field not in request
 
     schemas = schema["components"]["schemas"]
@@ -219,9 +225,16 @@ def test_agent_examples_do_not_invent_empty_configuration_items():
     version = schema["paths"]["/v1/agents/{agent_id}/versions"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["example"]["data"][0]
-    for field in ("tools", "mcp_servers", "skills"):
+    assert response["tools"] == request["tools"]
+    assert version["tools"] == request["tools"]
+    for field in ("mcp_servers", "skills"):
         assert response[field] == []
         assert version[field] == []
+
+    quickstart = (Path(__file__).parents[1] / "docs" / "quickstart.md").read_text(
+        encoding="utf-8"
+    )
+    assert '"tools": [{"type":"agent_toolset_20260401"}]' in quickstart
 
     # `description` is an API field, not merely a JSON Schema annotation. The
     # presentation cleanup must preserve it so every example remains valid for
@@ -237,6 +250,20 @@ def test_agent_examples_do_not_invent_empty_configuration_items():
 
     assert set(response) <= set(schemas["AgentResponse"]["properties"])
     assert set(version) <= set(schemas["AgentVersionResponse"]["properties"])
+
+
+def test_agent_and_environment_schemas_explain_runtime_requirements():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    components = schema["components"]["schemas"]
+
+    tools = components["AgentCreateRequest"]["properties"]["tools"]
+    assert "agent_toolset_20260401" in tools["description"]
+
+    update_config = components["EnvironmentUpdateRequest"]["properties"]["config"]
+    assert "replacement" in update_config["description"]
+
+    build_state = components["EnvironmentResponse"]["properties"]["build_state"]
+    assert all(state in build_state["description"] for state in ("building", "ready", "failed"))
 
 
 def test_payload_examples_are_never_embedded_in_component_schemas():
@@ -284,6 +311,12 @@ def test_documentation_openapi_marks_the_api_key_as_required():
             assert api_key["schema"] == {"type": "string"}
 
 
+def test_billing_and_stripe_webhooks_are_not_vma_api_operations():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    assert not any(path.startswith("/v1/billing") for path in schema["paths"])
+    assert "/webhooks/stripe" not in schema["paths"]
+
+
 def test_account_reference_explains_each_public_operation_and_field():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
 
@@ -303,7 +336,9 @@ def test_account_reference_explains_each_public_operation_and_field():
     for component_name in (
         "AccountCreateRequest",
         "AccountResponse",
+        "AccountUsageSummary",
         "AccountUsageResponse",
+        "OrganizationUsageResponse",
         "ListResponse_AccountResponse_",
     ):
         component = schemas[component_name]
