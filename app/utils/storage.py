@@ -15,7 +15,8 @@ import mimetypes
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncIterator
+from urllib.parse import quote
 
 from app.config import get_settings
 from app.utils.id_generator import new_id
@@ -92,6 +93,114 @@ async def save_bytes(
     return StoredObject(key=key, content_type=content_type, size_bytes=len(data), sha256=sha256)
 
 
+class ObjectTooLarge(RuntimeError):
+    """More bytes arrived than the caller said it would accept."""
+
+
+# Big enough that a 100 MB object is a dozen parts rather than a hundred round
+# trips, small enough that this is what the process holds at any moment. S3
+# requires every part but the last to be at least 5 MiB.
+_PART_BYTES = 8 * 1024 * 1024
+
+
+async def save_stream(
+    chunks: AsyncIterator[bytes],
+    *,
+    organization_id: str,
+    category: str,
+    filename: str,
+    mime_type: str | None = None,
+    max_bytes: int | None = None,
+) -> StoredObject:
+    """Store bytes that arrive a piece at a time, never holding them all.
+
+    ``save_bytes`` needs the whole object in memory — twice over, since hashing
+    and sending both read it — which is what a buffered request body already
+    costs anyway. Bytes pulled from somewhere else have no such excuse, and a
+    100 MB import held in memory on a 4 GiB instance serving eighty other
+    requests is how one upload becomes everyone's problem.
+
+    The key cannot carry a content fingerprint here: the hash is only known
+    after the last chunk, and the key has to exist before the first one goes
+    out. ``object_key`` already allows for that — it falls back to a random
+    segment — so an imported object is addressed by identity rather than by
+    content, and two imports of identical bytes get two objects.
+
+    A failure aborts the multipart upload rather than leaving its parts to be
+    billed forever.
+    """
+
+    settings = _require_settings()
+    content_type = mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    key = object_key(
+        organization_id=organization_id,
+        category=category,
+        filename=filename,
+    )
+
+    digest = hashlib.sha256()
+    parts: list[dict[str, Any]] = []
+    buffer = bytearray()
+    total = 0
+
+    async with _client() as client:
+        created = await client.create_multipart_upload(
+            Bucket=settings.s3_bucket_name, Key=key, ContentType=content_type
+        )
+        upload_id = created["UploadId"]
+
+        async def send(body: bytes) -> None:
+            number = len(parts) + 1
+            part = await client.upload_part(
+                Bucket=settings.s3_bucket_name,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=number,
+                Body=body,
+            )
+            parts.append({"ETag": part["ETag"], "PartNumber": number})
+
+        try:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    raise ObjectTooLarge(
+                        f"the source sent more than {max_bytes} bytes"
+                    )
+                digest.update(chunk)
+                buffer.extend(chunk)
+                while len(buffer) >= _PART_BYTES:
+                    await send(bytes(buffer[:_PART_BYTES]))
+                    del buffer[:_PART_BYTES]
+
+            # The tail, which may be under the 5 MiB floor — allowed for the
+            # last part only. An empty source still gets one empty part, so it
+            # ends up as a real zero-byte object rather than a failed upload.
+            if buffer or not parts:
+                await send(bytes(buffer))
+
+            await client.complete_multipart_upload(
+                Bucket=settings.s3_bucket_name,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except BaseException:
+            await client.abort_multipart_upload(
+                Bucket=settings.s3_bucket_name, Key=key, UploadId=upload_id
+            )
+            raise
+
+    return StoredObject(
+        key=key,
+        content_type=content_type,
+        size_bytes=total,
+        sha256=digest.hexdigest(),
+    )
+
+
 async def download_bytes(key: str) -> tuple[bytes, str | None]:
     settings = _require_settings()
     async with _client() as client:
@@ -143,19 +252,56 @@ async def presigned_upload_url(key: str, *, mime_type: str, expires_in: int = 90
         )
 
 
-async def presigned_download_url(key: str, *, expires_in: int = 300) -> str:
+async def presigned_download_url(
+    key: str,
+    *,
+    expires_in: int = 300,
+    filename: str | None = None,
+    inline: bool = False,
+) -> str:
     """A short-lived read URL — how a sandbox fetches its own skills.
 
     The sandbox gets one URL for one object, never a standing credential.
+
+    `filename` names the file in the response. Without it a browser following
+    this URL saves the object under the tail of its key, and a key deliberately
+    carries a content fingerprint in front of the name — see `object_key`. The
+    name is signed in rather than appended, so nobody can rename an object by
+    editing the URL they were given.
     """
     settings = _require_settings()
+    params: dict[str, str] = {"Bucket": settings.s3_bucket_name, "Key": key}
+    if filename:
+        params["ResponseContentDisposition"] = _content_disposition(
+            "inline" if inline else "attachment", filename
+        )
     async with _client() as client:
         return await client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.s3_bucket_name, "Key": key},
+            Params=params,
             ExpiresIn=expires_in,
             HttpMethod="GET",
         )
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    """Name a file in a header, for names a header cannot spell.
+
+    HTTP headers are latin-1 and an agent writes files called whatever the work
+    was in, so the name goes out twice per RFC 6266: a plain `filename` reduced
+    to characters latin-1 can hold, and `filename*` carrying the real one
+    percent-encoded. Every current browser prefers the second; anything that
+    does not still gets something with the right extension.
+
+    Quotes and backslashes are replaced rather than escaped — they only ever
+    arrive from a name that was already strange, and a stray quote would end
+    the header value early.
+    """
+    fallback = "".join(
+        char if char.isascii() and char.isprintable() and char not in '"\\' else "_"
+        for char in filename
+    )
+    return f"{disposition}; filename=\"{fallback or 'file'}\"; filename*=UTF-8''{quote(filename)}"
 
 
 def _require_settings():

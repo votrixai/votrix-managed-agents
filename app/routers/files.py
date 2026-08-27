@@ -1,10 +1,13 @@
-from fastapi import APIRouter, File as UploadField, UploadFile, status
+from typing import Literal
+
+from fastapi import APIRouter, File as UploadField, Form, UploadFile, status
 from fastapi.responses import RedirectResponse
 
 from app.db.models import File
 from app.db.queries import DEFAULT_PAGE_SIZE
 from app.models.common import DeletedResponse, ListResponse, page_of
 from app.models.files import FileResponse, FileScope
+from app.models.errors import InvalidRequest
 from app.routers.deps import Db, OrganizationId
 from app.services import files as service
 
@@ -15,19 +18,54 @@ router = APIRouter(prefix="/v1/files", tags=["files"])
 async def upload_file(
     db: Db,
     organization_id: OrganizationId,
-    file: UploadFile = UploadField(...),
+    file: UploadFile | None = UploadField(None),
+    url: str | None = Form(None),
+    filename: str | None = Form(None),
+    mime_type: str | None = Form(None),
+    size_bytes: int | None = Form(None),
+    sha256: str | None = Form(None),
 ):
-    """Upload a file, in one call.
+    """Store a file, either by sending its bytes or by naming where they are.
 
-    Filename and content type ride along in the multipart part rather than
-    being declared separately, and the size is whatever arrived — so nothing
-    about the file is a claim that has to be checked afterwards.
+    `file` is the original form: filename and content type ride along in the
+    multipart part rather than being declared separately, and the size is
+    whatever arrived — so nothing about the file is a claim to be checked
+    afterwards.
+
+    `url` is the same thing for bytes too big to send. This service runs behind
+    a front end that refuses a request body over 32 MiB, before any of this
+    runs, which made `MAX_FILE_BYTES` a limit no upload could reach. Given a
+    URL instead, the fetch happens here and streams straight into storage, so
+    the declared limit is finally the real one. The response is identical
+    either way, and so is the rule about claims: `size_bytes` and `sha256` are
+    checked against what actually arrived, never recorded in its place.
     """
+
+    if (file is None) == (url is None):
+        raise InvalidRequest("Send either a file or a url, not both and not neither")
+
+    if url is not None:
+        if not filename:
+            # A URL's path is not a name: it can be a signed key, a hash, or
+            # nothing at all, and the row would be the only place the file's
+            # real name should have been.
+            raise InvalidRequest("filename is required when importing from a url")
+        created = await service.import_file(
+            db,
+            organization_id=organization_id,
+            url=url,
+            filename=filename,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+        )
+        return to_file(created)
+
     created = await service.upload_file(
         db,
         organization_id=organization_id,
-        filename=file.filename or "upload",
-        mime_type=file.content_type,
+        filename=filename or file.filename or "upload",
+        mime_type=mime_type or file.content_type,
         content=await file.read(),
     )
     return to_file(created)
@@ -77,13 +115,28 @@ async def retrieve_file(file_id: str, db: Db, organization_id: OrganizationId):
         }
     },
 )
-async def download_file(file_id: str, db: Db, organization_id: OrganizationId):
+async def download_file(
+    file_id: str,
+    db: Db,
+    organization_id: OrganizationId,
+    disposition: Literal["attachment", "inline"] = "attachment",
+):
     """Redirect to a short-lived signed URL rather than stream the bytes.
 
     307 rather than 302 so the method survives the redirect, and the URL names
     one object for a few minutes — it is not the bucket path.
+
+    `disposition` is the caller's to choose because only the caller knows what
+    it is doing with the file: a download button wants the browser to save it,
+    an `<img>` or a preview pane wants it shown. Either way the name signed
+    into the URL is the one the file was written under.
     """
-    url = await service.download_url(db, file_id=file_id, organization_id=organization_id)
+    url = await service.download_url(
+        db,
+        file_id=file_id,
+        organization_id=organization_id,
+        inline=disposition == "inline",
+    )
     return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
