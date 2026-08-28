@@ -94,8 +94,15 @@ async def list_files(
 
 @router.get("/{file_id}", response_model=FileResponse)
 async def retrieve_file(file_id: str, db: Db, organization_id: OrganizationId):
-    """What the file is, without fetching it — name, size, where it came from."""
-    file = await service.get_file(db, file_id=file_id, organization_id=organization_id)
+    """What the file is, without fetching it — name, size, where it came from.
+
+    Answers for an archived file too, with `archived: true`. Something holding
+    an id needs to be able to ask what became of it, and a 404 says only that
+    the id was never real.
+    """
+    file = await service.get_readable_file(
+        db, file_id=file_id, organization_id=organization_id
+    )
     return to_file(file)
 
 
@@ -156,6 +163,7 @@ def to_file(file: File) -> FileResponse:
         size_bytes=file.size_bytes,
         sha256=file.sha256,
         scope=FileScope.for_id(file.scope_id) if file.scope_id else None,
+        archived=file.archived_at is not None,
         created_at=file.created_at,
         updated_at=file.updated_at,
     )

@@ -51,18 +51,23 @@ async def get_file(db: AsyncSession, *, file_id: str, organization_id: str) -> F
     return result.scalar_one_or_none()
 
 
-async def get_latest_scoped_file(
+async def get_live_scoped_file(
     db: AsyncSession,
     *,
     scope_id: str,
     filename: str,
     organization_id: str,
 ) -> File | None:
-    """The most recent capture of this path by this session.
+    """The file this session currently has at this path, if any.
 
-    Captures append rather than replace, so a path the agent rewrote has
-    several rows. This is the current one — and comparing its hash is how a
-    file that has not changed since the last capture is left alone.
+    There is at most one — a partial unique index says so — because a
+    session's outputs are a directory and a directory holds one file per path.
+    Comparing its hash is how a file that has not changed since the last
+    capture is left alone; a hash that differs means this same row takes on the
+    new contents.
+
+    Archived rows are not candidates. Those are paths that no longer exist,
+    kept only so ids already handed out keep resolving.
     """
     result = await db.execute(
         select(File)
@@ -76,6 +81,69 @@ async def get_latest_scoped_file(
         .limit(1)
     )
     return result.scalars().first()
+
+
+async def list_live_scoped_files(
+    db: AsyncSession, *, scope_id: str, organization_id: str
+) -> list[File]:
+    """Every path this session currently has, as rows.
+
+    What a capture pass compares the container's own listing against, to find
+    the rows whose files are gone.
+    """
+    result = await db.execute(
+        select(File).where(
+            File.scope_id == scope_id,
+            File.organization_id == organization_id,
+            File.archived_at.is_(None),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def replace_file_content(
+    db: AsyncSession,
+    file: File,
+    *,
+    storage_key: str,
+    mime_type: str | None,
+    size_bytes: int,
+    sha256: str | None,
+) -> File:
+    """Point an existing row at new bytes, keeping its identity.
+
+    A path the agent rewrote is the same file, so it keeps the same id. That
+    is what lets a link handed to someone an hour ago still resolve, and
+    resolve to what is there now rather than to what used to be — the two
+    things a file path means.
+
+    `created_at` is deliberately untouched: it records when this path first
+    appeared, which is a different question from when its contents last
+    changed. `updated_at` answers that one.
+
+    The old object stays in the bucket. Removing it here would mean destroying
+    bytes a still-live row points at if this transaction then rolled back, and
+    an unreferenced object costs pennies where that costs the file.
+    """
+    file.storage_key = storage_key
+    file.mime_type = mime_type
+    file.size_bytes = size_bytes
+    file.sha256 = sha256
+    await db.flush()
+    return file
+
+
+async def archive_file(db: AsyncSession, file: File) -> File:
+    """Mark a row as no longer being a file this session has.
+
+    Not a delete. The bytes stay, and so does the id: something quoted it to a
+    user, and a link that stops working is worse than one that hands back the
+    last thing that was there. What changes is that it stops being listed.
+    """
+    if file.archived_at is None:
+        file.archived_at = datetime.now(timezone.utc)
+        await db.flush()
+    return file
 
 
 async def list_files(

@@ -8,6 +8,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +30,25 @@ class File(TimestampMixin, Base):
         # How a session's outputs are read back, which is the one query that
         # has to stay fast however many files an organization accumulates.
         Index("ix_files_scope", "organization_id", "scope_id"),
+        # A session's outputs are a directory, and a directory holds one file
+        # per path. Enforced here rather than left to the code that captures
+        # them: two captures of the same path racing each other would each
+        # find no live row and each insert one, and the duplicate that
+        # produces is invisible until someone looks at a file list and sees
+        # the same name three times.
+        #
+        # Archived rows are excluded because they are the paths that no longer
+        # exist. A file the agent deleted and later wrote again has to be able
+        # to take its own name back.
+        Index(
+            "uq_files_live_scoped_path",
+            "organization_id",
+            "scope_id",
+            "filename",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL AND scope_id IS NOT NULL"),
+            sqlite_where=text("archived_at IS NULL AND scope_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

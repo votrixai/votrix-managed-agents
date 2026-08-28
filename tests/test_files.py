@@ -673,6 +673,18 @@ class FakeContainer:
     def write(self, path: str, content: bytes) -> None:
         self.files[path] = content
 
+    def remove(self, path: str) -> None:
+        """The agent deleting a deliverable it had produced."""
+        self.files.pop(path, None)
+
+    def clear(self) -> None:
+        """A container that answers a listing with nothing.
+
+        Indistinguishable, from the outside, from one whose `outputs/` really
+        is empty — which is why nothing is retired on the strength of it.
+        """
+        self.files.clear()
+
     async def run(self, command, **kwargs):
         import hashlib
         import re
@@ -752,24 +764,22 @@ async def test_the_same_file_is_not_taken_twice(db, org, bucket, container):
     assert collected == []
 
 
-async def test_a_rewritten_file_is_taken_again(db, org, bucket, container):
+async def test_a_rewritten_file_keeps_its_identity(db, org, bucket, container):
+    """A path is one file however many times its contents are rewritten."""
     container.write("chart.png", b"first draft")
     first = (await collect(db, container))[0]
 
     container.write("chart.png", b"second draft, much better")
     second = (await collect(db, container))[0]
 
-    assert second.id != first.id
+    assert second.id == first.id
     assert second.size_bytes == len(b"second draft, much better")
 
 
 async def test_an_id_handed_out_keeps_working_after_a_rewrite(db, org, bucket, container):
-    """Captures are added, never replaced.
-
-    An id quoted to a user, or stored by a client, has to keep resolving. If a
-    later capture removed the record it superseded, every id handed out earlier
-    in the session would rot the moment the agent touched the file again.
-    """
+    """An id quoted to a user, or stored by a client, has to keep resolving —
+    and to resolve to what is at that path now. Those are the two halves of
+    what a file path means, and the id is how this service spells one."""
     from app.services import files as files_service
 
     container.write("chart.png", b"first draft")
@@ -779,11 +789,11 @@ async def test_an_id_handed_out_keeps_working_after_a_rewrite(db, org, bucket, c
     await collect(db, container)
 
     still_there = await files_service.get_file(db, file_id=first.id, organization_id=org)
-    assert still_there.size_bytes == len(b"first draft")
-    assert not bucket.deleted, "an earlier version was removed from the bucket"
+    assert still_there.size_bytes == len(b"second draft")
 
 
-async def test_a_list_shows_the_newest_version_first(db, org, bucket, container, client, headers):
+async def test_a_list_shows_one_file_per_path(db, org, bucket, container, client, headers):
+    """Three hand-overs of one project are one file, not three with one name."""
     container.write("chart.png", b"first draft")
     await collect(db, container)
     container.write("chart.png", b"second draft")
@@ -791,9 +801,52 @@ async def test_a_list_shows_the_newest_version_first(db, org, bucket, container,
 
     body = (await client.get("/v1/files?scope_id=ses_1", headers=headers)).json()
 
-    assert [f["size_bytes"] for f in body["data"]] == [
-        len(b"second draft"), len(b"first draft")
-    ]
+    assert [f["size_bytes"] for f in body["data"]] == [len(b"second draft")]
+
+
+async def test_a_deleted_file_stops_being_listed(db, org, bucket, container, client, headers):
+    """The listing is a directory, so a path the agent removed leaves it."""
+    container.write("chart.png", b"a draft")
+    container.write("keep.txt", b"still here")
+    await collect(db, container)
+
+    container.remove("chart.png")
+    await collect(db, container)
+
+    body = (await client.get("/v1/files?scope_id=ses_1", headers=headers)).json()
+    assert [f["filename"] for f in body["data"]] == ["keep.txt"]
+
+
+async def test_a_deleted_file_can_still_be_downloaded(db, org, bucket, container, client, headers):
+    """Archiving is not deleting: whoever holds the id still gets the bytes."""
+    container.write("chart.png", b"a draft")
+    container.write("keep.txt", b"still here")
+    taken = (await collect(db, container))[0]
+
+    container.remove("chart.png")
+    await collect(db, container)
+
+    described = await client.get(f"/v1/files/{taken.id}", headers=headers)
+    assert described.status_code == 200
+    assert described.json()["archived"] is True
+    content = await client.get(f"/v1/files/{taken.id}/content", headers=headers)
+    assert content.status_code == 307
+
+
+async def test_an_unreadable_container_retires_nothing(db, org, bucket, container):
+    """An empty listing is how a container that could not be read answers, so
+    it must not be read as an empty directory — that would retire every file
+    the session made."""
+    container.write("chart.png", b"a draft")
+    await collect(db, container)
+
+    container.clear()
+    await collect(db, container)
+
+    from app.db.queries import files as files_q
+
+    live = await files_q.list_live_scoped_files(db, scope_id="ses_1", organization_id=org)
+    assert [f.filename for f in live] == ["chart.png"]
 
 
 async def test_files_in_subdirectories_keep_their_place(db, org, bucket, container):
@@ -915,14 +968,14 @@ async def test_taking_the_same_file_twice_makes_one_record(client, headers, runn
     assert first["id"] == second["id"]
 
 
-async def test_taking_it_again_after_a_change_makes_a_new_record(client, headers, running, container):
+async def test_taking_it_again_after_a_change_updates_the_record(client, headers, running, container):
     container.write("report.pdf", b"draft")
     first = (await take(client, headers, running, "report.pdf")).json()
 
     container.write("report.pdf", b"final version")
     second = (await take(client, headers, running, "report.pdf")).json()
 
-    assert second["id"] != first["id"]
+    assert second["id"] == first["id"]
     assert second["size_bytes"] == len(b"final version")
 
 

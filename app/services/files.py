@@ -208,8 +208,31 @@ async def _check_import_url(url: str) -> None:
 
 
 async def get_file(db: AsyncSession, *, file_id: str, organization_id: str) -> File:
+    """A file the session still has.
+
+    Archived rows are not files the session has — they are paths it used to
+    have — so anything asking "what is here" gets a 404 for one. Reading an
+    archived file's bytes is a different question; see `get_readable_file`.
+    """
     file = await files_q.get_file(db, file_id=file_id, organization_id=organization_id)
     if file is None or file.archived_at is not None:
+        raise NotFound(f"File {file_id} not found")
+    return file
+
+
+async def get_readable_file(
+    db: AsyncSession, *, file_id: str, organization_id: str
+) -> File:
+    """A file whose bytes can still be read, archived or not.
+
+    An id that was quoted to someone — in a reply, in a link, in a record of
+    what an agent delivered — has to keep resolving after the agent deletes
+    the path it came from. The bytes are still in the bucket and nothing is
+    saved by refusing them; what archiving means is that the file stops being
+    listed, not that it becomes unreachable.
+    """
+    file = await files_q.get_file(db, file_id=file_id, organization_id=organization_id)
+    if file is None:
         raise NotFound(f"File {file_id} not found")
     return file
 
@@ -256,7 +279,9 @@ async def download_url(
     fingerprint, so without this a browser saves `a1b2c3d4_report.pdf`, and the
     row is the only place the name it was written under still exists.
     """
-    file = await get_file(db, file_id=file_id, organization_id=organization_id)
+    file = await get_readable_file(
+        db, file_id=file_id, organization_id=organization_id
+    )
     return await storage.presigned_download_url(
         file.storage_key,
         expires_in=DOWNLOAD_URL_TTL_SECONDS,
@@ -300,6 +325,7 @@ __all__ = [
     "delete_file",
     "download_url",
     "get_file",
+    "get_readable_file",
     "list_files",
     "upload_file",
 ]
