@@ -34,6 +34,9 @@ class FakeBucket:
     def __init__(self) -> None:
         self.uploaded: dict[str, bytes] = {}
         self.deleted: list[str] = []
+        # What each download URL was signed to say, which is the only place
+        # the response's filename and disposition are decided.
+        self.signed: list[dict] = []
 
     def put(self, key: str, data: bytes = b"hello") -> None:
         self.uploaded[key] = data
@@ -55,7 +58,8 @@ class FakeBucket:
     async def presigned_upload_url(self, key, *, mime_type, expires_in=900):
         return f"https://bucket.example/put/{key}"
 
-    async def presigned_download_url(self, key, *, expires_in=300):
+    async def presigned_download_url(self, key, *, expires_in=300, filename=None, inline=False):
+        self.signed.append({"key": key, "filename": filename, "inline": inline})
         return f"https://bucket.example/get/{key}"
 
     async def object_size(self, key):
@@ -145,6 +149,42 @@ async def test_downloading_redirects_to_a_signed_url(client, headers, bucket):
 
     assert response.status_code == 307
     assert response.headers["location"].startswith("https://bucket.example/get/")
+
+
+async def test_a_download_url_carries_the_file_s_own_name(client, headers, bucket):
+    """A key starts with a content fingerprint, so without this the browser
+    saves `a1b2c3d4_sales.csv`. The name only exists on the row."""
+    await upload(client, headers, bucket, filename="sales.csv")
+    file_id = await upload(client, headers, bucket, filename="sales.csv")
+
+    await client.get(f"/v1/files/{file_id}/content", headers=headers)
+
+    assert bucket.signed[-1]["filename"] == "sales.csv"
+    assert bucket.signed[-1]["inline"] is False
+
+
+async def test_a_caller_choosing_inline_gets_it_signed_inline(client, headers, bucket):
+    """Only the caller knows whether this is a download button or an <img>."""
+    file_id = await upload(client, headers, bucket, filename="chart.png")
+
+    response = await client.get(
+        f"/v1/files/{file_id}/content", params={"disposition": "inline"}, headers=headers
+    )
+
+    assert response.status_code == 307
+    assert bucket.signed[-1]["inline"] is True
+
+
+async def test_a_name_a_header_cannot_spell_survives_being_one():
+    """Headers are latin-1 and an agent names files after the work. Both forms
+    go out, per RFC 6266, so neither browser gets nothing."""
+    from app.utils.storage import _content_disposition
+
+    header = _content_disposition("attachment", "\u9500\u552e\u62a5\u8868.csv")
+
+    header.encode("latin-1")  # would raise before the fallback existed
+    assert 'filename="____.csv"' in header
+    assert "filename*=UTF-8''%E9%94%80%E5%94%AE%E6%8A%A5%E8%A1%A8.csv" in header
 
 
 async def test_where_the_bytes_live_is_never_published(client, headers, bucket):
@@ -1017,4 +1057,59 @@ def test_backend_forwards_every_async_protocol_method():
     assert not missing, (
         f"LazyE2BBackend does not forward {missing} — DeepAgents calling any of "
         f"them gets the protocol's NotImplementedError instead of the sandbox"
+    )
+
+
+def test_langchain_e2b_calls_nothing_deepagents_moved():
+    """`langchain-e2b` reaches into DeepAgents' private API. Hold it to it.
+
+    It imports seven underscore-prefixed names from
+    `deepagents.backends.sandbox` and subclasses `BaseSandbox` to inherit
+    more, none of which carries a compatibility promise. DeepAgents 0.6.11
+    turned `BaseSandbox._map_edit_error` into a module-level function while
+    `AsyncE2BSandbox.aedit` went on calling `self._map_edit_error(...)`, and
+    because `deepagents>=0.6.0,<0.7.0` admits both, the mismatch installs
+    cleanly and only shows up when an edit fails — the one path that reaches
+    the call. `app.utils.sandbox` puts that method back.
+
+    Asserting the shape rather than that one name is what makes this worth
+    keeping: every `self._x` either class resolves is checked, so the next
+    private method to move is a failing test here rather than an
+    `AttributeError` in front of the model. Attributes assigned on `self`
+    are the classes' own, so they are excluded; each class is read alone,
+    since the sync and async halves do not share a body.
+    """
+    import ast
+    import inspect
+
+    import app.utils.sandbox  # noqa: F401  — installs the patch under test
+    import langchain_e2b.sandbox as module
+    from langchain_e2b import AsyncE2BSandbox, E2BSandbox
+
+    bodies = {
+        node.name: node
+        for node in ast.parse(inspect.getsource(module)).body
+        if isinstance(node, ast.ClassDef)
+    }
+
+    unresolved: dict[str, list[str]] = {}
+    for cls in (AsyncE2BSandbox, E2BSandbox):
+        read: set[str] = set()
+        written: set[str] = set()
+        for node in ast.walk(bodies[cls.__name__]):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            ):
+                (written if isinstance(node.ctx, ast.Store) else read).add(node.attr)
+        missing = sorted(name for name in read - written if not hasattr(cls, name))
+        if missing:
+            unresolved[cls.__name__] = missing
+
+    assert not unresolved, (
+        f"langchain-e2b calls {unresolved} on itself and nothing defines them — "
+        f"a DeepAgents private method moved again. Each one is an AttributeError "
+        f"on whichever sandbox path reaches it; patch it in app/utils/sandbox.py "
+        f"the way _map_edit_error is patched"
     )

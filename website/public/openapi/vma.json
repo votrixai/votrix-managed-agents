@@ -4419,7 +4419,6 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
@@ -4783,6 +4782,20 @@
             },
             "description": "Unique identifier of the file addressed by this request.",
             "example": "file_1234567890abcdef1234567890abcdef"
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "attachment",
+                "inline"
+              ],
+              "type": "string",
+              "default": "attachment"
+            },
+            "description": "Whether a browser following the redirect saves the File or shows it. Signed into the URL along with the File's own name."
           },
           {
             "name": "x-api-key",
@@ -6878,14 +6891,68 @@
       "Body_upload_file_v1_files_post": {
         "properties": {
           "file": {
-            "type": "string",
-            "contentMediaType": "application/octet-stream"
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
-        "required": [
-          "file"
-        ],
         "title": "Body_upload_file_v1_files_post"
       },
       "DeletedMemoryStoreResponse": {

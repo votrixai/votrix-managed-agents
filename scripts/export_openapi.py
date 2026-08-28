@@ -76,6 +76,10 @@ PARAMETER_DESCRIPTIONS = {
     "expected_content_sha256": (
         "Expected current SHA-256 digest used as the Memory delete precondition."
     ),
+    "disposition": (
+        "Whether a browser following the redirect saves the File or shows it. "
+        "Signed into the URL along with the File's own name."
+    ),
     "include_archived": "Include archived resources in the result.",
     "limit": "Maximum number of records returned in this page.",
     "memory_id": "Only return Versions belonging to this Memory.",
