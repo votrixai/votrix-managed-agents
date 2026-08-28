@@ -7329,6 +7329,10 @@
               }
             ]
           },
+          "archived": {
+            "type": "boolean",
+            "default": false
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"

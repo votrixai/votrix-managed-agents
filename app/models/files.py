@@ -40,6 +40,11 @@ class FileResponse(ApiModel):
     # Absent for anything a user uploaded. An output file is an ordinary file
     # wearing a label saying which run it came out of, not a different kind.
     scope: FileScope | None = None
+    # True once the path this file was at no longer exists in its session's
+    # sandbox. An archived file is absent from every listing and its bytes are
+    # still downloadable, which is what lets an id that was quoted somewhere
+    # keep resolving after the agent deleted the file.
+    archived: bool = False
     created_at: datetime
     updated_at: datetime
 

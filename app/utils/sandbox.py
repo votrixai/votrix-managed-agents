@@ -992,6 +992,14 @@ class Sandbox:
         whenever anyone wants the file — after a turn, from a tool, twice by a
         client that retried — without the row count following them around.
 
+        Taking a *changed* file twice returns that same record too, now holding
+        the new bytes. A path is one file however many times its contents are
+        rewritten, so the row that stands for it keeps its id: the link an
+        agent quoted after the first hand-over still resolves after the third,
+        and resolves to what is there now. Records used to be added instead,
+        which is why a project handed over three times appeared in the file
+        list as three files with one name.
+
         `sha256` is accepted from a caller that has already computed it, since
         listing a directory computes them all in one go anyway.
         """
@@ -1000,8 +1008,9 @@ class Sandbox:
         if digest is None:
             raise ValueError(f"{path} does not exist in the sandbox")
 
+        previous: File | None = None
         if scope_id is not None:
-            previous = await files_q.get_latest_scoped_file(
+            previous = await files_q.get_live_scoped_file(
                 db,
                 scope_id=scope_id,
                 filename=name,
@@ -1032,6 +1041,15 @@ class Sandbox:
         size = await storage.object_size(key)
         if size is None:
             raise ValueError(f"{path} never arrived in storage")
+        if previous is not None:
+            return await files_q.replace_file_content(
+                db,
+                previous,
+                storage_key=key,
+                mime_type=content_type,
+                size_bytes=size,
+                sha256=digest,
+            )
         return await files_q.create_file(
             db,
             organization_id=self._organization_id,
@@ -1167,15 +1185,22 @@ class Sandbox:
         return found
 
     async def discover_outputs(self, db: AsyncSession) -> list[File]:
-        """Take everything new the agent left in `outputs/`.
+        """Make this session's file records say what `outputs/` says.
 
-        A session runs many turns and this runs after each of them, so a file
-        that has not changed since it was last taken is left alone.
+        A session runs many turns and this runs after each of them, so what it
+        does is reconcile rather than collect: a path whose hash has not moved
+        is left alone, a path whose hash has moved has its record take on the
+        new bytes, and a record whose path is no longer in the container is
+        archived.
 
-        A file the agent rewrote becomes another record rather than replacing
-        the one before it. Records are only ever added: an id handed out to a
-        client, or quoted back to a user, keeps working for as long as the file
-        exists, whatever the agent does to the path afterwards.
+        The point of the third case is that these records are a directory
+        listing, not a log of what was once taken. A file the agent deleted is
+        a file the session no longer has, and continuing to list it is the
+        same mistake as listing three copies of a project that was handed over
+        three times.
+
+        Archiving is not deleting. The bytes and the id survive, so anything
+        that already quoted one keeps resolving; it just stops being listed.
         """
         async with timed("outputs_discovered", scope_id=self._scope_id) as span:
             found = await self.list_files(OUTPUTS_DIR)
@@ -1183,7 +1208,7 @@ class Sandbox:
 
         collected: list[File] = []
         for output in found:
-            before = await files_q.get_latest_scoped_file(
+            before = await files_q.get_live_scoped_file(
                 db,
                 scope_id=self._scope_id,
                 filename=output.path,
@@ -1200,6 +1225,20 @@ class Sandbox:
                     sha256=output.sha256,
                 )
             )
+
+        # Whatever we still hold that the container no longer has. An empty
+        # listing is not taken as proof of an empty directory: `list_files`
+        # answers the same way for a container that could not be read as for
+        # one with nothing in it, and the two must not have the same
+        # consequence when one of them retires every file the session made.
+        if found:
+            here = {output.path for output in found}
+            for record in await files_q.list_live_scoped_files(
+                db, scope_id=self._scope_id, organization_id=self._organization_id
+            ):
+                if record.filename not in here:
+                    await files_q.archive_file(db, record)
+
         return collected
 
     # ---- skills -----------------------------------------------------------
