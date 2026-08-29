@@ -895,7 +895,7 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
 
     It rides on the model spec rather than beside it because it is not separable
     from the model: `low` means a different number of tokens on each of them,
-    and on two of the sixteen it means nothing at all. A Session that carries
+    and on two of the fifteen it means nothing at all. A Session that carries
     one carries the other.
 
     Note what the caller passes in — `session.model or version.model` — so a
@@ -934,7 +934,7 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
 
     It rides on the model spec rather than beside it because it is not separable
     from the model: `low` means a different number of tokens on each of them,
-    and on two of the sixteen it means nothing at all. A Session that carries
+    and on two of the fifteen it means nothing at all. A Session that carries
     one carries the other.
 
     Note what the caller passes in — `session.model or version.model` — so a

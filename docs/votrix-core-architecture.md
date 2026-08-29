@@ -499,7 +499,7 @@ They are deliberately not durable and are replaced by the final Agent message.
 ## Model boundary
 
 `app/models/llm.py` contains a hard-coded catalog for Anthropic, Google,
-OpenAI, and DeepSeek models plus each model's OpenRouter slug.
+OpenAI, Moonshot AI, and DeepSeek models plus each model's OpenRouter slug.
 `app/runtime/engine.py` sends every model through OpenRouter.
 
 A caller chooses a known model ID but never supplies a credential in the Agent
