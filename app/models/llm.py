@@ -11,6 +11,7 @@ from app.models.common import ApiModel
 ANTHROPIC = "anthropic"
 DEEPSEEK = "deepseek"
 GOOGLE = "google"
+MOONSHOT = "moonshotai"
 OPENAI = "openai"
 
 
@@ -118,6 +119,11 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         provider=OPENAI,
         display_name="GPT-5.6 Luna",
     ),
+    ModelResponse(
+        id="kimi-k3",
+        provider=MOONSHOT,
+        display_name="Kimi K3",
+    ),
     # Undated on purpose. Dated snapshots were briefly listed beside these so
     # two cuts of the same model could be timed against each other; that
     # measurement is done, and a catalogue is a menu rather than a record of
@@ -138,7 +144,7 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
 
 
 # What the gateway calls each model. Written out rather than derived from
-# `f"{provider}/{id}"`, which is right for twelve of these and wrong for the two
+# `f"{provider}/{id}"`, which is right for thirteen of these and wrong for the two
 # Anthropic ids that spell their version with a dot. A wrong slug fails at the
 # gateway, whose error names a model nobody wrote down, so the mapping is stated
 # here where a reader can check it against the catalog.
@@ -158,6 +164,7 @@ OPENROUTER_SLUGS: dict[str, str] = {
     "gpt-5.6-sol": "openai/gpt-5.6-sol",
     "gpt-5.6-terra": "openai/gpt-5.6-terra",
     "gpt-5.6-luna": "openai/gpt-5.6-luna",
+    "kimi-k3": "moonshotai/kimi-k3",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
 }

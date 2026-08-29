@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.llm import ANTHROPIC, DEEPSEEK, MODEL_CATALOG, OPENROUTER_SLUGS
+from app.models.llm import (
+    ANTHROPIC,
+    DEEPSEEK,
+    MODEL_CATALOG,
+    MOONSHOT,
+    OPENROUTER_SLUGS,
+)
 from app.runtime.engine import UnknownModelError, _build_chat_model
 
 
@@ -33,7 +39,7 @@ def test_slugs_are_namespaced_by_their_upstream_provider():
 
 
 def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
-    """Twelve slugs are `f"{provider}/{id}"`; these two are not.
+    """Thirteen slugs are `f"{provider}/{id}"`; these two are not.
 
     Anthropic's catalog ids spell a version with hyphens and the gateway spells
     it with a dot, so deriving the slug would silently address a model that does
@@ -41,6 +47,29 @@ def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
     """
     assert OPENROUTER_SLUGS["claude-sonnet-4-6"] == "anthropic/claude-sonnet-4.6"
     assert OPENROUTER_SLUGS["claude-haiku-4-5"] == "anthropic/claude-haiku-4.5"
+
+
+def test_kimi_k3_uses_the_public_openrouter_id_and_reasoning_controls():
+    """Kimi is auto-routed and accepts both VMA's default and Maya's high effort."""
+    entry = next(model for model in MODEL_CATALOG if model.id == "kimi-k3")
+    client = _build_chat_model(
+        entry.id,
+        api_key="sk-or-v1-test",
+        session_id="sess_gateway_test",
+    )
+    high_effort = _build_chat_model(
+        {"id": entry.id, "thinking": "high"},
+        api_key="sk-or-v1-test",
+        session_id="sess_gateway_test",
+    )
+
+    assert entry.provider == MOONSHOT
+    assert entry.thinking is True
+    assert OPENROUTER_SLUGS[entry.id] == "moonshotai/kimi-k3"
+    assert client.model == "moonshotai/kimi-k3"
+    assert client._default_params["reasoning"] == {"effort": "low"}
+    assert high_effort._default_params["reasoning"] == {"effort": "high"}
+    assert client.openrouter_provider is None
 
 
 def test_an_uncatalogued_model_is_refused_before_any_client_is_built():
