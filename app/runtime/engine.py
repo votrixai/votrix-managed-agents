@@ -35,6 +35,7 @@ from app.models.llm import (
     DEEPSEEK,
     DEFAULT_THINKING,
     MODEL_CATALOG,
+    MOONSHOT,
     OPENROUTER_SLUGS,
     THINKING_LEVELS,
     ModelResponse,
@@ -874,6 +875,26 @@ def _build_chat_model(
     # fail the request rather than silently spilling it to a slower third party.
     if entry.provider == DEEPSEEK:
         options["openrouter_provider"] = {"only": [DEEPSEEK], "allow_fallbacks": False}
+
+    # Kimi is served by seventeen endpoints and the gateway picks among them
+    # freely. Two turns of one Session landed on Together and both collapsed
+    # part-way through the answer into thousands of `!` — one mid-sentence,
+    # one after the first word of its reasoning. Both came back 200 with
+    # `finish_reason: "stop"`, so nothing downstream could tell them from a
+    # real answer, and the gateway's own uptime figure still counts them as
+    # served. Which endpoint runs this is therefore a decision, not something
+    # to leave to routing.
+    #
+    # Ordered rather than pinned to one: `order` sends every ordinary request
+    # to the first entry, and the second exists only for the hours the first
+    # is down. Baseten is the more precise of the two — fp8 against Moonshot's
+    # mxfp4, which is also four-bit — and the faster, so it leads; Moonshot's
+    # own deployment backs it rather than a third party we have not looked at.
+    if entry.provider == MOONSHOT:
+        options["openrouter_provider"] = {
+            "order": ["baseten", MOONSHOT],
+            "allow_fallbacks": False,
+        }
 
     thinking = _resolve_thinking(spec, entry)
     if thinking is not None:

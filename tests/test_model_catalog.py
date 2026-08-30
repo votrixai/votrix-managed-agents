@@ -50,7 +50,7 @@ def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
 
 
 def test_kimi_k3_uses_the_public_openrouter_id_and_reasoning_controls():
-    """Kimi is auto-routed and accepts both VMA's default and Maya's high effort."""
+    """Kimi accepts both VMA's default effort and Maya's high one."""
     entry = next(model for model in MODEL_CATALOG if model.id == "kimi-k3")
     client = _build_chat_model(
         entry.id,
@@ -69,7 +69,25 @@ def test_kimi_k3_uses_the_public_openrouter_id_and_reasoning_controls():
     assert client.model == "moonshotai/kimi-k3"
     assert client._default_params["reasoning"] == {"effort": "low"}
     assert high_effort._default_params["reasoning"] == {"effort": "high"}
-    assert client.openrouter_provider is None
+
+
+def test_kimi_k3_is_kept_off_the_endpoint_that_degenerated():
+    """Together answered two Kimi turns with thousands of `!` and a 200.
+
+    Named here rather than left to routing because that failure is invisible
+    downstream: `finish_reason` was `stop`, so no caller could reject it, and
+    the endpoint's published uptime still counts those turns as served.
+    """
+    client = _build_chat_model(
+        "kimi-k3",
+        api_key="sk-or-v1-test",
+        session_id="sess_gateway_test",
+    )
+
+    assert client.openrouter_provider == {
+        "order": ["baseten", MOONSHOT],
+        "allow_fallbacks": False,
+    }
 
 
 def test_an_uncatalogued_model_is_refused_before_any_client_is_built():
@@ -134,9 +152,31 @@ def test_deepseek_models_are_restricted_to_the_first_party_provider():
     }
 
     for model in MODEL_CATALOG:
-        expected = (
-            {"only": [DEEPSEEK], "allow_fallbacks": False}
-            if model.provider == DEEPSEEK
-            else None
+        if model.provider != DEEPSEEK:
+            continue
+        assert built[model.id].openrouter_provider == {
+            "only": [DEEPSEEK],
+            "allow_fallbacks": False,
+        }, model.id
+
+
+def test_models_with_nothing_said_about_routing_are_left_to_the_gateway():
+    """Two providers name their endpoint. Every other model auto-routes.
+
+    The pins are exceptions earned one at a time — a data policy for DeepSeek,
+    an endpoint caught returning garbage for Kimi — so a third one appearing
+    without a reason beside it should fail here.
+    """
+    built = {
+        model.id: _build_chat_model(
+            model.id,
+            api_key="sk-or-v1-test",
+            session_id="sess_gateway_test",
         )
-        assert built[model.id].openrouter_provider == expected
+        for model in MODEL_CATALOG
+    }
+
+    for model in MODEL_CATALOG:
+        if model.provider in (DEEPSEEK, MOONSHOT):
+            continue
+        assert built[model.id].openrouter_provider is None, model.id
