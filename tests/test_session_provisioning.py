@@ -3,8 +3,49 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+from unittest.mock import AsyncMock
+
+from sqlalchemy.exc import IntegrityError
 
 from app.services import sessions as service
+
+
+async def test_database_unique_index_resolves_a_cross_instance_create_race(monkeypatch):
+    original = sqlite3.IntegrityError(
+        "UNIQUE constraint failed: "
+        "sessions.organization_id, sessions.idempotency_key"
+    )
+    collision = IntegrityError("INSERT INTO sessions", {}, original)
+    winner = object()
+    db = AsyncMock()
+
+    async def _collide(db, **kwargs):
+        raise collision
+
+    lookup = AsyncMock(side_effect=[None, winner])
+    monkeypatch.setattr(service, "_create_session", _collide)
+    monkeypatch.setattr(service.sessions_q, "get_by_idempotency_key", lookup)
+    monkeypatch.setattr(
+        service,
+        "_session_provision_slots",
+        asyncio.Semaphore(service.MAX_CONCURRENT_SESSION_PROVISIONS),
+    )
+
+    result = await service.create_session(
+        db,
+        organization_id="org_test",
+        agent_id="agent_test",
+        environment_id="env_test",
+        idempotency_key="cma-snapshot/session",
+    )
+
+    assert result is winner
+    db.rollback.assert_awaited_once()
+    assert lookup.await_count == 2
+    lookup.assert_awaited_with(
+        db, organization_id="org_test", idempotency_key="cma-snapshot/session"
+    )
 
 
 async def test_only_four_sessions_provision_at_once(monkeypatch):

@@ -24,6 +24,7 @@ async def upload_file(
     mime_type: str | None = Form(None),
     size_bytes: int | None = Form(None),
     sha256: str | None = Form(None),
+    idempotency_key: str | None = Form(None, min_length=1, max_length=255),
 ):
     """Store a file, either by sending its bytes or by naming where they are.
 
@@ -58,6 +59,7 @@ async def upload_file(
             mime_type=mime_type,
             size_bytes=size_bytes,
             sha256=sha256,
+            idempotency_key=idempotency_key,
         )
         return to_file(created)
 
@@ -67,6 +69,7 @@ async def upload_file(
         filename=filename or file.filename or "upload",
         mime_type=mime_type or file.content_type,
         content=await file.read(),
+        idempotency_key=idempotency_key,
     )
     return to_file(created)
 

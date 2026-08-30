@@ -129,6 +129,33 @@ async def test_what_is_recorded_is_measured_not_declared(client, headers):
     assert body["sha256"] == hashlib.sha256(content).hexdigest()
 
 
+async def test_retrying_a_file_upload_with_the_same_key_returns_the_original(
+    client, headers, bucket
+):
+    first = await client.post(
+        "/v1/files",
+        headers=headers,
+        files={
+            "file": ("legacy.md", b"first", "text/markdown"),
+            "idempotency_key": (None, "cma-snapshot/file-123"),
+        },
+    )
+    second = await client.post(
+        "/v1/files",
+        headers=headers,
+        files={
+            "file": ("ignored.md", b"different", "text/markdown"),
+            "idempotency_key": (None, "cma-snapshot/file-123"),
+        },
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["sha256"] == hashlib.sha256(b"first").hexdigest()
+    assert len(bucket.uploaded) == 1
+
+
 async def test_an_uploaded_file_has_no_scope(client, headers):
     """That label is what separates what a user put in from what a run made."""
     file_id = await upload(client, headers)

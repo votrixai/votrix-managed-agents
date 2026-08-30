@@ -16,6 +16,7 @@ import ipaddress
 from urllib.parse import urlparse
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import File
@@ -54,6 +55,7 @@ async def upload_file(
     filename: str,
     mime_type: str | None,
     content: bytes,
+    idempotency_key: str | None = None,
 ) -> File:
     """Store an uploaded file.
 
@@ -61,6 +63,15 @@ async def upload_file(
     the client — the size and the hash are measured here, so there is nothing
     to take on trust and nothing to go back and verify.
     """
+    if idempotency_key is not None:
+        existing = await files_q.get_by_idempotency_key(
+            db,
+            organization_id=organization_id,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            return existing
+
     if len(content) > MAX_FILE_BYTES:
         raise Conflict(f"A file may be at most {MAX_FILE_BYTES} bytes")
 
@@ -71,17 +82,13 @@ async def upload_file(
         filename=filename,
         mime_type=mime_type,
     )
-    file = await files_q.create_file(
+    return await _record_stored_file(
         db,
         organization_id=organization_id,
         filename=filename,
-        storage_key=stored.key,
-        mime_type=stored.content_type,
-        size_bytes=stored.size_bytes,
-        sha256=stored.sha256,
+        stored=stored,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
-    return file
 
 
 async def import_file(
@@ -94,6 +101,7 @@ async def import_file(
     size_bytes: int | None = None,
     sha256: str | None = None,
     scope_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> File:
     """Store a file by fetching it, rather than by being handed its bytes.
 
@@ -107,6 +115,15 @@ async def import_file(
     is recorded is what arrived; if the caller said what to expect and the two
     disagree, the object is removed rather than left to be read as whole.
     """
+
+    if idempotency_key is not None:
+        existing = await files_q.get_by_idempotency_key(
+            db,
+            organization_id=organization_id,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            return existing
 
     await _check_import_url(url)
 
@@ -159,18 +176,81 @@ async def import_file(
         await storage.delete_object(stored.key)
         raise Conflict("The fetched bytes do not match the declared sha256")
 
-    file = await files_q.create_file(
+    return await _record_stored_file(
         db,
         organization_id=organization_id,
         filename=filename,
-        storage_key=stored.key,
-        mime_type=stored.content_type,
-        size_bytes=stored.size_bytes,
-        sha256=stored.sha256,
+        stored=stored,
         scope_id=scope_id,
+        idempotency_key=idempotency_key,
     )
-    await db.commit()
-    return file
+
+
+async def _record_stored_file(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    filename: str,
+    stored: storage.StoredObject,
+    scope_id: str | None = None,
+    idempotency_key: str | None = None,
+) -> File:
+    """Commit one stored object, resolving only the named retry race.
+
+    Two instances can both miss the optimistic lookup before either insert
+    commits. The unique index chooses the winner. The loser rolls back, reads
+    that winner, and removes only its own distinct object; byte uploads can be
+    content-addressed, so deleting an identical key would delete the winner's
+    bytes too.
+    """
+
+    try:
+        file = await files_q.create_file(
+            db,
+            organization_id=organization_id,
+            filename=filename,
+            storage_key=stored.key,
+            mime_type=stored.content_type,
+            size_bytes=stored.size_bytes,
+            sha256=stored.sha256,
+            scope_id=scope_id,
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return file
+    except IntegrityError as exc:
+        if idempotency_key is None or not _idempotency_conflict(exc):
+            raise
+        await db.rollback()
+        winner = await files_q.get_by_idempotency_key(
+            db,
+            organization_id=organization_id,
+            idempotency_key=idempotency_key,
+        )
+        if winner is None:
+            raise
+        if winner.storage_key != stored.key:
+            await storage.delete_object(stored.key)
+        return winner
+
+
+def _idempotency_conflict(exc: IntegrityError) -> bool:
+    original = exc.orig
+    candidates = (
+        original,
+        getattr(original, "orig", None),
+        getattr(original, "__cause__", None),
+    )
+    for candidate in candidates:
+        diagnostic = getattr(candidate, "diag", None)
+        constraint = getattr(diagnostic, "constraint_name", None) or getattr(
+            candidate, "constraint_name", None
+        )
+        if constraint is not None:
+            return constraint == "uq_files_organization_idempotency_key"
+    # The API test database is SQLite, which exposes the columns rather than
+    # the index/constraint name in its exception.
+    return "files.organization_id, files.idempotency_key" in str(original)
 
 
 async def _check_import_url(url: str) -> None:

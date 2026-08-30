@@ -30,6 +30,14 @@ class File(TimestampMixin, Base):
         # How a session's outputs are read back, which is the one query that
         # has to stay fast however many files an organization accumulates.
         Index("ix_files_scope", "organization_id", "scope_id"),
+        Index(
+            "uq_files_organization_idempotency_key",
+            "organization_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+            sqlite_where=text("idempotency_key IS NOT NULL"),
+        ),
         # A session's outputs are a directory, and a directory holds one file
         # per path. Enforced here rather than left to the code that captures
         # them: two captures of the same path racing each other would each
@@ -53,6 +61,9 @@ class File(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # Operation identity for retrying an upload/import whose response was lost.
+    # It is deliberately internal and never appears in FileResponse.
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
     # The session that produced this file, or null if a user uploaded it.
     # Output files are not a separate kind of thing — they are ordinary files
     # wearing a label saying which run they came out of.

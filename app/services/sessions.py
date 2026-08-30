@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import quote
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -169,6 +170,7 @@ async def create_session(
     account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
+    idempotency_key: str | None = None,
 ) -> Session:
     """Open a conversation and give it a sandbox to live in.
 
@@ -182,6 +184,15 @@ async def create_session(
     chance: a session keeps one sandbox for its whole life, so there is nowhere
     to put a file handed over later.
     """
+    if idempotency_key is not None:
+        existing = await sessions_q.get_by_idempotency_key(
+            db,
+            organization_id=organization_id,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            return existing
+
     async with timed(
         "session_provision_slot_wait",
         organization_id=organization_id,
@@ -189,19 +200,57 @@ async def create_session(
     ):
         await _session_provision_slots.acquire()
     try:
-        return await _create_session(
-            db,
-            organization_id=organization_id,
-            agent_id=agent_id,
-            environment_id=environment_id,
-            account_id=account_id,
-            agent_version=agent_version,
-            model=model,
-            title=title,
-            resources=resources,
-        )
+        try:
+            return await _create_session(
+                db,
+                organization_id=organization_id,
+                agent_id=agent_id,
+                environment_id=environment_id,
+                account_id=account_id,
+                agent_version=agent_version,
+                model=model,
+                title=title,
+                resources=resources,
+                idempotency_key=idempotency_key,
+            )
+        except IntegrityError as exc:
+            # Two callers can both miss the lookup above. The unique index is
+            # the cross-instance arbiter; the loser fails while inserting its
+            # Session, before any sandbox work has started. Only recover the
+            # named constraint (or SQLite's equivalent test error), never an
+            # unrelated integrity failure later in provisioning.
+            if idempotency_key is None or not _idempotency_conflict(exc):
+                raise
+            await db.rollback()
+            existing = await sessions_q.get_by_idempotency_key(
+                db,
+                organization_id=organization_id,
+                idempotency_key=idempotency_key,
+            )
+            if existing is None:
+                raise
+            return existing
     finally:
         _session_provision_slots.release()
+
+
+def _idempotency_conflict(exc: IntegrityError) -> bool:
+    original = exc.orig
+    candidates = (
+        original,
+        getattr(original, "orig", None),
+        getattr(original, "__cause__", None),
+    )
+    for candidate in candidates:
+        diagnostic = getattr(candidate, "diag", None)
+        constraint = getattr(diagnostic, "constraint_name", None) or getattr(
+            candidate, "constraint_name", None
+        )
+        if constraint is not None:
+            return constraint == "uq_sessions_organization_idempotency_key"
+    # The API test database is SQLite, which exposes the columns rather than
+    # the index/constraint name in its exception.
+    return "sessions.organization_id, sessions.idempotency_key" in str(original)
 
 
 async def _create_session(
@@ -215,6 +264,7 @@ async def _create_session(
     account_id: str | None = None,
     title: str | None = None,
     resources: list[dict[str, Any]] | None = None,
+    idempotency_key: str | None = None,
 ) -> Session:
     agent = await _require_agent(db, agent_id=agent_id, organization_id=organization_id)
     version_number = agent_version if agent_version is not None else agent.active_version
@@ -257,6 +307,7 @@ async def _create_session(
         model=agents_service.normalize_model(model) if model is not None else None,
         account_id=account.id,
         title=title,
+        idempotency_key=idempotency_key,
     )
     # Resolved before the container exists, so a missing or half-uploaded file
     # fails the request rather than leaving a running session short of an input

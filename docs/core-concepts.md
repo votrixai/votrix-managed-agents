@@ -52,6 +52,15 @@ One ongoing job. A Session connects an Agent version, an Environment, an
 Account, attached resources, and an ordered event history. Follow-up messages
 continue the same job instead of starting over.
 
+Session provisioning creates a sandbox and can outlive a caller's network
+request. Set `idempotency_key` when creating one if the create may be retried:
+the value is scoped to the Organization, and a retry returns the first Session
+instead of provisioning a second sandbox.
+
+File upload/import accepts the same optional operation identity. This matters
+when a large URL import completes but its HTTP response is lost: retrying the
+key returns the first durable File rather than storing another copy.
+
 ### Skill
 
 Reusable guidance for a type of work. An Agent can reference Skills, and those

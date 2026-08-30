@@ -55,6 +55,7 @@ async def create_session(body: SessionCreateRequest, db: Db, organization_id: Or
         account_id=body.account_id,
         title=body.title,
         resources=[resource.model_dump() for resource in body.resources],
+        idempotency_key=body.idempotency_key,
     )
     return await to_session(db, session)
 
