@@ -408,6 +408,25 @@ _MODEL_NODE = "model"
 # everywhere, rather than about the cost of sending it.
 DELTA_MAX_BYTES = 2000
 
+# How many identical characters in a row mean the model has stopped generating
+# and started repeating.
+#
+# An endpoint serving a broken build does not fail — it answers 200 with
+# `finish_reason: "stop"` and a body that is one character over and over. Two
+# Kimi turns ended that way, at 4,941 and 11,115 consecutive `!`, and the
+# gateway counted both as served. Nothing else in this process can tell that
+# from an answer, so it is caught here or not at all.
+#
+# Well above anything deliberate. The longest runs real output contains are
+# rules and table borders, which are tens of characters, and indentation, which
+# a line break interrupts. Nothing writes a thousand of the same character on
+# purpose, and the two observed collapses cleared this four and ten times over.
+REPETITION_LIMIT = 1024
+
+
+class DegenerateOutputError(RuntimeError):
+    """The model repeated one character past the point of meaning anything."""
+
 
 class _DeltaBuffer:
     """Batches streamed tokens into one published preview per flush window.
@@ -429,15 +448,40 @@ class _DeltaBuffer:
         self._bytes = 0
         self._window = get_settings().vma_delta_flush_seconds
         self._due = time.monotonic() + self._window
+        # Carried across chunks, because a run does not respect their
+        # boundaries: the collapse arrives as hundreds of small frames that are
+        # each unremarkable on their own.
+        self._repeat_char: str | None = None
+        self._repeat_length = 0
 
     def add(self, event_type: str, text: str) -> None:
         if not text:
             return
+        self._check_repetition(text)
         if self._runs and self._runs[-1][0] == event_type:
             self._runs[-1][1].append(text)
         else:
             self._runs.append((event_type, [text]))
         self._bytes += len(text.encode())
+
+    def _check_repetition(self, text: str) -> None:
+        """Stop the turn once the stream is only repeating.
+
+        Raised rather than truncated: the turn produced nothing usable, and
+        letting it finish would commit the repetition as the answer and bill
+        for the rest of it. Both kinds of text pass through here, so reasoning
+        that collapses before a word is spoken is caught as well.
+        """
+        for char in text:
+            if char == self._repeat_char:
+                self._repeat_length += 1
+            else:
+                self._repeat_char, self._repeat_length = char, 1
+            if self._repeat_length >= REPETITION_LIMIT:
+                raise DegenerateOutputError(
+                    f"the model repeated {char!r} {self._repeat_length} times; "
+                    "the endpoint serving this turn is returning garbage"
+                )
 
     async def flush_if_due(self) -> None:
         if self._bytes >= DELTA_MAX_BYTES or time.monotonic() >= self._due:
@@ -1033,4 +1077,9 @@ def _text(content: Any) -> str:
     )
 
 
-__all__ = ["FilesystemToolsetRequiredError", "UnsupportedEventError", "execute_agent"]
+__all__ = [
+    "DegenerateOutputError",
+    "FilesystemToolsetRequiredError",
+    "UnsupportedEventError",
+    "execute_agent",
+]
