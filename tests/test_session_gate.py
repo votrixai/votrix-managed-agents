@@ -31,6 +31,21 @@ ACTION_RESULT = {
 REAL_DISPATCH = service._dispatch_turn
 
 
+def test_native_image_content_is_passed_straight_to_langchain():
+    from app.runtime.engine import _build_fresh_input
+
+    content = [
+        {"type": "text", "text": "What is in this image?"},
+        {"type": "image", "url": "https://example.com/image.png"},
+    ]
+
+    message = _build_fresh_input([{"type": "user.message", "content": content}])[
+        "messages"
+    ][0]
+
+    assert message.content_blocks == content
+
+
 async def send(db, session, message=MESSAGE, org=None):
     return await service.send_events(
         db,
@@ -651,7 +666,6 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
 
     monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
     monkeypatch.setattr(engine, "_build_chat_model", _capture)
-    monkeypatch.setattr(engine, "read_image_tool", lambda *_a, **_kw: object())
     monkeypatch.setattr(engine, "create_deep_agent", lambda **_kw: _Graph())
 
     async def _emit(_event, _payload):

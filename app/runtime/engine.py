@@ -45,7 +45,6 @@ from app.runtime.tools import (
     AGENT_TOOLSET,
     WEB_TOOLSET,
     custom_tool,
-    read_image_tool,
     resolve_tool_interrupts,
     web_fetch_tool,
     web_search_tool,
@@ -148,13 +147,6 @@ async def execute_agent(
 
     tools: list[Any] = []
     tool_kind: dict[str, str] = {}
-    # Part of the filesystem toolset rather than the web one: it opens a file in
-    # the same container `read_file` reads from, and it is here because
-    # `read_file` hands an image back as a content block — which is an answer
-    # only if the agent's own model has eyes.
-    tools.append(
-        read_image_tool(sandbox, api_key=inference_key, session_id=session.id)
-    )
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         tools.append(web_search_tool())
         tools.append(web_fetch_tool(sandbox))
@@ -310,7 +302,7 @@ def _build_fresh_input(events: list[dict[str, Any]]) -> dict[str, Any]:
     for event in events:
         if event.get("type") != event_types.USER_MESSAGE:
             raise UnsupportedEventError(f"{event.get('type')} cannot start a turn")
-        messages.append(HumanMessage(content=_text(event.get("content"))))
+        messages.append(HumanMessage(content_blocks=event.get("content") or []))
     return {"messages": messages}
 
 
@@ -960,7 +952,7 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
 
     It rides on the model spec rather than beside it because it is not separable
     from the model: `low` means a different number of tokens on each of them,
-    and on two of the fifteen it means nothing at all. A Session that carries
+    and on two of the sixteen it means nothing at all. A Session that carries
     one carries the other.
 
     Note what the caller passes in — `session.model or version.model` — so a
@@ -999,7 +991,7 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
 
     It rides on the model spec rather than beside it because it is not separable
     from the model: `low` means a different number of tokens on each of them,
-    and on two of the fifteen it means nothing at all. A Session that carries
+    and on two of the sixteen it means nothing at all. A Session that carries
     one carries the other.
 
     Note what the caller passes in — `session.model or version.model` — so a

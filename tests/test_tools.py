@@ -2,29 +2,17 @@
 
 Whatever DeepAgents installs is what the model gets. The only question this
 answers is which of those tools must stop and ask first.
-
-`read_image` is the exception to the first sentence: it is ours, so the second
-half of this module is about what it does rather than who may run it.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from deepagents.backends.protocol import BackendProtocol, ReadResult
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from langchain.tools import ToolRuntime
 
-import pytest
-
-from app.runtime import tools as tools_module
-from app.runtime.tools import (
-    READ_IMAGE_MAX_BYTES,
-    TOOLSET_TOOL_NAMES,
-    read_image_tool,
-    resolve_tool_interrupts,
-)
+from app.runtime.tools import TOOLSET_TOOL_NAMES, resolve_tool_interrupts
 
 AGENT_TOOLSET = [{"type": "agent_toolset_20260401"}]
-
-PNG = b"\x89PNG\r\n\x1a\n" + b"not really a png, but bytes are bytes"
-
 
 def ask(config: dict) -> list[str]:
     return sorted(resolve_tool_interrupts([{"type": "agent_toolset_20260401", **config}]))
@@ -78,192 +66,42 @@ def test_web_tools_are_their_own_toolset():
     assert TOOLSET_TOOL_NAMES["web_toolset_20260401"] == ("web_fetch", "web_search")
 
 
-def test_read_image_can_be_made_to_ask():
-    """It is installed with the filesystem tools, so config has to reach it."""
-    assert "read_image" in TOOLSET_TOOL_NAMES["agent_toolset_20260401"]
-    assert ask({"configs": [{"name": "read_image", "permission_policy": {"type": "always_ask"}}]}) == [
-        "read_image"
-    ]
+def test_images_use_deepagents_native_read_file():
+    tools = TOOLSET_TOOL_NAMES["agent_toolset_20260401"]
+
+    assert "read_file" in tools
+    assert "read_image" not in tools
 
 
-# --- read_image --------------------------------------------------------------
+async def test_deepagents_read_file_returns_a_native_image_block():
+    class ImageBackend(BackendProtocol):
+        async def aread(
+            self, file_path: str, offset: int = 0, limit: int = 2000
+        ) -> ReadResult:
+            return ReadResult(
+                file_data={"content": "aGVsbG8=", "encoding": "base64"}
+            )
 
-
-class FakeSandbox:
-    """Files by absolute path, and a record of what was asked for."""
-
-    def __init__(self, files: dict[str, bytes]) -> None:
-        self.files = files
-        self.asked: list[tuple[str, int]] = []
-
-    async def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
-        self.asked.append((path, max_bytes))
-        if path not in self.files:
-            raise FileNotFoundError(path)
-        data = self.files[path]
-        if len(data) > max_bytes:
-            raise ValueError(f"{path} is {len(data)} bytes, over the {max_bytes} byte limit")
-        return data
-
-
-@pytest.fixture
-def looked_at(monkeypatch) -> list[dict[str, Any]]:
-    """Replace the vision call, and keep what it was handed."""
-    calls: list[dict[str, Any]] = []
-
-    async def _describe(
-        data: bytes,
-        mime_type: str,
-        query: str,
-        *,
-        api_key: str,
-        session_id: str,
-    ) -> str:
-        calls.append(
-            {
-                "data": data,
-                "mime_type": mime_type,
-                "query": query,
-                "api_key": api_key,
-                "session_id": session_id,
-            }
-        )
-        return "A cat, wearing a hat."
-
-    monkeypatch.setattr(tools_module, "describe_image", _describe)
-    return calls
-
-
-async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
-    sandbox = FakeSandbox({"/home/user/uploads/cat.png": PNG})
-    tool = read_image_tool(
-        sandbox,
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
+    middleware = FilesystemMiddleware(backend=ImageBackend())
+    read_file = next(tool for tool in middleware.tools if tool.name == "read_file")
+    runtime = ToolRuntime(
+        state={"messages": []},
+        context=None,
+        config={},
+        stream_writer=lambda _chunk: None,
+        tool_call_id="call_image",
+        store=None,
     )
 
-    answer = await tool.ainvoke({"path": "uploads/cat.png", "query": "What is in it?"})
-
-    assert answer == "A cat, wearing a hat."
-    assert sandbox.asked == [("/home/user/uploads/cat.png", READ_IMAGE_MAX_BYTES)]
-
-
-async def test_an_absolute_path_is_used_as_given(looked_at):
-    sandbox = FakeSandbox({"/tmp/elsewhere/cat.png": PNG})
-    tool = read_image_tool(
-        sandbox,
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
+    result = await read_file.coroutine(
+        file_path="/image.png",
+        runtime=runtime,
     )
 
-    await tool.ainvoke({"path": "/tmp/elsewhere/cat.png", "query": "What is in it?"})
-
-    assert sandbox.asked == [("/tmp/elsewhere/cat.png", READ_IMAGE_MAX_BYTES)]
-
-
-async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
-    tool = read_image_tool(
-        FakeSandbox({"/home/user/a.jpeg": PNG}),
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
-    )
-
-    await tool.ainvoke({"path": "a.jpeg", "query": "Is the logo legible?"})
-
-    assert looked_at == [
+    assert result.content_blocks == [
         {
-            "data": PNG,
-            "mime_type": "image/jpeg",
-            "query": "Is the logo legible?",
-            # Billed to the turn's Account, not to anything the tool picked.
-            "api_key": "sk-or-v1-test",
-            # Grouped with the main model calls from the same VMA Session.
-            "session_id": "sess_image_test",
+            "type": "image",
+            "base64": "aGVsbG8=",
+            "mime_type": "image/png",
         }
     ]
-
-
-async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
-    """A tool that raises ends the turn; a sentence lets the model try again."""
-    tool = read_image_tool(
-        FakeSandbox({}),
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
-    )
-
-    answer = await tool.ainvoke({"path": "gone.png", "query": "What is in it?"})
-
-    assert "no file at /home/user/gone.png" in answer
-    assert looked_at == []
-
-
-async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_at):
-    """Nothing is transferred to find out it was a video."""
-    sandbox = FakeSandbox({"/home/user/clip.mp4": PNG})
-    tool = read_image_tool(
-        sandbox,
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
-    )
-
-    answer = await tool.ainvoke({"path": "clip.mp4", "query": "What is in it?"})
-
-    assert ".mp4" in answer or "cannot open" in answer
-    assert sandbox.asked == []
-    assert looked_at == []
-
-
-async def test_an_oversized_image_says_so(looked_at):
-    tool = read_image_tool(
-        FakeSandbox({"/home/user/huge.png": b"x" * (READ_IMAGE_MAX_BYTES + 1)}),
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
-    )
-
-    answer = await tool.ainvoke({"path": "huge.png", "query": "What is in it?"})
-
-    assert "over the" in answer
-    assert looked_at == []
-
-
-async def test_a_vision_failure_comes_back_as_text(monkeypatch):
-    async def _explode(
-        data: bytes,
-        mime_type: str,
-        query: str,
-        *,
-        api_key: str,
-        session_id: str,
-    ) -> str:
-        raise RuntimeError("gemini said no")
-
-    monkeypatch.setattr(tools_module, "describe_image", _explode)
-    tool = read_image_tool(
-        FakeSandbox({"/home/user/a.png": PNG}),
-        api_key="sk-or-v1-test",
-        session_id="sess_image_test",
-    )
-
-    answer = await tool.ainvoke({"path": "a.png", "query": "What is in it?"})
-
-    assert "gemini said no" in answer
-
-
-async def test_no_vision_key_is_reported_rather_than_guessed_at():
-    """Nothing to spend through means nothing to look with.
-
-    Said as a sentence the model can act on, rather than raised — a tool that
-    raises here ends the turn over a picture.
-    """
-    sandbox = FakeSandbox({"/home/user/a.png": PNG})
-
-    answer = await read_image_tool(
-        sandbox,
-        api_key="",
-        session_id="sess_image_test",
-    ).ainvoke(
-        {"path": "a.png", "query": "What is in it?"}
-    )
-
-    assert "no vision model is configured" in answer
-    assert sandbox.asked == []
