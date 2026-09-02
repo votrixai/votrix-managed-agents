@@ -41,11 +41,13 @@ from app.models.llm import (
     ModelResponse,
 )
 from app.models.sessions import STOP_END_TURN, STOP_REQUIRES_ACTION
+from app.runtime.images import ImageResolver, NativeImageMiddleware
 from app.runtime.tools import (
     AGENT_TOOLSET,
+    DESCRIBE_IMAGE,
     WEB_TOOLSET,
     custom_tool,
-    read_image_tool,
+    describe_image_tool,
     resolve_tool_interrupts,
     web_fetch_tool,
     web_search_tool,
@@ -116,6 +118,7 @@ async def execute_agent(
     emit: Emit,
     publish: Publish,
     inference_key: str,
+    resolve_image: ImageResolver | None = None,
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
     tool_completed: ToolCompleted | None = None,
@@ -148,13 +151,20 @@ async def execute_agent(
 
     tools: list[Any] = []
     tool_kind: dict[str, str] = {}
-    # Part of the filesystem toolset rather than the web one: it opens a file in
-    # the same container `read_file` reads from, and it is here because
-    # `read_file` hands an image back as a content block — which is an answer
-    # only if the agent's own model has eyes.
-    tools.append(
-        read_image_tool(sandbox, api_key=inference_key, session_id=session.id)
-    )
+    # Unlike DeepAgents' native filesystem tools, this VMA-owned tool is
+    # optional. It invokes a separate vision model and returns prose; an Agent
+    # that wants native image blocks simply omits it and uses `read_file`.
+    if any(
+        isinstance(spec, dict) and spec.get("type") == DESCRIBE_IMAGE
+        for spec in declared
+    ):
+        tools.append(
+            describe_image_tool(
+                sandbox,
+                api_key=inference_key,
+                session_id=session.id,
+            )
+        )
     if any(isinstance(spec, dict) and spec.get("type") == WEB_TOOLSET for spec in declared):
         tools.append(web_search_tool())
         tools.append(web_fetch_tool(sandbox))
@@ -178,6 +188,7 @@ async def execute_agent(
     # gets read if the model decides the skill applies. Nothing for us to pass:
     # the packages were unpacked here when the sandbox was provisioned.
     skill_sources = [f"{SKILLS_DIR}/"] if version.skills else None
+    image_middleware = [NativeImageMiddleware(resolve_image)]
 
     async with _checkpoint_saver(session.id) as checkpointer:
         async with timed(
@@ -206,6 +217,7 @@ async def execute_agent(
                 ),
                 backend=sandbox.to_deep_agent_backend,
                 skills=skill_sources,
+                middleware=image_middleware,
                 # Whether a call stops for a human is decided by tool name, and
                 # `interrupt_on` is the whole of it. Do not pass `permissions`:
                 # DeepAgents turns those into per-call predicates and merges
@@ -310,8 +322,39 @@ def _build_fresh_input(events: list[dict[str, Any]]) -> dict[str, Any]:
     for event in events:
         if event.get("type") != event_types.USER_MESSAGE:
             raise UnsupportedEventError(f"{event.get('type')} cannot start a turn")
-        messages.append(HumanMessage(content=_text(event.get("content"))))
+        messages.append(HumanMessage(content=_user_message_content(event.get("content"))))
     return {"messages": messages}
+
+
+def _user_message_content(content: Any) -> str | list[dict[str, Any]]:
+    """Keep text-only messages compact and native image references durable."""
+    if not isinstance(content, list):
+        return _text(content)
+    if not any(
+        isinstance(block, dict) and block.get("type") == "image"
+        for block in content
+    ):
+        return _text(content)
+
+    prepared: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            prepared.append({"type": "text", "text": str(block.get("text", ""))})
+            continue
+        if block.get("type") == "image":
+            source = block.get("source")
+            if not isinstance(source, dict) or source.get("type") != "file":
+                raise UnsupportedEventError("an image needs a VMA File source")
+            file_id = str(source.get("file_id") or "")
+            if not file_id:
+                raise UnsupportedEventError("an image File source needs file_id")
+            # This is deliberately not a provider file id. NativeImageMiddleware
+            # resolves it immediately before each model call while this small,
+            # stable block is what LangGraph checkpoints.
+            prepared.append({"type": "image", "file_id": file_id})
+    return prepared
 
 
 def _pending_calls(state: Any, interrupt_on: dict[str, Any]) -> list[str]:
@@ -960,8 +1003,8 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
 
     It rides on the model spec rather than beside it because it is not separable
     from the model: `low` means a different number of tokens on each of them,
-    and on two of the fifteen it means nothing at all. A Session that carries
-    one carries the other.
+    and on models that expose no dial it means nothing at all. A Session that
+    carries one carries the other.
 
     Note what the caller passes in — `session.model or version.model` — so a
     Session naming a model replaces the Agent's spec whole rather than merging
@@ -999,8 +1042,8 @@ def _resolve_thinking(spec: dict[str, Any] | str, entry: ModelResponse) -> str |
 
     It rides on the model spec rather than beside it because it is not separable
     from the model: `low` means a different number of tokens on each of them,
-    and on two of the fifteen it means nothing at all. A Session that carries
-    one carries the other.
+    and on models that expose no dial it means nothing at all. A Session that
+    carries one carries the other.
 
     Note what the caller passes in — `session.model or version.model` — so a
     Session naming a model replaces the Agent's spec whole rather than merging

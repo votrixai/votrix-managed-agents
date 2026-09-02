@@ -83,7 +83,7 @@ Agent is being created.
 
 The required Agent toolset makes these sandbox tools available:
 
-- `execute`, `ls`, `read_file`, `read_image`, `write_file`, and `edit_file`;
+- `execute`, `ls`, `read_file`, `write_file`, and `edit_file`;
 - `glob` and `grep`;
 - `write_todos`.
 
@@ -102,6 +102,14 @@ tools, add a per-tool permission:
   }]
 }
 ```
+
+`describe_image` is optional and is not part of the required Agent toolset.
+Declare `describe_image_20260901` only when the Agent should ask a separate
+vision model about an image in the sandbox and receive text back. A multimodal
+Agent normally omits it and uses `read_file`, which returns native image
+content. VMA validates and bounds PNG, JPEG, WebP, and GIF previews before
+passing them to the Agent model, including images larger than DeepAgents'
+default 500 KiB binary preview limit.
 
 An `always_ask` call produces an action request in the Session event stream.
 Your application must approve or reject it before the Agent continues. See

@@ -30,6 +30,7 @@ dependencies = [
     "google-cloud-tasks>=2.19,<3.0",
     "e2b==2.31.0",
     "langchain-e2b==0.0.5",
+    "pillow>=11,<13",
 ]
 
 [project.scripts]

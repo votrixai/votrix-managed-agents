@@ -1,10 +1,8 @@
-"""Tool config decides what needs approval — never what exists.
+"""Native tools stay installed; versioned VMA tools must be declared.
 
-Whatever DeepAgents installs is what the model gets. The only question this
-answers is which of those tools must stop and ask first.
-
-`read_image` is the exception to the first sentence: it is ours, so the second
-half of this module is about what it does rather than who may run it.
+Within either declared set, permission config decides which calls stop for
+approval. `describe_image` is VMA-owned and optional, so the second half also
+verifies that it is separate from the native filesystem tools.
 """
 
 from __future__ import annotations
@@ -15,9 +13,10 @@ import pytest
 
 from app.runtime import tools as tools_module
 from app.runtime.tools import (
-    READ_IMAGE_MAX_BYTES,
+    DESCRIBE_IMAGE,
+    DESCRIBE_IMAGE_MAX_BYTES,
     TOOLSET_TOOL_NAMES,
-    read_image_tool,
+    describe_image_tool,
     resolve_tool_interrupts,
 )
 
@@ -78,15 +77,24 @@ def test_web_tools_are_their_own_toolset():
     assert TOOLSET_TOOL_NAMES["web_toolset_20260401"] == ("web_fetch", "web_search")
 
 
-def test_read_image_can_be_made_to_ask():
-    """It is installed with the filesystem tools, so config has to reach it."""
-    assert "read_image" in TOOLSET_TOOL_NAMES["agent_toolset_20260401"]
-    assert ask({"configs": [{"name": "read_image", "permission_policy": {"type": "always_ask"}}]}) == [
-        "read_image"
-    ]
+def test_describe_image_is_not_part_of_the_native_agent_toolset():
+    assert "describe_image" not in TOOLSET_TOOL_NAMES["agent_toolset_20260401"]
 
 
-# --- read_image --------------------------------------------------------------
+def test_describe_image_can_be_declared_and_made_to_ask():
+    assert resolve_tool_interrupts(
+        [
+            {
+                "type": DESCRIBE_IMAGE,
+                "default_config": {
+                    "permission_policy": {"type": "always_ask"}
+                },
+            }
+        ]
+    ) == {"describe_image": {"allowed_decisions": ["approve", "reject"]}}
+
+
+# --- describe_image ----------------------------------------------------------
 
 
 class FakeSandbox:
@@ -130,13 +138,13 @@ def looked_at(monkeypatch) -> list[dict[str, Any]]:
         )
         return "A cat, wearing a hat."
 
-    monkeypatch.setattr(tools_module, "describe_image", _describe)
+    monkeypatch.setattr(tools_module, "_describe_image_bytes", _describe)
     return calls
 
 
 async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
     sandbox = FakeSandbox({"/home/user/uploads/cat.png": PNG})
-    tool = read_image_tool(
+    tool = describe_image_tool(
         sandbox,
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
@@ -145,12 +153,14 @@ async def test_a_relative_path_is_taken_from_the_workdir(looked_at):
     answer = await tool.ainvoke({"path": "uploads/cat.png", "query": "What is in it?"})
 
     assert answer == "A cat, wearing a hat."
-    assert sandbox.asked == [("/home/user/uploads/cat.png", READ_IMAGE_MAX_BYTES)]
+    assert sandbox.asked == [
+        ("/home/user/uploads/cat.png", DESCRIBE_IMAGE_MAX_BYTES)
+    ]
 
 
 async def test_an_absolute_path_is_used_as_given(looked_at):
     sandbox = FakeSandbox({"/tmp/elsewhere/cat.png": PNG})
-    tool = read_image_tool(
+    tool = describe_image_tool(
         sandbox,
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
@@ -158,11 +168,13 @@ async def test_an_absolute_path_is_used_as_given(looked_at):
 
     await tool.ainvoke({"path": "/tmp/elsewhere/cat.png", "query": "What is in it?"})
 
-    assert sandbox.asked == [("/tmp/elsewhere/cat.png", READ_IMAGE_MAX_BYTES)]
+    assert sandbox.asked == [
+        ("/tmp/elsewhere/cat.png", DESCRIBE_IMAGE_MAX_BYTES)
+    ]
 
 
 async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
-    tool = read_image_tool(
+    tool = describe_image_tool(
         FakeSandbox({"/home/user/a.jpeg": PNG}),
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
@@ -185,7 +197,7 @@ async def test_the_bytes_and_the_question_reach_the_vision_model(looked_at):
 
 async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
     """A tool that raises ends the turn; a sentence lets the model try again."""
-    tool = read_image_tool(
+    tool = describe_image_tool(
         FakeSandbox({}),
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
@@ -200,7 +212,7 @@ async def test_a_missing_file_is_a_sentence_rather_than_a_raise(looked_at):
 async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_at):
     """Nothing is transferred to find out it was a video."""
     sandbox = FakeSandbox({"/home/user/clip.mp4": PNG})
-    tool = read_image_tool(
+    tool = describe_image_tool(
         sandbox,
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
@@ -214,8 +226,13 @@ async def test_a_file_that_is_not_an_image_is_refused_before_it_is_read(looked_a
 
 
 async def test_an_oversized_image_says_so(looked_at):
-    tool = read_image_tool(
-        FakeSandbox({"/home/user/huge.png": b"x" * (READ_IMAGE_MAX_BYTES + 1)}),
+    tool = describe_image_tool(
+        FakeSandbox(
+            {
+                "/home/user/huge.png": b"x"
+                * (DESCRIBE_IMAGE_MAX_BYTES + 1)
+            }
+        ),
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
     )
@@ -237,8 +254,8 @@ async def test_a_vision_failure_comes_back_as_text(monkeypatch):
     ) -> str:
         raise RuntimeError("gemini said no")
 
-    monkeypatch.setattr(tools_module, "describe_image", _explode)
-    tool = read_image_tool(
+    monkeypatch.setattr(tools_module, "_describe_image_bytes", _explode)
+    tool = describe_image_tool(
         FakeSandbox({"/home/user/a.png": PNG}),
         api_key="sk-or-v1-test",
         session_id="sess_image_test",
@@ -257,7 +274,7 @@ async def test_no_vision_key_is_reported_rather_than_guessed_at():
     """
     sandbox = FakeSandbox({"/home/user/a.png": PNG})
 
-    answer = await read_image_tool(
+    answer = await describe_image_tool(
         sandbox,
         api_key="",
         session_id="sess_image_test",

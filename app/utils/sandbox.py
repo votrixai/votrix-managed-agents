@@ -15,6 +15,7 @@ that paused while the model was thinking heals itself instead of failing.
 from __future__ import annotations
 
 import asyncio
+import base64
 import mimetypes
 import re
 import shlex
@@ -142,6 +143,12 @@ _E2B_TRANSPORT_ERRORS = (
 )
 
 _SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+# DeepAgents classifies these as native image content, but its default sandbox
+# reader refuses every binary file over 500 KiB. VMA can safely accept larger
+# raster sources because it validates and prepares them before returning the
+# same base64 ReadResult shape that FilesystemMiddleware already understands.
+_PREPARED_IMAGE_SUFFIXES = frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
 logger = structlog.get_logger(__name__)
 
@@ -1370,6 +1377,34 @@ class LazyE2BBackend(SandboxBackendProtocol):
         return await (await self._ready()).als(path)
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if PurePosixPath(file_path).suffix.lower() in _PREPARED_IMAGE_SUFFIXES:
+            # Imported lazily to keep the lower-level sandbox module independent
+            # of the agent middleware during ordinary file and environment work.
+            from app.runtime.images import MAX_IMAGE_SOURCE_BYTES, prepare_image
+
+            try:
+                source = await self._sandbox.read_bytes(
+                    file_path,
+                    max_bytes=MAX_IMAGE_SOURCE_BYTES,
+                )
+                prepared = await asyncio.to_thread(
+                    prepare_image,
+                    source,
+                    mimetypes.guess_type(file_path)[0],
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                return ReadResult(error=f"File '{file_path}': {exc}")
+
+            # ReadResult can carry one binary block. Direct session image input
+            # uses all detail tiles; read_file returns the bounded overview.
+            preview = prepared[0]
+            return ReadResult(
+                file_data={
+                    "content": base64.b64encode(preview.data).decode("ascii"),
+                    "encoding": "base64",
+                }
+            )
+
         return await (await self._ready()).aread(file_path, offset=offset, limit=limit)
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:

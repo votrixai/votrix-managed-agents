@@ -13,6 +13,9 @@ DEEPSEEK = "deepseek"
 GOOGLE = "google"
 MOONSHOT = "moonshotai"
 OPENAI = "openai"
+ZAI = "z-ai"
+
+InputModality = Literal["text", "image", "video"]
 
 
 # How hard a model is asked to think, as a Session or Agent may set it.
@@ -49,6 +52,10 @@ class ModelResponse(ApiModel):
     # dial while every other Claude does, and Gemini 2.5 Pro has none while
     # every Gemini 3 does.
     thinking: bool = True
+    # A fact about the model, not an Agent preference. Clients use it to avoid
+    # offering inputs the selected model cannot consume, and the runtime uses
+    # it to refuse an image before a provider has to explain the mismatch.
+    input_modalities: tuple[InputModality, ...] = ("text",)
 
 
 # Ordered strongest first within each provider, because this is the list a
@@ -61,68 +68,87 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         id="claude-opus-5",
         provider=ANTHROPIC,
         display_name="Claude Opus 5",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="claude-sonnet-5",
         provider=ANTHROPIC,
         display_name="Claude Sonnet 5",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="claude-sonnet-4-6",
         provider=ANTHROPIC,
         display_name="Claude Sonnet 4.6",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="claude-haiku-4-5",
         provider=ANTHROPIC,
         display_name="Claude Haiku 4.5",
         thinking=False,
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gemini-3.1-pro-preview",
         provider=GOOGLE,
         display_name="Gemini 3.1 Pro (preview)",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gemini-3.6-flash",
         provider=GOOGLE,
         display_name="Gemini 3.6 Flash",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gemini-3.5-flash",
         provider=GOOGLE,
         display_name="Gemini 3.5 Flash",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gemini-3.5-flash-lite",
         provider=GOOGLE,
         display_name="Gemini 3.5 Flash-Lite",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gemini-2.5-pro",
         provider=GOOGLE,
         display_name="Gemini 2.5 Pro",
         thinking=False,
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gpt-5.6-sol",
         provider=OPENAI,
         display_name="GPT-5.6 Sol",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gpt-5.6-terra",
         provider=OPENAI,
         display_name="GPT-5.6 Terra",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="gpt-5.6-luna",
         provider=OPENAI,
         display_name="GPT-5.6 Luna",
+        input_modalities=("text", "image"),
     ),
     ModelResponse(
         id="kimi-k3",
         provider=MOONSHOT,
         display_name="Kimi K3",
+        input_modalities=("text", "image", "video"),
+    ),
+    ModelResponse(
+        id="glm-5.3-flash",
+        provider=ZAI,
+        display_name="GLM 5.3 Flash",
+        input_modalities=("text", "image", "video"),
     ),
     # Undated on purpose. Dated snapshots were briefly listed beside these so
     # two cuts of the same model could be timed against each other; that
@@ -144,7 +170,7 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
 
 
 # What the gateway calls each model. Written out rather than derived from
-# `f"{provider}/{id}"`, which is right for thirteen of these and wrong for the two
+# `f"{provider}/{id}"`, which is right for fourteen of these and wrong for the two
 # Anthropic ids that spell their version with a dot. A wrong slug fails at the
 # gateway, whose error names a model nobody wrote down, so the mapping is stated
 # here where a reader can check it against the catalog.
@@ -165,6 +191,7 @@ OPENROUTER_SLUGS: dict[str, str] = {
     "gpt-5.6-terra": "openai/gpt-5.6-terra",
     "gpt-5.6-luna": "openai/gpt-5.6-luna",
     "kimi-k3": "moonshotai/kimi-k3",
+    "glm-5.3-flash": "z-ai/glm-5.3-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
 }

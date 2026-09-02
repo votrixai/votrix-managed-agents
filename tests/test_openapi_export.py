@@ -194,6 +194,23 @@ def test_stream_and_download_responses_document_the_actual_transport():
     assert package["example"] == "<binary ZIP data>"
 
 
+def test_user_messages_publish_the_durable_file_image_contract():
+    schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
+    schemas = schema["components"]["schemas"]
+
+    content = schemas["UserMessageInput"]["properties"]["content"]
+    assert content["items"]["discriminator"]["mapping"] == {
+        "image": "#/components/schemas/ImageBlock",
+        "text": "#/components/schemas/TextBlock",
+    }
+    assert schemas["ImageBlock"]["properties"]["source"] == {
+        "$ref": "#/components/schemas/FileImageSource"
+    }
+    source = schemas["FileImageSource"]
+    assert source["properties"]["type"]["const"] == "file"
+    assert source["required"] == ["file_id"]
+
+
 def test_required_request_parameters_have_realistic_examples():
     schema = build_documentation_schema(server_url=DEFAULT_SERVER_URL)
 

@@ -7253,6 +7253,26 @@
         "type": "object",
         "title": "Failed"
       },
+      "FileImageSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file",
+            "default": "file"
+          },
+          "file_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "FileImageSource"
+      },
       "FileResource": {
         "properties": {
           "type": {
@@ -7385,6 +7405,24 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImageBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "default": "image"
+          },
+          "source": {
+            "$ref": "#/components/schemas/FileImageSource"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "ImageBlock"
       },
       "Interrupted": {
         "properties": {
@@ -9393,7 +9431,21 @@
           },
           "content": {
             "items": {
-              "$ref": "#/components/schemas/TextBlock"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageBlock"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "image": "#/components/schemas/ImageBlock",
+                  "text": "#/components/schemas/TextBlock"
+                }
+              }
             },
             "type": "array"
           }
@@ -9416,7 +9468,21 @@
           },
           "content": {
             "items": {
-              "$ref": "#/components/schemas/TextBlock"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageBlock"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "image": "#/components/schemas/ImageBlock",
+                  "text": "#/components/schemas/TextBlock"
+                }
+              }
             },
             "type": "array",
             "minItems": 1

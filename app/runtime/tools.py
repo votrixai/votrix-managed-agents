@@ -1,8 +1,9 @@
 """What the agent's declared tools mean at runtime.
 
-Nothing here ever removes a tool. Whatever `create_deep_agent()` installs is
-exactly what the model gets; toolset config only decides which of those tools
-must stop and ask the user before running.
+DeepAgents' native filesystem tools are always installed. VMA-owned tools are
+different: they exist only when their versioned type is present in the Agent's
+configuration. Toolset config also decides which declared tools must stop and
+ask the user before running.
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ TOOLSET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "execute",
         "ls",
         "read_file",
-        "read_image",
         "write_file",
         "edit_file",
         "glob",
@@ -40,37 +40,35 @@ TOOLSET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         # model never sees and let a stored config set a policy for it.
     ),
     "web_toolset_20260401": ("web_fetch", "web_search"),
+    "describe_image_20260901": ("describe_image",),
 }
 
 AGENT_TOOLSET = "agent_toolset_20260401"
 WEB_TOOLSET = "web_toolset_20260401"
+DESCRIBE_IMAGE = "describe_image_20260901"
 
-# The model that does the looking, fixed rather than configurable: `read_image`
+# The model that does the looking, fixed rather than configurable: `describe_image`
 # is one capability with one price, and an operator swapping the vision model
 # under an agent changes what its answers are worth without changing anything
 # the agent can see.
-READ_IMAGE_MODEL = "gemini-3.6-flash"
+DESCRIBE_IMAGE_MODEL = "gemini-3.6-flash"
 
-# Ten megabytes, against DeepAgents' 500KB ceiling on binary `read_file`. That
-# ceiling is why this tool reads the bytes itself: a 1024x1024 PNG out of
-# `image_generate` is routinely past it, so the images this platform makes are
-# exactly the ones `read_file` refuses.
-READ_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+# A separate vision request is still bounded even though native `read_file`
+# images have their own validation and preparation path.
+DESCRIBE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
-# The formats Gemini takes, which is also DeepAgents' own image list.
-READ_IMAGE_TYPES: dict[str, str] = {
+# OpenRouter's documented image-input formats.
+DESCRIBE_IMAGE_TYPES: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
     ".gif": "image/gif",
-    ".heic": "image/heic",
-    ".heif": "image/heif",
 }
 
 # Said to the vision model, not to the agent. The agent's question arrives
 # underneath it, and the answer goes back as the tool result.
-READ_IMAGE_INSTRUCTION = (
+DESCRIBE_IMAGE_INSTRUCTION = (
     "Answer the question about this image by describing what is actually in it. "
     "Every statement has to be something visible in the image. If the image does "
     "not settle the question, say so plainly rather than guessing."
@@ -138,11 +136,12 @@ async def _firecrawl_data(
 
 
 def resolve_tool_interrupts(tools: list[dict[str, Any]]) -> dict[str, Any]:
-    """Which of DeepAgents' always-on native tools need a decision first.
+    """Which tools in each declared set need a decision first.
 
-    Nothing is ever excluded: every native tool stays available regardless of
-    what the agent's config says. Config only controls whether a given tool
-    needs an approve/reject before it runs.
+    Nothing is excluded from a set once that set is declared. DeepAgents'
+    native tools stay available, while a VMA-owned set such as
+    `describe_image_20260901` exists only when the Agent names it. Permission
+    config controls whether a present tool needs approve/reject before it runs.
     """
     interrupt_on: dict[str, Any] = {}
     for toolset in tools:
@@ -185,7 +184,7 @@ def custom_tool(spec: dict[str, Any]) -> StructuredTool:
     )
 
 
-async def describe_image(
+async def _describe_image_bytes(
     data: bytes,
     mime_type: str,
     query: str,
@@ -204,7 +203,7 @@ async def describe_image(
     from langchain_openrouter import ChatOpenRouter
 
     vision = ChatOpenRouter(
-        model=OPENROUTER_SLUGS[READ_IMAGE_MODEL],
+        model=OPENROUTER_SLUGS[DESCRIBE_IMAGE_MODEL],
         api_key=api_key,
         # A vision-tool call is part of the conversation that requested it,
         # rather than an unrelated generation in OpenRouter's activity log.
@@ -215,7 +214,10 @@ async def describe_image(
         [
             HumanMessage(
                 content=[
-                    {"type": "text", "text": f"{READ_IMAGE_INSTRUCTION}\n\nQuestion: {query}"},
+                    {
+                        "type": "text",
+                        "text": f"{DESCRIBE_IMAGE_INSTRUCTION}\n\nQuestion: {query}",
+                    },
                     # Nested rather than a bare string: the gateway speaks the
                     # OpenAI shape, where `image_url` is an object.
                     {
@@ -237,46 +239,55 @@ async def describe_image(
     ).strip()
 
 
-def read_image_tool(
+def describe_image_tool(
     sandbox: Sandbox,
     *,
     api_key: str,
     session_id: str,
 ) -> StructuredTool:
-    """Looking at an image, for a model that cannot.
+    """Ask a separate vision model about an image and return text.
 
     `read_file` already returns an image as a content block, which is the right
-    answer when the agent's own model has eyes. This is the other case: the
-    picture is looked at by a vision model and what comes back is prose, so a
-    text-only model gets an answer rather than a block it has to drop.
+    answer when the agent's own model has eyes. This deliberately does
+    something different: another model looks at the picture and returns prose.
+    It is installed only when the Agent declares `describe_image_20260901`.
 
     Every failure is returned as text. A tool that raises here would end the
     turn over a missing file, where a sentence lets the model try another path.
     """
 
-    async def read_image(path: str, query: str) -> str:
+    async def describe_image_from_path(path: str, query: str) -> str:
         target = path if path.startswith("/") else f"{WORKDIR}/{path.lstrip('./')}"
         suffix = PurePosixPath(target).suffix.lower()
-        mime_type = READ_IMAGE_TYPES.get(suffix)
+        mime_type = DESCRIBE_IMAGE_TYPES.get(suffix)
         if mime_type is None:
             return (
-                f"read_image cannot open {target}: it reads "
-                f"{', '.join(sorted(READ_IMAGE_TYPES))} and this is {suffix or 'extensionless'}."
+                f"describe_image cannot open {target}: it reads "
+                f"{', '.join(sorted(DESCRIBE_IMAGE_TYPES))} and this is "
+                f"{suffix or 'extensionless'}."
             )
         if not api_key:
-            return "read_image is unavailable: no vision model is configured on this server."
+            return (
+                "describe_image is unavailable: no vision model is configured "
+                "on this server."
+            )
 
         try:
-            data = await sandbox.read_bytes(target, max_bytes=READ_IMAGE_MAX_BYTES)
+            data = await sandbox.read_bytes(
+                target, max_bytes=DESCRIBE_IMAGE_MAX_BYTES
+            )
         except FileNotFoundError:
-            return f"read_image found no file at {target}."
+            return f"describe_image found no file at {target}."
         except ValueError as exc:
-            return f"read_image cannot open {target}: {exc}"
+            return f"describe_image cannot open {target}: {exc}"
         except Exception as exc:
-            return f"read_image could not read {target}: {type(exc).__name__}: {exc}"
+            return (
+                f"describe_image could not read {target}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
         try:
-            return await describe_image(
+            return await _describe_image_bytes(
                 data,
                 mime_type,
                 query,
@@ -284,20 +295,23 @@ def read_image_tool(
                 session_id=session_id,
             )
         except Exception as exc:
-            return f"read_image could not look at {target}: {type(exc).__name__}: {exc}"
+            return (
+                f"describe_image could not look at {target}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     return StructuredTool.from_function(
-        coroutine=read_image,
-        name="read_image",
+        coroutine=describe_image_from_path,
+        name="describe_image",
         description=(
             "Look at an image in the sandbox and get back a written answer about it. "
             "`path` is absolute if it starts with `/`, otherwise it is taken as "
             f"relative to `{WORKDIR}`. `query` is what you want to know — ask something "
             "specific ('is the product label legible and undistorted?') rather than "
             "'describe this', and you get a usable answer. Reads "
-            f"{', '.join(sorted(READ_IMAGE_TYPES))} up to "
-            f"{READ_IMAGE_MAX_BYTES // (1024 * 1024)}MB. Use this rather than read_file "
-            "when you need to know what an image shows."
+            f"{', '.join(sorted(DESCRIBE_IMAGE_TYPES))} up to "
+            f"{DESCRIBE_IMAGE_MAX_BYTES // (1024 * 1024)}MB. This always returns "
+            "text, never native image content."
         ),
     )
 
@@ -430,15 +444,15 @@ def _policy(config: dict[str, Any], default: str) -> str:
 
 __all__ = [
     "AGENT_TOOLSET",
+    "DESCRIBE_IMAGE",
+    "DESCRIBE_IMAGE_MAX_BYTES",
+    "DESCRIBE_IMAGE_MODEL",
+    "DESCRIBE_IMAGE_TYPES",
     "FIRECRAWL_RESPONSE_MAX_BYTES",
-    "READ_IMAGE_MAX_BYTES",
-    "READ_IMAGE_MODEL",
-    "READ_IMAGE_TYPES",
     "TOOLSET_TOOL_NAMES",
     "WEB_TOOLSET",
     "custom_tool",
-    "describe_image",
-    "read_image_tool",
+    "describe_image_tool",
     "resolve_tool_interrupts",
     "web_fetch_tool",
     "web_search_tool",

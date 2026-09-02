@@ -438,7 +438,8 @@ are converted to Deep Agents interrupts.
 
 The active runtime also supports:
 
-- `read_image`, implemented with `gemini-3.6-flash`;
+- optional `describe_image`, declared as `describe_image_20260901` and
+  implemented with `gemini-3.6-flash`;
 - Firecrawl-backed `web_search` and `web_fetch` when the Agent declares
   `web_toolset_20260401` and the deployment has a Firecrawl key;
 - custom tools that always pause for a client-supplied result;
@@ -450,7 +451,8 @@ Current limitations:
 - MCP server definitions are accepted and stored but not loaded.
 - the stored `multiagent` roster is accepted and versioned but not consumed;
   Deep Agents' built-in general-purpose `task` subagent is disabled;
-- Only text content blocks are accepted on the current event surface.
+- User messages accept text and attached-File image blocks; other multimodal
+  content types are not yet accepted on the event surface.
 
 ### Output collection
 

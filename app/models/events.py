@@ -125,12 +125,37 @@ def is_action_result(event_type: str) -> bool:
 
 
 class TextBlock(ApiModel):
-    """CMA also carries image, document and search-result blocks. Every tool we
-    run returns text, and a block we cannot produce is one clients would write
-    handling for and never exercise."""
+    """Regular text content."""
 
     type: Literal["text"] = "text"
     text: str
+
+
+class FileImageSource(ApiModel):
+    """A durable VMA File used as native image input.
+
+    The API deliberately accepts a File reference rather than base64. Session
+    events are copied into the event log and the turn queue, so embedding image
+    bytes there would multiply the largest part of the request. URL sources are
+    mutable and can expire; `/v1/files` is where VMA imports one into durable,
+    organization-scoped storage first.
+    """
+
+    type: Literal["file"] = "file"
+    file_id: str = Field(min_length=1, max_length=64)
+
+
+class ImageBlock(ApiModel):
+    """Native image content in a user message."""
+
+    type: Literal["image"] = "image"
+    source: FileImageSource
+
+
+UserContentBlock = Annotated[
+    Union[TextBlock, ImageBlock],
+    Field(discriminator="type"),
+]
 
 
 class RecordedEvent(ApiModel):
@@ -154,12 +179,12 @@ class RecordedEvent(ApiModel):
 
 class UserMessageInput(ApiModel):
     type: Literal["user.message"]
-    content: list[TextBlock] = Field(min_length=1)
+    content: list[UserContentBlock] = Field(min_length=1)
 
 
 class UserMessageEvent(RecordedEvent):
     type: Literal["user.message"] = USER_MESSAGE
-    content: list[TextBlock]
+    content: list[UserContentBlock]
 
 
 class UserInterruptInput(ApiModel):

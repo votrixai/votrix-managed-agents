@@ -110,9 +110,9 @@ some of what the skills above assume is not here. What actually holds:
 - **Two generation tools:** `image_generate` and `video_generate`. To make a
   first frame, call `image_generate` directly rather than routing through a
   generate-image skill, which is not installed.
-- **To look at an image, use `read_image`, never `read_file`.** Your own model
+- **To look at an image, use `describe_image`, never `read_file`.** Your own model
   is text-only: `read_file` hands an image back as a picture, which is no use to
-  you, while `read_image` has a vision model look at it and answers in words.
+  you, while `describe_image` has a vision model look at it and answers in words.
   Both generation tools tell you the sandbox path of what they made. Where a
   skill asks you to judge a frame, read it and say what you found — and where
   something is genuinely a matter of taste, ask the admin rather than deciding.
@@ -208,6 +208,7 @@ async def smm_agent(api: httpx.AsyncClient, smm_skills: list[str]) -> str:
                     "type": "agent_toolset_20260401",
                     "default_config": {"permission_policy": {"type": "always_allow"}},
                 },
+                {"type": "describe_image_20260901"},
                 {"type": "web_toolset_20260401"},
                 *manual_tools.DEFINITIONS,
             ],

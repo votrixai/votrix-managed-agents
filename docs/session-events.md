@@ -15,7 +15,7 @@ payload wrapper.
 
 | Direction | Type | Purpose |
 | --- | --- | --- |
-| You → Agent | `user.message` | Send text and begin or continue work. |
+| You → Agent | `user.message` | Send text and native image inputs, then begin or continue work. |
 | You → Agent | `user.interrupt` | Stop the current turn. |
 | You → Agent | `user.tool_confirmation` | Allow or deny a tool action that needs approval. |
 | You → Agent | `user.custom_tool_result` | Return the result of a custom tool. |
@@ -48,6 +48,37 @@ payload wrapper.
 While the Agent is working, another message returns `409 session_busy` and is
 not added to the event history. Wait for `session.status_idle` before sending
 the next message.
+
+## Send an image
+
+Upload or import the bytes through `POST /v1/files`, then attach that File when
+creating the Session or through `POST /v1/sessions/{session_id}/live/uploads`.
+The message references the durable File rather than copying base64 into the
+event log:
+
+```json
+{
+  "events": [
+    {
+      "type": "user.message",
+      "content": [
+        {"type": "text", "text": "Recreate this page."},
+        {
+          "type": "image",
+          "source": {"type": "file", "file_id": "file_..."}
+        }
+      ]
+    }
+  ]
+}
+```
+
+The Session's selected catalog model must include `image` in its
+`input_modalities`. PNG, JPEG, WebP, and GIF sources may be up to 20 MiB. The
+runtime verifies the actual bytes, applies EXIF orientation, and resizes only
+when needed; long screenshots become an overview plus overlapping detail
+tiles. This happens immediately before inference, while the event history and
+graph checkpoint retain only the `file_id`.
 
 ## Know why a turn stopped
 

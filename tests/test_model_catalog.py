@@ -10,6 +10,7 @@ from app.models.llm import (
     MODEL_CATALOG,
     MOONSHOT,
     OPENROUTER_SLUGS,
+    ZAI,
 )
 from app.runtime.engine import UnknownModelError, _build_chat_model
 
@@ -39,7 +40,7 @@ def test_slugs_are_namespaced_by_their_upstream_provider():
 
 
 def test_the_two_ids_that_are_not_a_plain_join_stay_mapped():
-    """Thirteen slugs are `f"{provider}/{id}"`; these two are not.
+    """Fourteen slugs are `f"{provider}/{id}"`; these two are not.
 
     Anthropic's catalog ids spell a version with hyphens and the gateway spells
     it with a dot, so deriving the slug would silently address a model that does
@@ -65,10 +66,26 @@ def test_kimi_k3_uses_the_public_openrouter_id_and_reasoning_controls():
 
     assert entry.provider == MOONSHOT
     assert entry.thinking is True
+    assert entry.input_modalities == ("text", "image", "video")
     assert OPENROUTER_SLUGS[entry.id] == "moonshotai/kimi-k3"
     assert client.model == "moonshotai/kimi-k3"
     assert client._default_params["reasoning"] == {"effort": "low"}
     assert high_effort._default_params["reasoning"] == {"effort": "high"}
+
+
+def test_glm_flash_is_the_multimodal_openrouter_model():
+    entry = next(model for model in MODEL_CATALOG if model.id == "glm-5.3-flash")
+    client = _build_chat_model(
+        entry.id,
+        api_key="sk-or-v1-test",
+        session_id="sess_gateway_test",
+    )
+
+    assert entry.provider == ZAI
+    assert entry.input_modalities == ("text", "image", "video")
+    assert OPENROUTER_SLUGS[entry.id] == "z-ai/glm-5.3-flash"
+    assert client.model == "z-ai/glm-5.3-flash"
+    assert client._default_params["reasoning"] == {"effort": "low"}
 
 
 def test_kimi_k3_is_kept_off_the_endpoint_that_degenerated():

@@ -48,6 +48,7 @@ from app.db.queries import sessions as sessions_q
 from app.models import events as event_types
 from app.models.errors import (
     Conflict,
+    InvalidRequest,
     MemoryStoreUnavailable,
     NotFound,
     SandboxUnavailable,
@@ -55,6 +56,7 @@ from app.models.errors import (
     SessionCancelled,
     UsageUnavailable,
 )
+from app.models.llm import MODEL_CATALOG
 from app.models.sessions import (
     IDLE,
     RUNNING,
@@ -470,6 +472,8 @@ async def send_events(
     """
     session = await get_session(db, session_id=session_id, organization_id=organization_id)
 
+    await _validate_message_images(db, session=session, events=events)
+
     if any(event.get("type") == event_types.USER_INTERRUPT for event in events):
         if len(events) > 1:
             raise Conflict("user.interrupt must be sent on its own")
@@ -527,6 +531,82 @@ async def send_events(
             # the turn. There is deliberately no second error event to append.
             await db.commit()
     return appended
+
+
+def _message_image_file_ids(events: list[dict[str, Any]]) -> set[str]:
+    """Every durable File referenced by a native image content block."""
+    found: set[str] = set()
+    for event in events:
+        if event.get("type") != event_types.USER_MESSAGE:
+            continue
+        content = event.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "image":
+                continue
+            source = block.get("source")
+            if isinstance(source, dict) and source.get("type") == "file":
+                found.add(str(source.get("file_id") or ""))
+    return found
+
+
+async def _validate_message_images(
+    db: AsyncSession,
+    *,
+    session: Session,
+    events: list[dict[str, Any]],
+) -> None:
+    """Refuse an image the selected model or Session cannot actually read.
+
+    A message image is required to be an attached Session File. That reference
+    pins the durable File against deletion, proves it belongs to the same
+    Organization, and gives sandbox tools a stable path to the same bytes.
+    """
+    file_ids = _message_image_file_ids(events)
+    if not file_ids:
+        return
+
+    version = await agents_q.get_agent_version(
+        db,
+        agent_id=session.agent_id,
+        version=session.agent_version,
+        organization_id=session.organization_id,
+    )
+    if version is None:
+        raise NotFound(f"Agent version {session.agent_version} not found")
+
+    spec = session.model or version.model or {}
+    model_id = spec if isinstance(spec, str) else str(spec.get("id") or "")
+    model = next((entry for entry in MODEL_CATALOG if entry.id == model_id), None)
+    if model is None or "image" not in model.input_modalities:
+        raise InvalidRequest(
+            f"Model {model_id or '(unset)'} does not accept native image input"
+        )
+
+    attached = await sessions_q.list_session_files(db, session_id=session.id)
+    attached_ids = {row.file_id for row in attached}
+    missing = sorted(file_ids - attached_ids)
+    if missing:
+        listed = ", ".join(missing)
+        raise InvalidRequest(
+            "Message images must already be attached to the Session as File "
+            f"resources or live uploads; not attached: {listed}"
+        )
+
+    from app.runtime.images import MAX_IMAGE_SOURCE_BYTES
+
+    for file_id in sorted(file_ids):
+        file = await files_service.get_file(
+            db,
+            file_id=file_id,
+            organization_id=session.organization_id,
+        )
+        if file.size_bytes > MAX_IMAGE_SOURCE_BYTES:
+            limit_mib = MAX_IMAGE_SOURCE_BYTES // (1024 * 1024)
+            raise InvalidRequest(
+                f"Image File {file_id} is over the {limit_mib} MiB source limit"
+            )
 
 
 async def cancel_session(
@@ -816,10 +896,18 @@ async def process_session(
 
     # What the user attached. Named in the prompt rather than left to be
     # discovered, so the agent does not have to go looking for its own inputs.
-    attached = [
-        row.path
-        for row in await sessions_q.list_session_files(db, session_id=session_id)
-    ]
+    attached_rows = await sessions_q.list_session_files(db, session_id=session_id)
+    attached = [row.path for row in attached_rows]
+    image_files: dict[str, tuple[str, str | None]] = {}
+    for row in attached_rows:
+        if row.file_id in image_files:
+            continue
+        file = await files_service.get_file(
+            db,
+            file_id=row.file_id,
+            organization_id=session.organization_id,
+        )
+        image_files[file.id] = (row.path, file.mime_type)
     attached_memory_stores = [
         {
             "name": row.name,
@@ -838,6 +926,19 @@ async def process_session(
         session.id,
         session.organization_id,
     )
+
+    async def resolve_image(file_id: str) -> tuple[bytes, str | None]:
+        from app.runtime.images import MAX_IMAGE_SOURCE_BYTES
+
+        source = image_files.get(file_id)
+        if source is None:
+            raise ValueError(f"Image File {file_id} is not attached to Session {session.id}")
+        path, mime_type = source
+        data = await container.read_bytes(
+            f"{UPLOADS_DIR}/{path}",
+            max_bytes=MAX_IMAGE_SOURCE_BYTES,
+        )
+        return data, mime_type
 
     # Fetched per turn rather than held on the Session, because suspending an
     # Account is meant to bite on the next call — not on the next Session. A
@@ -870,6 +971,7 @@ async def process_session(
                     events=events,
                     sandbox=container,
                     inference_key=inference_key,
+                    resolve_image=resolve_image,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
                     emit=_emitter(db, session, generation),

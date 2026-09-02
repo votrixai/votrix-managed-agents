@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.db.queries import files as files_q
 from app.db.queries import sessions as sessions_q
 from app.models.sessions import (
     IDLE,
@@ -17,7 +18,13 @@ from app.models.sessions import (
     TERMINATED,
 )
 from app.services import sessions as service
-from app.models.errors import Conflict, NotFound, SessionBusy, SessionCancelled
+from app.models.errors import (
+    Conflict,
+    InvalidRequest,
+    NotFound,
+    SessionBusy,
+    SessionCancelled,
+)
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hi"}]}
 INTERRUPT = {"type": "user.interrupt"}
@@ -40,6 +47,25 @@ async def send(db, session, message=MESSAGE, org=None):
     )
 
 
+async def attach_image(db, session, *, size_bytes=8):
+    file = await files_q.create_file(
+        db,
+        organization_id=session.organization_id,
+        filename="screen.png",
+        storage_key="files/screen.png",
+        mime_type="image/png",
+        size_bytes=size_bytes,
+    )
+    await sessions_q.attach_file(
+        db,
+        session,
+        file_id=file.id,
+        path="screen.png",
+    )
+    await db.commit()
+    return file
+
+
 async def test_first_message_claims_the_session(db, session):
     events = await send(db, session)
 
@@ -47,6 +73,89 @@ async def test_first_message_claims_the_session(db, session):
     assert [e.seq for e in events] == [1]
     assert session.status == RUNNING
     assert session.lease_expires_at is not None
+
+
+async def test_an_attached_image_message_is_recorded_without_image_bytes(db, session):
+    image = await attach_image(db, session)
+    message = {
+        "type": "user.message",
+        "content": [
+            {"type": "text", "text": "What is this?"},
+            {
+                "type": "image",
+                "source": {"type": "file", "file_id": image.id},
+            },
+        ],
+    }
+
+    events = await send(db, session, message)
+
+    assert events[0].payload == {"content": message["content"]}
+
+
+async def test_a_message_image_must_already_be_attached(db, session):
+    message = {
+        "type": "user.message",
+        "content": [
+            {
+                "type": "image",
+                "source": {"type": "file", "file_id": "file_unattached"},
+            }
+        ],
+    }
+
+    with pytest.raises(InvalidRequest, match="not attached"):
+        await send(db, session, message)
+
+
+async def test_a_text_only_session_refuses_native_image_input(db, session):
+    image = await attach_image(db, session)
+    session.model = {"id": "deepseek-v4-flash"}
+    await db.commit()
+
+    with pytest.raises(InvalidRequest, match="does not accept native image"):
+        await send(
+            db,
+            session,
+            {
+                "type": "user.message",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "file", "file_id": image.id},
+                    }
+                ],
+            },
+        )
+
+
+async def test_an_oversized_message_image_is_refused_before_the_turn_is_claimed(
+    db, session
+):
+    from app.runtime.images import MAX_IMAGE_SOURCE_BYTES
+
+    image = await attach_image(
+        db,
+        session,
+        size_bytes=MAX_IMAGE_SOURCE_BYTES + 1,
+    )
+
+    with pytest.raises(InvalidRequest, match="source limit"):
+        await send(
+            db,
+            session,
+            {
+                "type": "user.message",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "file", "file_id": image.id},
+                    }
+                ],
+            },
+        )
+
+    assert session.status == IDLE
 
 
 async def test_second_message_is_refused_while_busy(db, session):
@@ -651,7 +760,13 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
 
     monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
     monkeypatch.setattr(engine, "_build_chat_model", _capture)
-    monkeypatch.setattr(engine, "read_image_tool", lambda *_a, **_kw: object())
+    monkeypatch.setattr(
+        engine,
+        "describe_image_tool",
+        lambda *_a, **_kw: pytest.fail(
+            "describe_image must not be injected without its declaration"
+        ),
+    )
     monkeypatch.setattr(engine, "create_deep_agent", lambda **_kw: _Graph())
 
     async def _emit(_event, _payload):
@@ -686,3 +801,77 @@ async def test_the_model_a_turn_runs_on(monkeypatch, session_model, expected):
             "session_id": "sess_model_resolution",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected_count"),
+    [
+        ([{"type": "agent_toolset_20260401"}], 0),
+        (
+            [
+                {"type": "agent_toolset_20260401"},
+                {"type": "describe_image_20260901"},
+            ],
+            1,
+        ),
+    ],
+)
+async def test_describe_image_is_injected_only_when_declared(
+    monkeypatch, declared, expected_count
+):
+    from types import SimpleNamespace
+
+    from app.runtime import engine
+
+    built_tools: list[list[object]] = []
+    describe_tool = object()
+
+    class _Checkpoint:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class _Graph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(next=(), values={"messages": []}, interrupts=())
+
+        async def astream(self, *_args, **_kwargs):
+            if False:
+                yield {}
+
+    def _create(**kwargs):
+        built_tools.append(kwargs["tools"])
+        return _Graph()
+
+    monkeypatch.setattr(engine, "_checkpoint_saver", lambda _session_id: _Checkpoint())
+    monkeypatch.setattr(engine, "_build_chat_model", lambda *_a, **_kw: object())
+    monkeypatch.setattr(engine, "describe_image_tool", lambda *_a, **_kw: describe_tool)
+    monkeypatch.setattr(engine, "create_deep_agent", _create)
+
+    async def _emit(_event, _payload):
+        return None
+
+    async def _publish(_event, _text):
+        return None
+
+    await engine.execute_agent(
+        session=SimpleNamespace(id="sess_optional_image_tool", model=None),
+        version=SimpleNamespace(
+            agent_id="agent_optional_image_tool",
+            version=1,
+            tools=declared,
+            skills=[],
+            model={"id": "claude-opus-5"},
+            system=None,
+        ),
+        events=[MESSAGE],
+        sandbox=SimpleNamespace(to_deep_agent_backend=object()),
+        emit=_emit,
+        publish=_publish,
+        inference_key="sk-or-v1-test",
+    )
+
+    assert len(built_tools) == 1
+    assert built_tools[0].count(describe_tool) == expected_count
