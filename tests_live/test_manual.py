@@ -110,12 +110,9 @@ some of what the skills above assume is not here. What actually holds:
 - **Two generation tools:** `image_generate` and `video_generate`. To make a
   first frame, call `image_generate` directly rather than routing through a
   generate-image skill, which is not installed.
-- **To look at an image, use `read_image`, never `read_file`.** Your own model
-  is text-only: `read_file` hands an image back as a picture, which is no use to
-  you, while `read_image` has a vision model look at it and answers in words.
-  Both generation tools tell you the sandbox path of what they made. Where a
-  skill asks you to judge a frame, read it and say what you found — and where
-  something is genuinely a matter of taste, ask the admin rather than deciding.
+- **You cannot inspect images.** Your model is text-only, so ask the admin to
+  review generated frames whenever a visual judgment is needed. Do not invent
+  details about an image you cannot see.
 - **You cannot watch video.** For a generated clip, give the admin the URL.
 - **Nothing can be published or scheduled.** There are no `cron_*` tools, no
   `schedule_once`, and no connected social accounts. Stop at the approved draft,

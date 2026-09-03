@@ -125,12 +125,28 @@ def is_action_result(event_type: str) -> bool:
 
 
 class TextBlock(ApiModel):
-    """CMA also carries image, document and search-result blocks. Every tool we
-    run returns text, and a block we cannot produce is one clients would write
-    handling for and never exercise."""
+    """Plain text in a user or agent message."""
 
     type: Literal["text"] = "text"
     text: str
+
+
+class ImageUrlBlock(ApiModel):
+    """LangChain's standard image block for a publicly reachable image."""
+
+    type: Literal["image"] = "image"
+    url: str = Field(min_length=1)
+
+
+class ImageBase64Block(ApiModel):
+    """LangChain's standard image block for inline image bytes."""
+
+    type: Literal["image"] = "image"
+    base64: str = Field(min_length=1)
+    mime_type: str = Field(min_length=1)
+
+
+UserContentBlock = Union[TextBlock, ImageUrlBlock, ImageBase64Block]
 
 
 class RecordedEvent(ApiModel):
@@ -154,12 +170,12 @@ class RecordedEvent(ApiModel):
 
 class UserMessageInput(ApiModel):
     type: Literal["user.message"]
-    content: list[TextBlock] = Field(min_length=1)
+    content: list[UserContentBlock] = Field(min_length=1)
 
 
 class UserMessageEvent(RecordedEvent):
     type: Literal["user.message"] = USER_MESSAGE
-    content: list[TextBlock]
+    content: list[UserContentBlock]
 
 
 class UserInterruptInput(ApiModel):

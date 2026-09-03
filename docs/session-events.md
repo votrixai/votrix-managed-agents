@@ -15,7 +15,7 @@ payload wrapper.
 
 | Direction | Type | Purpose |
 | --- | --- | --- |
-| You → Agent | `user.message` | Send text and begin or continue work. |
+| You → Agent | `user.message` | Send text or images and begin or continue work. |
 | You → Agent | `user.interrupt` | Stop the current turn. |
 | You → Agent | `user.tool_confirmation` | Allow or deny a tool action that needs approval. |
 | You → Agent | `user.custom_tool_result` | Return the result of a custom tool. |
@@ -48,6 +48,31 @@ payload wrapper.
 While the Agent is working, another message returns `409 session_busy` and is
 not added to the event history. Wait for `session.status_idle` before sending
 the next message.
+
+Image input uses LangChain's standard image content blocks. Use `url` for a
+public image:
+
+```json
+{
+  "events": [{
+    "type": "user.message",
+    "content": [
+      {"type": "text", "text": "What is in this image?"},
+      {"type": "image", "url": "https://example.com/image.png"}
+    ]
+  }]
+}
+```
+
+For private image bytes, use `base64` together with `mime_type`:
+
+```json
+{"type":"image","base64":"iVBORw0KGgo...","mime_type":"image/png"}
+```
+
+VMA passes these blocks to LangChain unchanged. Model support, format limits,
+and size limits are enforced by the selected model provider. Images already in
+the Session sandbox should be opened with the Agent's native `read_file` tool.
 
 ## Know why a turn stopped
 

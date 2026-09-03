@@ -13,6 +13,7 @@ DEEPSEEK = "deepseek"
 GOOGLE = "google"
 MOONSHOT = "moonshotai"
 OPENAI = "openai"
+ZAI = "z-ai"
 
 
 # How hard a model is asked to think, as a Session or Agent may set it.
@@ -124,6 +125,11 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
         provider=MOONSHOT,
         display_name="Kimi K3",
     ),
+    ModelResponse(
+        id="glm-5.3-flash",
+        provider=ZAI,
+        display_name="GLM 5.3 Flash",
+    ),
     # Undated on purpose. Dated snapshots were briefly listed beside these so
     # two cuts of the same model could be timed against each other; that
     # measurement is done, and a catalogue is a menu rather than a record of
@@ -144,7 +150,7 @@ MODEL_CATALOG: tuple[ModelResponse, ...] = (
 
 
 # What the gateway calls each model. Written out rather than derived from
-# `f"{provider}/{id}"`, which is right for thirteen of these and wrong for the two
+# `f"{provider}/{id}"`, which is right for fourteen of these and wrong for the two
 # Anthropic ids that spell their version with a dot. A wrong slug fails at the
 # gateway, whose error names a model nobody wrote down, so the mapping is stated
 # here where a reader can check it against the catalog.
@@ -165,6 +171,7 @@ OPENROUTER_SLUGS: dict[str, str] = {
     "gpt-5.6-terra": "openai/gpt-5.6-terra",
     "gpt-5.6-luna": "openai/gpt-5.6-luna",
     "kimi-k3": "moonshotai/kimi-k3",
+    "glm-5.3-flash": "z-ai/glm-5.3-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
 }

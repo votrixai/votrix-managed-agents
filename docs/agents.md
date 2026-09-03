@@ -83,9 +83,13 @@ Agent is being created.
 
 The required Agent toolset makes these sandbox tools available:
 
-- `execute`, `ls`, `read_file`, `read_image`, `write_file`, and `edit_file`;
+- `execute`, `ls`, `read_file`, `write_file`, and `edit_file`;
 - `glob` and `grep`;
 - `write_todos`.
+
+Deep Agents returns supported image files read with `read_file` as native
+LangChain image content blocks. A multimodal model can inspect those blocks
+directly; VMA does not install a separate image-description tool.
 
 Tools run without a confirmation by default. To require approval for selected
 tools, add a per-tool permission:
@@ -137,6 +141,11 @@ A custom tool describes work performed by your application rather than by VMA:
 Every custom-tool call pauses the turn and emits `agent.custom_tool_use`. Return
 its result with `user.custom_tool_result` as described in
 [Session Events](/docs/session-events#answer-requested-actions).
+
+If an application wants a text description fallback for a text-only model, it
+can declare `describe_image` as a custom tool and return the description through
+the same custom-tool result flow. That tool belongs to the application, not the
+VMA runtime.
 
 ## Attach Skills
 

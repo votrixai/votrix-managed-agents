@@ -570,6 +570,42 @@ async def test_sending_a_message_returns_the_events(client, headers, created):
     assert body["data"][0]["type"] == "user.message"
 
 
+async def test_sending_native_image_content_returns_it_unchanged(
+    client, headers, created
+):
+    content = [
+        {"type": "text", "text": "What is in this image?"},
+        {"type": "image", "url": "https://example.com/image.png"},
+        {"type": "image", "base64": "aGVsbG8=", "mime_type": "image/png"},
+    ]
+
+    response = await client.post(
+        f"/v1/sessions/{created['id']}/events",
+        headers=headers,
+        json={"events": [{"type": "user.message", "content": content}]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["content"] == content
+
+
+async def test_base64_image_content_requires_a_mime_type(client, headers, created):
+    response = await client.post(
+        f"/v1/sessions/{created['id']}/events",
+        headers=headers,
+        json={
+            "events": [
+                {
+                    "type": "user.message",
+                    "content": [{"type": "image", "base64": "aGVsbG8="}],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+
+
 async def test_a_busy_session_answers_409_without_a_retry_hint(client, headers, created):
     """No `Retry-After`.
 
