@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from openrouter import OpenRouter
 
-from app.runtime.openrouter import VMAChatOpenRouter
+from app.utils.openrouter import VMAChatOpenRouter
 
 ONE_PIXEL_PNG = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"

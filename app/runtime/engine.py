@@ -896,7 +896,7 @@ def _build_chat_model(
         # request: the caller named a model this build claims to serve.
         raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
 
-    from app.runtime.openrouter import VMAChatOpenRouter
+    from app.utils.openrouter import VMAChatOpenRouter
 
     options: dict[str, Any] = {}
 
