@@ -43,6 +43,21 @@ async def sweep_once() -> int:
                 source="system",
                 payload={"error": {"type": "worker_lost"}},
             )
+            # The event `_fail` writes here too, and for the same reason it
+            # gives: `idle` is the only thing that tells a client on the stream
+            # the turn is over. Releasing the row without it left the session
+            # free in the database and the page spinning on it forever — one
+            # user waited nine minutes on a session that had been ready for
+            # eight, then had to interrupt a turn that was no longer running.
+            # A sweep is exactly when nobody else will send this: the worker
+            # that would have is the one that died.
+            await sessions_q.append_event(
+                db,
+                session,
+                type="session.status_idle",
+                source="system",
+                payload={"stop_reason": {"type": "worker_lost"}},
+            )
             await sessions_q.release_session(
                 db,
                 session,

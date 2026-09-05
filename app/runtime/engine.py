@@ -493,6 +493,46 @@ class _DeltaBuffer:
             await self._publish(event_type, "".join(pieces))
 
 
+def _readable_tool_result(content: Any) -> str:
+    """One tool result, as a line of text for the event log.
+
+    The log is read by people and by the API, never by the model: the graph's
+    own history lives in the checkpointer, and `_build_fresh_input` refuses
+    every event type but `user.message`, so nothing here can reach a prompt.
+    That is what makes summarising safe — and necessary.
+
+    `str()` alone was doing this, which is right for the text results that are
+    almost all of them and catastrophic for the rest. `read_file` on an image
+    answers with a base64 block, and stringifying it wrote the whole encoding
+    into an event: 384,826 characters for one photograph, 1.4 MB across one
+    Session. The client then rendered every byte, because its own guard
+    truncates by line count and base64 has no newlines.
+
+    The model is unaffected either way — `VMAChatOpenRouter` sends it the real
+    block as an `image_url` — so the encoding was only ever cost.
+    """
+
+    if not isinstance(content, list):
+        return str(content)
+
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            parts.append(str(block))
+            continue
+        kind = block.get("type")
+        if kind == "text":
+            parts.append(str(block.get("text", "")))
+            continue
+        # Everything else is bytes we will not repeat. Say what it was and how
+        # big, which is what a reader of the log actually wants from it.
+        encoded = block.get("base64") or block.get("data") or ""
+        mime = block.get("mime_type") or kind or "file"
+        size = f", {len(encoded) * 3 // 4:,} bytes" if isinstance(encoded, str) and encoded else ""
+        parts.append(f"[{mime}{size}]")
+    return "\n".join(parts)
+
+
 def _stream_delta(chunk: Any, deltas: _DeltaBuffer) -> None:
     """Sort one streamed chunk into speech or reasoning.
 
@@ -573,7 +613,7 @@ async def _translate(
             event_types.AGENT_TOOL_RESULT,
             {
                 "tool_use_id": message.tool_call_id,
-                "content": [{"type": "text", "text": str(message.content)}],
+                "content": [{"type": "text", "text": _readable_tool_result(message.content)}],
                 "is_error": message.status == "error",
             },
         )
@@ -868,6 +908,30 @@ def _system_prompt(
     return f"{configured}\n\n{workspace}" if configured else workspace
 
 
+# How long a gateway call may stay silent, in milliseconds — the SDK's unit.
+#
+# Not a limit on how long an answer may take. httpx applies it between reads, so
+# on a streamed response it bounds the gap *between* chunks; once tokens are
+# flowing those are milliseconds and this never applies. The gap it does govern
+# is the first one — request sent, nothing back yet — which is the upload, the
+# gateway, the provider decoding every image in the request, and prefill. That
+# one grows with the conversation.
+#
+# Naming it at all is the point. Nothing here passed a timeout before, so the
+# figure in force was httpx's default for a general-purpose client: five
+# seconds. A Session holding seven images re-uploads 1.4 MB of them every turn
+# and the provider decodes each before the first token exists — reliably past
+# five seconds. The turn then died in `_fail` as a bare `ReadTimeout` whose
+# `str()` is empty, which is why the client could only render "The turn failed
+# (ReadTimeout)", and the SDK's retry budget spent 300 more seconds re-trying a
+# read that could not have succeeded.
+#
+# Ten minutes is deliberately generous: a ceiling for a call that has genuinely
+# hung rather than a target, and still under `TURN_TIMEOUT_SECONDS` (1200) so
+# the turn's own limit stays the one that fires last.
+_GATEWAY_TIMEOUT_MS = 600_000
+
+
 def _build_chat_model(
     spec: dict[str, Any] | str,
     *,
@@ -939,6 +1003,7 @@ def _build_chat_model(
     return VMAChatOpenRouter(
         model=slug,
         api_key=_require_key(api_key),
+        timeout=_GATEWAY_TIMEOUT_MS,
         # One VMA Session is one OpenRouter Session. Besides making the
         # gateway's Sessions view useful, this gives every model call in the
         # conversation the same sticky-routing key for prompt-cache reuse.
