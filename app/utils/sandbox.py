@@ -15,6 +15,7 @@ that paused while the model was thinking heals itself instead of failing.
 from __future__ import annotations
 
 import asyncio
+import base64
 import mimetypes
 import re
 import shlex
@@ -142,6 +143,11 @@ _E2B_TRANSPORT_ERRORS = (
 )
 
 _SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+# These are both Pillow-supported and native image types accepted by the
+# provider path. HEIC/HEIF need a separate decoder and therefore keep the
+# existing backend behavior instead of being claimed here.
+_PREPARED_IMAGE_SUFFIXES = frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
 logger = structlog.get_logger(__name__)
 
@@ -1370,6 +1376,48 @@ class LazyE2BBackend(SandboxBackendProtocol):
         return await (await self._ready()).als(path)
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        suffix = PurePosixPath(file_path).suffix.lower()
+        # ``AsyncE2BSandbox.aread`` inherits DeepAgents' 500 KiB binary-file
+        # ceiling. Read supported rasters through E2B's byte API instead, then
+        # return the same bounded base64 ``ReadResult`` shape the filesystem
+        # middleware already understands.
+        if suffix in _PREPARED_IMAGE_SUFFIXES:
+            # Pillow is only needed for these binary reads. Ordinary text and
+            # environment operations should not import an image decoder.
+            from app.utils.image_preview import (
+                MAX_IMAGE_SOURCE_BYTES,
+                ImagePreviewError,
+                prepare_image_preview,
+            )
+
+            try:
+                source = await self._sandbox.read_bytes(
+                    file_path, max_bytes=MAX_IMAGE_SOURCE_BYTES
+                )
+            except FileNotFoundError:
+                return ReadResult(error=f"File '{file_path}' does not exist")
+            except ValueError:
+                return ReadResult(
+                    error=(
+                        f"File '{file_path}' exceeds the "
+                        f"{MAX_IMAGE_SOURCE_BYTES // (1024 * 1024)} MiB image source limit"
+                    )
+                )
+
+            try:
+                preview = await asyncio.to_thread(
+                    prepare_image_preview, source, suffix
+                )
+            except ImagePreviewError as exc:
+                return ReadResult(error=f"File '{file_path}': {exc}")
+
+            return ReadResult(
+                file_data={
+                    "content": base64.b64encode(preview).decode("ascii"),
+                    "encoding": "base64",
+                }
+            )
+
         return await (await self._ready()).aread(file_path, offset=offset, limit=limit)
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:

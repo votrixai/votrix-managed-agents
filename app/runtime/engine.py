@@ -896,7 +896,7 @@ def _build_chat_model(
         # request: the caller named a model this build claims to serve.
         raise UnknownModelError(f"Model {entry.id!r} has no gateway slug configured")
 
-    from langchain_openrouter import ChatOpenRouter
+    from app.runtime.openrouter import VMAChatOpenRouter
 
     options: dict[str, Any] = {}
 
@@ -936,7 +936,7 @@ def _build_chat_model(
     if thinking is not None:
         options["reasoning"] = {"effort": thinking}
 
-    return ChatOpenRouter(
+    return VMAChatOpenRouter(
         model=slug,
         api_key=_require_key(api_key),
         # One VMA Session is one OpenRouter Session. Besides making the

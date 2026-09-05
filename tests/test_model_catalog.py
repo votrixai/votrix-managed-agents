@@ -128,7 +128,7 @@ def test_every_catalog_model_builds_one_gateway_client():
         for m in MODEL_CATALOG
     ]
 
-    assert {type(client).__name__ for client in built} == {"ChatOpenRouter"}
+    assert {type(client).__name__ for client in built} == {"VMAChatOpenRouter"}
     assert [client.model for client in built] == [
         OPENROUTER_SLUGS[m.id] for m in MODEL_CATALOG
     ]
