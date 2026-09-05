@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,10 +36,21 @@ class Session(TimestampMixin, Base):
             name="ck_sessions_status",
         ),
         Index("ix_sessions_organization_status", "organization_id", "status"),
+        Index(
+            "uq_sessions_organization_idempotency_key",
+            "organization_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+            sqlite_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # A caller-chosen operation identity.  Scoped to the Organization so a
+    # timed-out create can be retried without opening a second sandbox.
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False)
     agent_version: Mapped[int] = mapped_column(Integer, nullable=False)
     environment_id: Mapped[str] = mapped_column(
@@ -146,5 +158,3 @@ class SessionFile(Base):
         server_default=func.now(),
         nullable=False,
     )
-
-

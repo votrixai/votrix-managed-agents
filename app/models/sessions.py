@@ -71,6 +71,16 @@ class SessionCreateRequest(ApiModel):
         ),
     )
     title: str | None = Field(default=None, max_length=255)
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description=(
+            "Optional caller operation identity, scoped to the Organization. "
+            "Repeating a successful create with the same value returns the "
+            "original Session instead of provisioning another sandbox."
+        ),
+    )
     # Attached once, when the container is built. A session cannot be given
     # more later — the sandbox is created with the session and never rebuilt.
     resources: list[FileResource | MemoryStoreResource] = Field(

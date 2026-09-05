@@ -490,6 +490,25 @@ async def test_creating_a_session_returns_it(created):
     assert created["id"].startswith("sess_")
 
 
+async def test_retrying_session_create_with_the_same_key_returns_the_original(
+    client, headers, agent, environment, sandboxes
+):
+    body = {
+        "agent_id": agent.id,
+        "environment_id": environment.id,
+        "title": "Migrated conversation",
+        "idempotency_key": "cma-snapshot/session-123",
+    }
+
+    first = await client.post("/v1/sessions", headers=headers, json=body)
+    second = await client.post("/v1/sessions", headers=headers, json=body)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert len(sandboxes) == 1
+
+
 async def test_session_pins_the_model_it_was_given(
     client, headers, agent, environment
 ):
@@ -519,7 +538,12 @@ async def test_a_session_without_a_model_follows_the_agent(created):
 
 
 async def test_a_session_never_exposes_its_internals(created):
-    for hidden in ("organization_id", "lock_version", "lease_expires_at"):
+    for hidden in (
+        "organization_id",
+        "idempotency_key",
+        "lock_version",
+        "lease_expires_at",
+    ):
         assert hidden not in created
 
 

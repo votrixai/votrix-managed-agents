@@ -20,6 +20,7 @@ async def create_file(
     size_bytes: int = 0,
     sha256: str | None = None,
     scope_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> File:
     """Record a file whose bytes are already stored.
 
@@ -38,10 +39,26 @@ async def create_file(
         size_bytes=size_bytes,
         sha256=sha256,
         storage_key=storage_key,
+        idempotency_key=idempotency_key,
     )
     db.add(file)
     await db.flush()
     return file
+
+
+async def get_by_idempotency_key(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    idempotency_key: str,
+) -> File | None:
+    result = await db.execute(
+        select(File).where(
+            File.organization_id == organization_id,
+            File.idempotency_key == idempotency_key,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_file(db: AsyncSession, *, file_id: str, organization_id: str) -> File | None:

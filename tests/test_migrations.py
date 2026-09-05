@@ -14,7 +14,7 @@ from app.config import clear_settings_cache
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PREVIOUS_HEAD = "b7e1c4d9a620"
 REWIRED_RELEASE_HEAD = "b7f2d4a91c53"
-CURRENT_HEAD = "c1e7a3b58f42"
+CURRENT_HEAD = "d2c8a41f5e90"
 
 
 def test_member_migration_preserves_existing_owner_and_has_one_head(

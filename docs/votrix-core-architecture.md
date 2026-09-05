@@ -331,6 +331,10 @@ does not yet validate the stored toolset, model ID, or provider credential;
 those can still fail on the first turn. Creation therefore needs E2B and can
 take a network round trip.
 
+`idempotency_key` is optional and tenant-scoped. Once a create commits, the
+same key resolves to that Session before any new sandbox work begins. This is
+the recovery boundary for callers whose response was lost after provisioning.
+
 The Session uses the same E2B sandbox for every turn. E2B may pause it after an
 idle timeout; `LazyE2BBackend` reconnects before each backend operation. The
 service never silently creates a replacement. A missing sandbox row, or one

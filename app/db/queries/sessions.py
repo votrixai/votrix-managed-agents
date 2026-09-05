@@ -43,6 +43,7 @@ async def create_session(
     model: dict[str, Any] | None = None,
     account_id: str | None = None,
     title: str | None = None,
+    idempotency_key: str | None = None,
 ) -> Session:
     session = Session(
         id=new_id("sess"),
@@ -53,11 +54,27 @@ async def create_session(
         model=model,
         account_id=account_id,
         title=title,
+        idempotency_key=idempotency_key,
         status=IDLE,
     )
     db.add(session)
     await db.flush()
     return session
+
+
+async def get_by_idempotency_key(
+    db: AsyncSession,
+    *,
+    organization_id: str,
+    idempotency_key: str,
+) -> Session | None:
+    result = await db.execute(
+        select(Session).where(
+            Session.organization_id == organization_id,
+            Session.idempotency_key == idempotency_key,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_session_by_id(db: AsyncSession, *, session_id: str) -> Session | None:
