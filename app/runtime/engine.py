@@ -528,7 +528,7 @@ def _readable_tool_result(content: Any) -> str:
         # big, which is what a reader of the log actually wants from it.
         encoded = block.get("base64") or block.get("data") or ""
         mime = block.get("mime_type") or kind or "file"
-        size = f", {len(encoded) * 3 // 4:,} bytes" if isinstance(encoded, str) and encoded else ""
+        size = f", {len(encoded.rstrip('=')) * 3 // 4:,} bytes" if isinstance(encoded, str) and encoded else ""
         parts.append(f"[{mime}{size}]")
     return "\n".join(parts)
 

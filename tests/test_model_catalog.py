@@ -135,6 +135,17 @@ def test_every_catalog_model_builds_one_gateway_client():
     assert {client.session_id for client in built} == {"sess_gateway_test"}
 
 
+def test_gateway_requests_allow_ten_minutes_without_a_response():
+    client = _build_chat_model(
+        "deepseek-v4-pro",
+        api_key="sk-or-v1-test",
+        session_id="sess_gateway_test",
+    )
+
+    assert client.request_timeout == 600_000
+    assert client.client.sdk_configuration.timeout_ms == 600_000
+
+
 def test_only_anthropic_models_enable_automatic_prompt_caching():
     """Claude needs an explicit request-root cache control; the others do not."""
     built = {
