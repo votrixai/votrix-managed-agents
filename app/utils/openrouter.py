@@ -87,8 +87,17 @@ class VMAChatOpenRouter(ChatOpenRouter):
         stop: list[str] | None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         message_dicts, params = super()._create_message_dicts(messages, stop)
+        text_only = (self.profile or {}).get("image_inputs") is False
         for message, message_dict in zip(messages, message_dicts, strict=True):
-            if isinstance(message, ToolMessage):
+            if text_only and isinstance(message_dict.get("content"), list):
+                message_dict["content"] = [
+                    {"type": "text", "text": "[Image omitted: text-only model.]"}
+                    if isinstance(block, dict)
+                    and block.get("type") in {"image", "image_url", "input_image"}
+                    else block
+                    for block in message_dict["content"]
+                ]
+            elif isinstance(message, ToolMessage):
                 message_dict["content"] = _tool_content_for_openrouter(
                     message_dict.get("content")
                 )
