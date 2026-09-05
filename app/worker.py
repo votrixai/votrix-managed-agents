@@ -22,7 +22,7 @@ import structlog
 
 from app.db.engine import session_scope
 from app.db.queries import sessions as sessions_q
-from app.models.sessions import IDLE
+from app.models.sessions import IDLE, STOP_ERROR
 from app.services.sessions import LEASE_SECONDS
 
 logger = structlog.get_logger(__name__)
@@ -56,13 +56,13 @@ async def sweep_once() -> int:
                 session,
                 type="session.status_idle",
                 source="system",
-                payload={"stop_reason": {"type": "worker_lost"}},
+                payload={"stop_reason": {"type": STOP_ERROR}},
             )
             await sessions_q.release_session(
                 db,
                 session,
                 status=IDLE,
-                stop_reason={"type": "worker_lost"},
+                stop_reason={"type": STOP_ERROR},
             )
         await db.commit()
         return len(stranded)
