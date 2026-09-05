@@ -19,6 +19,7 @@ import base64
 import mimetypes
 import re
 import shlex
+import stat
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -148,6 +149,11 @@ _SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 # provider path. HEIC/HEIF need a separate decoder and therefore keep the
 # existing backend behavior instead of being claimed here.
 _PREPARED_IMAGE_SUFFIXES = frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
+
+
+class _NonRegularFileError(ValueError):
+    """A byte read resolved to something that is not a regular file."""
+
 
 logger = structlog.get_logger(__name__)
 
@@ -1114,22 +1120,38 @@ class Sandbox:
         row, because it is how a deliverable leaves. This is for looking at a
         file, and leaves nothing behind.
 
-        The size is checked in the container first. A ceiling enforced after
-        the transfer is a ceiling that costs the transfer.
+        Type and size are checked together in the container first. ``stat -L``
+        inspects the resolved target, so a symlink to a FIFO or device cannot
+        enter E2B's unbounded byte-read path. The size is checked again after
+        transfer to close the ordinary-file growth race before callers decode
+        or retain the result.
         """
         measured = await self.run(
-            f"stat -c %s {shlex.quote(path)} 2>/dev/null || echo -1",
+            f"stat -Lc '%f %s' -- {shlex.quote(path)} 2>/dev/null || echo -1",
             idempotent=True,
         )
         raw = (measured.stdout or "").strip()
-        size = int(raw) if raw.lstrip("-").isdigit() else -1
+        mode_hex, separator, raw_size = raw.partition(" ")
+        try:
+            mode = int(mode_hex, 16)
+            size = int(raw_size) if separator else -1
+        except ValueError:
+            mode = 0
+            size = -1
         if size < 0:
             raise FileNotFoundError(path)
+        if not stat.S_ISREG(mode):
+            raise _NonRegularFileError(f"{path} is not a regular file")
         if size > max_bytes:
             raise ValueError(f"{path} is {size} bytes, over the {max_bytes} byte limit")
 
         await self.ensure_connected()
-        return bytes(await self._native.files.read(path, format="bytes", user=GUEST_USER))
+        data = bytes(await self._native.files.read(path, format="bytes", user=GUEST_USER))
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"{path} is {len(data)} bytes, over the {max_bytes} byte limit"
+            )
+        return data
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """The write-side mirror of `read_bytes`: one file, into the container.
@@ -1377,10 +1399,10 @@ class LazyE2BBackend(SandboxBackendProtocol):
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         suffix = PurePosixPath(file_path).suffix.lower()
-        # ``AsyncE2BSandbox.aread`` inherits DeepAgents' 500 KiB binary-file
-        # ceiling. Read supported rasters through E2B's byte API instead, then
-        # return the same bounded base64 ``ReadResult`` shape the filesystem
-        # middleware already understands.
+        # ``AsyncE2BSandbox.aread`` applies a 500 KiB binary-file ceiling.
+        # Read supported rasters through E2B's byte API instead, then
+        # return either the verified original or a bounded JPEG in the base64
+        # ``ReadResult`` shape the filesystem middleware already understands.
         if suffix in _PREPARED_IMAGE_SUFFIXES:
             # Pillow is only needed for these binary reads. Ordinary text and
             # environment operations should not import an image decoder.
@@ -1396,6 +1418,8 @@ class LazyE2BBackend(SandboxBackendProtocol):
                 )
             except FileNotFoundError:
                 return ReadResult(error=f"File '{file_path}' does not exist")
+            except _NonRegularFileError:
+                return ReadResult(error=f"File '{file_path}' is not a regular file")
             except ValueError:
                 return ReadResult(
                     error=(
@@ -1405,7 +1429,7 @@ class LazyE2BBackend(SandboxBackendProtocol):
                 )
 
             try:
-                preview = await asyncio.to_thread(
+                image_bytes = await asyncio.to_thread(
                     prepare_image_preview, source, suffix
                 )
             except ImagePreviewError as exc:
@@ -1413,7 +1437,7 @@ class LazyE2BBackend(SandboxBackendProtocol):
 
             return ReadResult(
                 file_data={
-                    "content": base64.b64encode(preview).decode("ascii"),
+                    "content": base64.b64encode(image_bytes).decode("ascii"),
                     "encoding": "base64",
                 }
             )

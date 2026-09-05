@@ -1,10 +1,8 @@
-"""Bounded raster previews for DeepAgents' native ``read_file`` blocks.
+"""Safely validate raster images and bound large ``read_file`` results.
 
-The E2B adapter bundled with DeepAgents refuses binary files over 500 KiB.
-Generated screenshots and PNGs commonly cross that threshold, even though a
-smaller representation is enough for a model to inspect them.  This module
-validates and decodes a bounded source, then emits one still image whose bytes
-agree with the MIME type DeepAgents infers from the file suffix.
+The default ``langchain-e2b`` binary reader stops at 500 KiB. Verified images
+already at or below that budget are returned byte-for-byte; larger supported
+rasters become one bounded JPEG preview without modifying the sandbox source.
 """
 
 from __future__ import annotations
@@ -17,21 +15,13 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 MAX_IMAGE_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
-MAX_IMAGE_LONG_EDGE = 2048
-# Stay near DeepAgents' existing 500 KiB preview budget while bounding the
-# base64/checkpoint and provider-request growth caused by a tool result.
-MAX_IMAGE_PREVIEW_BYTES = 460 * 1024
+MAX_IMAGE_PREVIEW_BYTES = 500 * 1024
 
-IMAGE_SUFFIX_FORMATS = {
-    ".gif": "GIF",
-    ".jpeg": "JPEG",
-    ".jpg": "JPEG",
-    ".png": "PNG",
-    ".webp": "WEBP",
-}
+SUPPORTED_IMAGE_SUFFIXES = frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
-_SUPPORTED_SOURCE_FORMATS = frozenset(IMAGE_SUFFIX_FORMATS.values())
-_EXIF_ORIENTATION = 274
+_SUPPORTED_SOURCE_FORMATS = frozenset({"GIF", "JPEG", "PNG", "WEBP"})
+_JPEG_QUALITIES = (95, 90, 85, 80, 75, 70, 65, 60)
+_MAX_RESIZE_ATTEMPTS = 4
 
 
 class ImagePreviewError(ValueError):
@@ -39,15 +29,13 @@ class ImagePreviewError(ValueError):
 
 
 def prepare_image_preview(data: bytes, suffix: str) -> bytes:
-    """Validate, orient, resize, and encode one raster image.
+    """Return a verified original or one bounded JPEG preview.
 
-    The output format follows ``suffix`` rather than trusting the compressed
-    stream. DeepAgents derives the content block MIME type from that same
-    suffix, so this keeps the declared MIME and actual bytes consistent even
-    for a misnamed but otherwise supported image.
+    ``suffix`` decides whether this backend claims the file, but the decoder
+    validates the actual format. Large outputs are always JPEG; the provider
+    adapter sniffs their bytes instead of assuming the original path's MIME.
     """
-    output_format = IMAGE_SUFFIX_FORMATS.get(suffix.lower())
-    if output_format is None:
+    if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
         raise ImagePreviewError(f"unsupported image suffix {suffix!r}")
     if len(data) > MAX_IMAGE_SOURCE_BYTES:
         raise ImagePreviewError(
@@ -74,27 +62,21 @@ def prepare_image_preview(data: bytes, suffix: str) -> bytes:
                         f"{MAX_IMAGE_PIXELS:,}-pixel decoded-image limit"
                     )
 
-                animated = bool(getattr(opened, "is_animated", False))
                 # ``Image.open`` is lazy. Verify the compressed stream before
-                # unchanged bytes can be returned to the model.
+                # any original bytes are allowed through to the model.
                 opened.verify()
 
+            # Loading the first frame catches decoder errors that an image
+            # plugin's structural ``verify`` implementation may not surface.
             with Image.open(BytesIO(data)) as opened:
-                # Some decoders (notably PNG) load metadata while reading EXIF,
-                # so do this only after the separate verification pass above.
-                orientation = opened.getexif().get(_EXIF_ORIENTATION, 1)
-                if (
-                    source_format == output_format
-                    and orientation in (None, 1)
-                    and not animated
-                    and max(width, height) <= MAX_IMAGE_LONG_EDGE
-                    and len(data) <= MAX_IMAGE_PREVIEW_BYTES
-                ):
+                opened.seek(0)
+                opened.load()
+                if len(data) <= MAX_IMAGE_PREVIEW_BYTES:
                     return data
 
-                # An animated image is deliberately reduced to its first frame:
-                # one bounded preview is useful here; decoding every frame is
-                # an unbounded multiplication of otherwise safe dimensions.
+                # Large animated images intentionally become their first
+                # displayed frame. Applying EXIF before copying also removes
+                # the orientation tag from the newly encoded JPEG.
                 opened.seek(0)
                 image = ImageOps.exif_transpose(opened)
                 image.load()
@@ -103,21 +85,22 @@ def prepare_image_preview(data: bytes, suffix: str) -> bytes:
         raise
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise ImagePreviewError("image exceeds the decoded-pixel safety limit") from exc
-    except (UnidentifiedImageError, OSError, RuntimeError, SyntaxError, ValueError) as exc:
+    except (
+        EOFError,
+        UnidentifiedImageError,
+        OSError,
+        RuntimeError,
+        SyntaxError,
+        ValueError,
+    ) as exc:
         raise ImagePreviewError("file bytes are not a readable supported image") from exc
 
-    image = _fit_long_edge(image, MAX_IMAGE_LONG_EDGE)
-    return _encode_bounded(image, output_format)
-
-
-def _fit_long_edge(image: Image.Image, edge: int) -> Image.Image:
-    if max(image.size) <= edge:
-        return image.copy()
-    scale = edge / max(image.size)
-    return image.resize(
-        (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
-        Image.Resampling.LANCZOS,
-    )
+    try:
+        return _encode_bounded_jpeg(_on_white_rgb(image))
+    except ImagePreviewError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ImagePreviewError("image could not be encoded as a JPEG preview") from exc
 
 
 def _has_alpha(image: Image.Image) -> bool:
@@ -126,35 +109,42 @@ def _has_alpha(image: Image.Image) -> bool:
     )
 
 
-def _normalized_for_format(image: Image.Image, output_format: str) -> Image.Image:
-    has_alpha = _has_alpha(image)
-    if output_format == "JPEG":
-        if has_alpha:
-            rgba = image.convert("RGBA")
-            background = Image.new("RGBA", rgba.size, "white")
-            return Image.alpha_composite(background, rgba).convert("RGB")
+def _on_white_rgb(image: Image.Image) -> Image.Image:
+    if not _has_alpha(image):
         return image.convert("RGB")
-    if output_format in {"PNG", "WEBP"}:
-        return image.convert("RGBA" if has_alpha else "RGB")
-    # GIF has one-bit transparency. Keep an RGBA working image so the encoder
-    # can reserve one palette entry instead of silently painting alpha black.
-    return image.convert("RGBA" if has_alpha else "RGB")
+
+    rgba = image.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, "white")
+    return Image.alpha_composite(background, rgba).convert("RGB")
 
 
-def _encode_bounded(image: Image.Image, output_format: str) -> bytes:
-    current = _normalized_for_format(image, output_format)
-    for attempt in range(10):
-        encoded = _encode(current, output_format, quality=max(45, 85 - attempt * 5))
-        if len(encoded) <= MAX_IMAGE_PREVIEW_BYTES:
-            return encoded
+def _encode_bounded_jpeg(image: Image.Image) -> bytes:
+    current = image
+    for _attempt in range(_MAX_RESIZE_ATTEMPTS):
+        smallest_size: int | None = None
+        for quality in _JPEG_QUALITIES:
+            encoded = _encode_jpeg(current, quality=quality)
+            if len(encoded) <= MAX_IMAGE_PREVIEW_BYTES:
+                return encoded
+            smallest_size = (
+                len(encoded)
+                if smallest_size is None
+                else min(smallest_size, len(encoded))
+            )
 
-        # Encoded raster size trends with pixel area. Use that relationship to
-        # converge quickly, with a margin for headers and imperfect scaling.
-        scale = math.sqrt(MAX_IMAGE_PREVIEW_BYTES / len(encoded)) * 0.92
-        scale = min(0.85, max(0.25, scale))
+        # Preserve the original dimensions through the full quality range.
+        # Only then use encoded area as a bounded estimate for the next size.
+        if current.size == (1, 1) or smallest_size is None:
+            break
+        scale = math.sqrt(MAX_IMAGE_PREVIEW_BYTES / smallest_size) * 0.94
+        scale = min(0.90, max(0.25, scale))
         next_size = (
-            max(1, round(current.width * scale)),
-            max(1, round(current.height * scale)),
+            max(1, min(current.width - 1, int(current.width * scale)))
+            if current.width > 1
+            else 1,
+            max(1, min(current.height - 1, int(current.height * scale)))
+            if current.height > 1
+            else 1,
         )
         if next_size == current.size:
             break
@@ -165,48 +155,24 @@ def _encode_bounded(image: Image.Image, output_format: str) -> bytes:
     )
 
 
-def _encode(image: Image.Image, output_format: str, *, quality: int) -> bytes:
+def _encode_jpeg(image: Image.Image, *, quality: int) -> bytes:
     buffer = BytesIO()
-    if output_format == "JPEG":
-        image.save(
-            buffer,
-            format="JPEG",
-            quality=quality,
-            optimize=True,
-            progressive=True,
-        )
-    elif output_format == "PNG":
-        image.save(buffer, format="PNG", optimize=True, compress_level=9)
-    elif output_format == "WEBP":
-        image.save(buffer, format="WEBP", quality=quality, method=6)
-    else:
-        _save_gif(image, buffer)
+    image.save(
+        buffer,
+        format="JPEG",
+        quality=quality,
+        subsampling=0,
+        optimize=True,
+        progressive=True,
+    )
     return buffer.getvalue()
 
 
-def _save_gif(image: Image.Image, buffer: BytesIO) -> None:
-    if not _has_alpha(image):
-        image.convert("P", palette=Image.Palette.ADAPTIVE, colors=256).save(
-            buffer, format="GIF", optimize=True
-        )
-        return
-
-    rgba = image.convert("RGBA")
-    alpha = rgba.getchannel("A")
-    palette = rgba.convert("RGB").convert(
-        "P", palette=Image.Palette.ADAPTIVE, colors=255
-    )
-    transparent = alpha.point(lambda value: 255 if value <= 127 else 0)
-    palette.paste(255, mask=transparent)
-    palette.save(buffer, format="GIF", optimize=True, transparency=255)
-
-
 __all__ = [
-    "IMAGE_SUFFIX_FORMATS",
-    "MAX_IMAGE_LONG_EDGE",
     "MAX_IMAGE_PIXELS",
     "MAX_IMAGE_PREVIEW_BYTES",
     "MAX_IMAGE_SOURCE_BYTES",
+    "SUPPORTED_IMAGE_SUFFIXES",
     "ImagePreviewError",
     "prepare_image_preview",
 ]

@@ -15,10 +15,67 @@ ONE_PIXEL_PNG = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+ONE_PIXEL_JPEG = (
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0o"
+    "OjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8a"
+    "Gi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj"
+    "Y2P/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAA"
+    "AAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABQb/xAAUEQEAAAAAAAAAAAAA"
+    "AAAAAAAA/9oADAMBAAIRAxEAPwCKALXj/9k="
+)
+ONE_PIXEL_GIF = "R0lGODdhAQABAIEAAP8AAAAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw=="
+ONE_PIXEL_WEBP = "UklGRhwAAABXRUJQVlA4TA8AAAAvAAAAAAcQ/Y/+ByKi/wEA"
+
+
+CASES = [
+    (
+        {
+            "type": "image",
+            "base64": ONE_PIXEL_PNG,
+            "mime_type": "image/jpeg",
+        },
+        f"data:image/png;base64,{ONE_PIXEL_PNG}",
+    ),
+    (
+        {
+            "type": "image",
+            "base64": ONE_PIXEL_JPEG,
+            "mime_type": "image/png",
+        },
+        f"data:image/jpeg;base64,{ONE_PIXEL_JPEG}",
+    ),
+    (
+        {
+            "type": "image",
+            "base64": ONE_PIXEL_GIF,
+            "mime_type": "image/png",
+        },
+        f"data:image/gif;base64,{ONE_PIXEL_GIF}",
+    ),
+    (
+        {
+            "type": "image",
+            "base64": ONE_PIXEL_WEBP,
+            "mime_type": "image/png",
+        },
+        f"data:image/webp;base64,{ONE_PIXEL_WEBP}",
+    ),
+    (
+        {"type": "image", "url": "https://images.example.test/chart.png"},
+        "https://images.example.test/chart.png",
+    ),
+]
 
 
 @pytest.mark.contract
-def test_read_file_image_reaches_the_openrouter_wire_as_an_image_url():
+@pytest.mark.parametrize(
+    ("image_block", "expected_url"),
+    CASES,
+    ids=["png-magic", "jpeg-magic", "gif-magic", "webp-magic", "url"],
+)
+def test_read_file_image_reaches_the_openrouter_wire_as_an_image_url(
+    image_block, expected_url
+):
     """Exercise LangChain and the official SDK, stopping only at HTTP."""
 
     requests: list[dict] = []
@@ -68,14 +125,9 @@ def test_read_file_image_reaches_the_openrouter_wire_as_an_image_url():
         "name": "read_file",
         "args": {"file_path": "/image.png"},
     }
+    original_block = dict(image_block)
     tool_message = ToolMessage(
-        content_blocks=[
-            {
-                "type": "image",
-                "base64": ONE_PIXEL_PNG,
-                "mime_type": "image/png",
-            }
-        ],
+        content_blocks=[image_block],
         name="read_file",
         tool_call_id=call["id"],
         id="tool_message_image",
@@ -95,7 +147,7 @@ def test_read_file_image_reaches_the_openrouter_wire_as_an_image_url():
         "content": [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{ONE_PIXEL_PNG}"},
+                "image_url": {"url": expected_url},
             }
         ],
     }
@@ -108,5 +160,6 @@ def test_read_file_image_reaches_the_openrouter_wire_as_an_image_url():
     assert tool_message.id == "tool_message_image"
     assert tool_message.artifact == {"path": "/image.png"}
     assert tool_message.additional_kwargs == {"read_file_path": "/image.png"}
+    assert tool_message.content == [original_block]
 
     http_client.close()

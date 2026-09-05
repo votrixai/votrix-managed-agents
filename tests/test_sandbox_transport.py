@@ -115,6 +115,77 @@ async def test_output_that_is_not_a_digest_is_not_trusted(monkeypatch):
         await _digest_of(monkeypatch, f"Killed\n{sandbox_utils._DIGEST_FAILED}\n")
 
 
+# --- bounded byte reads -----------------------------------------------------
+
+
+def _byte_read_sandbox(*, probe: str, content: bytes = b"abc"):
+    sandbox = Sandbox.from_id("sbx_read", "ses_read", "org_read")
+    sandbox.run = AsyncMock(return_value=SimpleNamespace(stdout=probe, exit_code=0))
+    sandbox.ensure_connected = AsyncMock()
+    read = AsyncMock(return_value=bytearray(content))
+    sandbox._native = SimpleNamespace(files=SimpleNamespace(read=read))
+    return sandbox, read
+
+
+async def test_read_bytes_accepts_a_resolved_regular_file():
+    sandbox, read = _byte_read_sandbox(probe="81a4 3")
+
+    content = await sandbox.read_bytes("/home/user/chart.png", max_bytes=3)
+
+    assert content == b"abc"
+    command = sandbox.run.await_args.args[0]
+    assert "stat -Lc '%f %s' -- /home/user/chart.png" in command
+    sandbox.run.assert_awaited_once_with(command, idempotent=True)
+    sandbox.ensure_connected.assert_awaited_once_with()
+    read.assert_awaited_once_with(
+        "/home/user/chart.png", format="bytes", user=sandbox_utils.GUEST_USER
+    )
+
+
+@pytest.mark.parametrize(
+    "mode_hex",
+    ["41ed", "11a4", "21b6"],
+    ids=["directory", "fifo", "character-device"],
+)
+async def test_read_bytes_rejects_non_regular_targets_before_transfer(mode_hex):
+    sandbox, read = _byte_read_sandbox(probe=f"{mode_hex} 0")
+
+    with pytest.raises(ValueError, match="not a regular file"):
+        await sandbox.read_bytes("/home/user/not-a-file.png", max_bytes=10)
+
+    sandbox.ensure_connected.assert_not_awaited()
+    read.assert_not_awaited()
+
+
+async def test_read_bytes_rejects_an_oversized_regular_file_before_transfer():
+    sandbox, read = _byte_read_sandbox(probe="81a4 11")
+
+    with pytest.raises(ValueError, match="is 11 bytes, over the 10 byte limit"):
+        await sandbox.read_bytes("/home/user/large.png", max_bytes=10)
+
+    sandbox.ensure_connected.assert_not_awaited()
+    read.assert_not_awaited()
+
+
+async def test_read_bytes_preserves_the_missing_file_contract():
+    sandbox, read = _byte_read_sandbox(probe="-1")
+
+    with pytest.raises(FileNotFoundError):
+        await sandbox.read_bytes("/home/user/missing.png", max_bytes=10)
+
+    sandbox.ensure_connected.assert_not_awaited()
+    read.assert_not_awaited()
+
+
+async def test_read_bytes_rechecks_size_after_transfer():
+    sandbox, read = _byte_read_sandbox(probe="81a4 3", content=b"abcd")
+
+    with pytest.raises(ValueError, match="is 4 bytes, over the 3 byte limit"):
+        await sandbox.read_bytes("/home/user/changing.png", max_bytes=3)
+
+    read.assert_awaited_once()
+
+
 async def test_the_providers_429_is_not_left_as_an_sdk_error(monkeypatch):
     """E2B's own concurrency limit, said in words a caller can act on."""
     from e2b.exceptions import RateLimitException
