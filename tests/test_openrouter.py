@@ -6,7 +6,7 @@ import json
 
 import httpx
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from openrouter import OpenRouter
 
 from app.utils.openrouter import VMAChatOpenRouter
@@ -163,3 +163,35 @@ def test_read_file_image_reaches_the_openrouter_wire_as_an_image_url(
     assert tool_message.content == [original_block]
 
     http_client.close()
+
+
+def test_text_only_model_omits_checkpointed_read_file_image():
+    model = VMAChatOpenRouter(
+        model="deepseek/deepseek-v4-pro",
+        api_key="sk-or-v1-test",
+    )
+    image = {
+        "type": "image",
+        "base64": ONE_PIXEL_PNG,
+        "mime_type": "image/png",
+    }
+    tool_message = ToolMessage(
+        content_blocks=[image],
+        name="read_file",
+        tool_call_id="call_image",
+    )
+
+    messages, _ = model._create_message_dicts(
+        [tool_message, HumanMessage("Continue.")], stop=None
+    )
+
+    assert model.profile and model.profile["image_inputs"] is False
+    assert messages[0] == {
+        "role": "tool",
+        "tool_call_id": "call_image",
+        "content": [
+            {"type": "text", "text": "[Image omitted: text-only model.]"}
+        ],
+    }
+    assert messages[1] == {"role": "user", "content": "Continue."}
+    assert tool_message.content == [image]
