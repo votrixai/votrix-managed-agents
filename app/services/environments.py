@@ -34,7 +34,7 @@ async def create_environment(
 ) -> Environment:
     """Register an environment and, if it declares packages, start its build."""
     config = config or {}
-    packages = _packages(config)
+    steps = _steps(config)
     environment = await environments_q.create_environment(
         db,
         organization_id=organization_id,
@@ -45,10 +45,10 @@ async def create_environment(
         # image, with no wait and no image of their own. It is written down
         # rather than worked out later, so which image a session ran on is a
         # stored fact and not something the sandbox layer has to guess.
-        image_id=None if packages else Image.base().image_id,
-        build_state=BUILDING if packages else READY,
+        image_id=None if steps else Image.base().image_id,
+        build_state=BUILDING if steps else READY,
     )
-    if packages:
+    if steps:
         await _start_build(db, environment, config)
     await db.commit()
     return environment
@@ -117,7 +117,7 @@ async def update_environment(
         db, environment, name=name, description=description, config=config
     )
     if recipe_changed:
-        if _packages(environment.config):
+        if _steps(environment.config):
             await _start_build(db, environment, environment.config)
         else:
             # Nothing left to install, so back to the base image. The build id
@@ -201,20 +201,23 @@ async def _start_build(
     environment: Environment,
     config: dict[str, Any],
 ) -> None:
-    packages, cpu, memory_mb = _recipe(config)
-    await Image.build(db, environment, packages=packages, cpu=cpu, memory_mb=memory_mb)
+    steps, cpu, memory_mb = _recipe(config)
+    await Image.build(db, environment, steps=steps, cpu=cpu, memory_mb=memory_mb)
 
 
-def _recipe(config: dict[str, Any]) -> tuple[dict[str, list[str]], int, int]:
+def _recipe(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int, int]:
     """Everything that ends up baked into the image, and nothing that does not.
 
     Comparing two of these is how an edit decides whether to rebuild, so a
-    rename or a new description must not show up in here.
+    rename or a new description must not show up in here. Both sides go through
+    the model, so a legacy `packages` config compares equal to the `steps` it
+    translates into and does not trigger a needless rebuild.
     """
     parsed = EnvironmentConfig.model_validate(config or {})
-    return _packages(config), parsed.cpu, parsed.memory_mb
+    steps = [step.model_dump(exclude_none=True) for step in parsed.steps]
+    return steps, parsed.cpu, parsed.memory_mb
 
 
-def _packages(config: dict[str, Any]) -> dict[str, list[str]]:
-    declared = (config or {}).get("packages") or {}
-    return {manager: entries for manager, entries in declared.items() if entries}
+def _steps(config: dict[str, Any]) -> list[dict[str, Any]]:
+    parsed = EnvironmentConfig.model_validate(config or {})
+    return [step.model_dump(exclude_none=True) for step in parsed.steps]

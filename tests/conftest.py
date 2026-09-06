@@ -292,9 +292,9 @@ def builds(monkeypatch):
 
     builder = Builder()
 
-    async def _build(cls, db, environment, *, packages, cpu, memory_mb):
+    async def _build(cls, db, environment, *, steps, cpu, memory_mb):
         builder.started.append(
-            {"name": environment.id, "packages": packages, "cpu": cpu, "memory_mb": memory_mb}
+            {"name": environment.id, "steps": steps, "cpu": cpu, "memory_mb": memory_mb}
         )
         image = Image(
             f"img_{len(builder.started)}",
