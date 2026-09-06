@@ -29,7 +29,7 @@ def upgrade() -> None:
     op.execute(
         """
         UPDATE files AS f
-        SET archived_at = now()
+        SET archived_at = CURRENT_TIMESTAMP
         WHERE f.archived_at IS NULL
           AND f.scope_id IS NOT NULL
           AND EXISTS (

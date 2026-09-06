@@ -106,6 +106,11 @@ gcloud run jobs execute "$MIGRATION_JOB" \
   --wait \
   --quiet
 
+if sed -n '/name: TURN_DISPATCH/{n;p;}' "$API_MANIFEST" | grep -q '"pubsub"'; then
+  sh "${SCRIPT_DIR}/deploy-pubsub.sh" staging "$REGION" "$IMAGE" "$TAG" "$FULL_COMMIT"
+  exit 0
+fi
+
 WORKER_URL=$(gcloud run services describe "$STAGING_WORKER_SERVICE" \
   --project="$PROJECT_ID" \
   --region="$REGION" \

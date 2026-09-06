@@ -18,6 +18,7 @@ from app.db.models import (
     SessionEvent,
     SessionFile,
     SessionMemoryStore,
+    SessionTurn,
 )
 from app.db.models.sandboxes import SANDBOX_PROVISIONING, SANDBOX_TERMINATED
 from app.db.models.sessions import IDLE, RUNNING
@@ -136,6 +137,7 @@ async def append_event(
     type: str,
     source: str,
     payload: dict[str, Any] | None = None,
+    event_id: str | None = None,
 ) -> SessionEvent:
     """Append one event, letting the database hand out its sequence number.
 
@@ -192,7 +194,7 @@ async def append_event(
     set_committed_value(session, "last_event_seq", seq)
 
     event = SessionEvent(
-        id=new_id("evt"),
+        id=event_id or new_id("evt"),
         organization_id=session.organization_id,
         session_id=session.id,
         seq=seq,
@@ -381,6 +383,15 @@ async def get_event(
 # --- the session gate -------------------------------------------------------
 
 
+def _pending_turn():
+    """Queued durable work stays reserved even if the session lease expires."""
+    return select(SessionTurn.session_id).where(
+        SessionTurn.session_id == Session.id,
+        SessionTurn.generation == Session.lock_version,
+        SessionTurn.done.is_(False),
+    ).exists()
+
+
 async def claim_session(
     db: AsyncSession,
     *,
@@ -420,6 +431,7 @@ async def claim_session(
             Session.status == IDLE,
             and_(
                 Session.status == RUNNING,
+                ~_pending_turn(),
                 or_(
                     Session.lease_expires_at.is_(None),
                     Session.lease_expires_at <= now,
@@ -474,6 +486,14 @@ async def release_session(
     *next* turn's `running` status and carry on writing into someone else's
     conversation.
     """
+    await db.execute(
+        update(SessionTurn)
+        .where(
+            SessionTurn.session_id == session.id,
+            SessionTurn.generation == session.lock_version,
+        )
+        .values(done=True, owner=None, lease_until=None, events=[], history_ids=None)
+    )
     session.status = status
     session.stop_reason = stop_reason
     session.lease_expires_at = None
@@ -504,6 +524,7 @@ async def list_stuck_sessions(db: AsyncSession, *, limit: int = 100) -> list[Ses
         .where(
             Session.deleted_at.is_(None),
             Session.status == RUNNING,
+            ~_pending_turn(),
             or_(
                 Session.lease_expires_at.is_(None),
                 Session.lease_expires_at <= now,

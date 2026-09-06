@@ -37,6 +37,7 @@ from app.db.models import (
     Session,
     SessionEvent,
     SessionFile,
+    SessionTurn,
     Sandbox as SandboxRow,
 )
 from app.db.models.memory import MEMORY_ACCESS_READ_WRITE
@@ -497,6 +498,10 @@ async def send_events(
         )
         for event in events
     ]
+    if get_settings().turn_dispatch == "pubsub":
+        db.add(SessionTurn(
+            session_id=session.id, generation=session.lock_version, events=events,
+        ))
     await db.commit()
 
     # The whole batch goes, not the first of it. A paused graph is resumed with
@@ -515,6 +520,9 @@ async def send_events(
         # re-read the row before failing it so an interrupt or a worker that has
         # already ended the turn cannot be overwritten by this late failure.
         logger.exception("turn_dispatch_failed", session_id=session_id)
+        if get_settings().turn_dispatch == "pubsub":
+            # The worker's recovery loop republishes the durable handoff.
+            return appended
         await db.refresh(
             session,
             ["status", "last_event_seq"],
@@ -554,6 +562,7 @@ async def cancel_session(
     tool call left hanging on the way past.
     """
     session = await get_session(db, session_id=session_id, organization_id=organization_id)
+    await db.refresh(session, with_for_update=True)
     if session.status == TERMINATED:
         raise Conflict(f"Session {session_id} is terminated")
 
@@ -739,6 +748,11 @@ async def _dispatch_turn(
     request that actually succeeded. Inline execution failures happen later and
     are contained by `_run_inline_turn` instead.
     """
+    if get_settings().turn_dispatch == "pubsub":
+        from app.services.pubsub import publish_turn
+
+        await publish_turn(session_id=session_id, generation=generation)
+        return
     if get_settings().turn_dispatch == "cloud":
         await _enqueue_task(session_id=session_id, generation=generation, events=events)
         return
@@ -775,6 +789,7 @@ async def process_session(
     *,
     session_id: str,
     events: list[dict[str, Any]],
+    execution: Any = None,
 ) -> None:
     """Run one turn. The API already claimed the session before enqueueing us.
 
@@ -789,6 +804,11 @@ async def process_session(
     # Either the turn was cancelled before we got here, or this is a second
     # delivery of a task we already ran. Both mean: do nothing.
     if session.status != RUNNING:
+        return
+    if execution is not None:
+        session, _ = await execution.lock(db)
+    elif await db.get(SessionTurn, (session.id, session.lock_version)) is not None:
+        # A late legacy Cloud Tasks callback cannot run a Pub/Sub-owned turn.
         return
 
     sandbox = await sessions_q.get_sandbox(
@@ -852,7 +872,18 @@ async def process_session(
         account_id=session.account_id,
     )
 
-    heartbeat = asyncio.create_task(_hold_lease(session_id))
+    heartbeat = asyncio.create_task(_hold_lease(session_id)) if execution is None else None
+    runtime_options = {}
+    if execution is not None:
+        from app.runtime.recovery import Recovery
+
+        runtime_options["recovery"] = Recovery(execution)
+        # Return the preparation connection before waiting on model/tool I/O.
+        await db.commit()
+
+    async def emit_owned(event_type, payload):
+        return await execution.emit(event_type, event_type, payload)
+
     try:
         from app.runtime.engine import execute_agent
 
@@ -872,12 +903,18 @@ async def process_session(
                     inference_key=inference_key,
                     attached_files=attached,
                     attached_memory_stores=attached_memory_stores,
-                    emit=_emitter(db, session, generation),
-                    publish=_publisher(db, session),
+                    emit=(emit_owned if execution is not None
+                          else _emitter(db, session, generation)),
+                    publish=(execution.publish if execution is not None
+                             else _publisher(db, session)),
+                    **runtime_options,
                 ),
-                timeout=TURN_TIMEOUT_SECONDS,
+                timeout=(get_settings().vma_turn_timeout_seconds or None)
+                if execution is not None else TURN_TIMEOUT_SECONDS,
             )
     except SessionCancelled:
+        if execution is not None:
+            raise
         # cancel_session already released the session and recorded the stop.
         # The agent may still have finished something before it was cut off,
         # and a half-written deliverable is the user's too.
@@ -885,11 +922,14 @@ async def process_session(
         await db.commit()
         return
     except BaseException as exc:
+        if execution is not None:
+            raise  # The delivery owner distinguishes retryable failures.
         await collect_outputs(db, session, container)
         await _fail(db, session, exc)
         raise
     finally:
-        heartbeat.cancel()
+        if heartbeat is not None:
+            heartbeat.cancel()
         # No cleanup of previews here, and none anywhere else either. They were
         # never written down, so a turn that ends — or is killed outright —
         # leaves nothing behind to collect.
@@ -898,6 +938,10 @@ async def process_session(
     # the turn is done, and everything the turn produced has to be fetchable by
     # then. It is also the last moment the container is certainly awake.
     await collect_outputs(db, session, container)
+    if execution is not None:
+        await db.commit()
+        await execution.finish(stop_reason)
+        return
     # The reason goes on the row, not just out as an event. A turn that stopped
     # to ask leaves the session idle and the gate open, and this is the only
     # thing standing between "waiting for an answer" and "free for anyone".

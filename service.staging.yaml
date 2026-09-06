@@ -50,6 +50,13 @@ spec:
               value: "1"
             - name: TURN_DISPATCH
               value: "cloud"
+            # Activate after the compatibility deployment; see docs/pubsub-worker-pool.md.
+            - name: PUBSUB_PROJECT
+              value: "votrixai-480422"
+            - name: PUBSUB_TOPIC
+              value: "vma-turns-staging"
+            - name: PUBSUB_SUBSCRIPTION
+              value: "vma-turns-worker-staging"
             - name: TASKS_PROJECT
               value: "votrixai-480422"
             - name: TASKS_QUEUE

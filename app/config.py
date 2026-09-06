@@ -2,7 +2,7 @@ from functools import lru_cache
 import re
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -157,10 +157,20 @@ class Settings(BaseSettings):
     max_output_files: int = 50
     max_output_bytes: int = 100 * 1024 * 1024
 
-    # How a turn gets run once a message is accepted. `inline` runs it inside
-    # the request, which is slow but needs no infrastructure — the default so a
-    # fresh clone works with no configuration. Deployments set `cloud`.
-    turn_dispatch: Literal["cloud", "inline"] = "inline"
+    # `inline` schedules in the API process. `cloud` keeps the legacy HTTP
+    # worker; `pubsub` hands a durable turn to the independent Pull worker.
+    turn_dispatch: Literal["cloud", "inline", "pubsub"] = "inline"
+
+    pubsub_project: str = ""
+    pubsub_topic: str = ""
+    pubsub_subscription: str = ""
+    vma_worker_concurrency: int = Field(default=10, ge=1, le=100)
+    # This is the SDK's message lease budget, not an execution deadline.
+    pubsub_max_lease_seconds: int = Field(default=86400, ge=3600)
+    vma_turn_max_attempts: int = Field(default=3, ge=1)
+    # Pub/Sub turns have no whole-turn deadline by default. Individual model
+    # and tool requests retain their own timeouts. Cloud Tasks stays at 20 min.
+    vma_turn_timeout_seconds: float = Field(default=0, ge=0)
 
     # Only read when `turn_dispatch` is "cloud", and then all of them are
     # required. Where the queue lives, who the task authenticates as, and the
@@ -207,6 +217,15 @@ class Settings(BaseSettings):
             r"[A-Za-z_][A-Za-z0-9_]*", self.database_schema
         ):
             raise ValueError("DATABASE_SCHEMA must be a valid PostgreSQL identifier")
+        if self.turn_dispatch == "pubsub":
+            missing = [
+                name for name in ("pubsub_project", "pubsub_topic", "pubsub_subscription")
+                if not getattr(self, name).strip()
+            ]
+            if missing:
+                raise ValueError(
+                    "TURN_DISPATCH=pubsub requires: " + ", ".join(n.upper() for n in missing)
+                )
         if self.turn_dispatch != "cloud":
             return self
         missing = [
