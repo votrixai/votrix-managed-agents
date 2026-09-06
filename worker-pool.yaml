@@ -29,6 +29,10 @@ spec:
               value: "__VMA_GIT_COMMIT_SHA__"
             - name: TURN_DISPATCH
               value: "pubsub"
+            - name: VMA_WORKER_POOL_ON_DEMAND
+              value: "__ON_DEMAND__"
+            - name: VMA_WORKER_POOL
+              value: "projects/__PROJECT_ID__/locations/__REGION__/workerPools/__SERVICE_NAME__-pool"
             - name: PUBSUB_PROJECT
               value: "__PROJECT_ID__"
             - name: PUBSUB_TOPIC

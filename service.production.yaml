@@ -57,6 +57,10 @@ spec:
               value: "vma-turns"
             - name: PUBSUB_SUBSCRIPTION
               value: "vma-turns-worker"
+            - name: VMA_WORKER_POOL_ON_DEMAND
+              value: "true"
+            - name: VMA_WORKER_POOL
+              value: "projects/votrixai-480422/locations/__VMA_TASKS_LOCATION__/workerPools/votrix-managed-agents-pool"
             - name: TASKS_PROJECT
               value: "votrixai-480422"
             - name: TASKS_QUEUE

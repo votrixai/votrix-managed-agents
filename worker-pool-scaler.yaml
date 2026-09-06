@@ -1,0 +1,57 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: __SERVICE_NAME__-pool-scaler
+  annotations:
+    run.googleapis.com/invoker-iam-disabled: "false"
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/cpu-throttling: "true"
+    spec:
+      serviceAccountName: vma-runtime@__PROJECT_ID__.iam.gserviceaccount.com
+      containerConcurrency: 1
+      timeoutSeconds: 30
+      containers:
+        - image: IMAGE_URL
+          command: ["uvicorn"]
+          args: ["app.scaler:app", "--host", "0.0.0.0", "--port", "8080"]
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: APP_ENV
+              value: "__APP_ENV__"
+            - name: DATABASE_SCHEMA
+              value: "vma"
+            - name: TURN_DISPATCH
+              value: "pubsub"
+            - name: PUBSUB_PROJECT
+              value: "__PROJECT_ID__"
+            - name: PUBSUB_TOPIC
+              value: "vma-turns__SECRET_SUFFIX__"
+            - name: PUBSUB_SUBSCRIPTION
+              value: "vma-turns-worker__SECRET_SUFFIX__"
+            - name: VMA_WORKER_POOL_ON_DEMAND
+              value: "true"
+            - name: VMA_WORKER_POOL
+              value: "projects/__PROJECT_ID__/locations/__REGION__/workerPools/__SERVICE_NAME__-pool"
+            - name: VMA_SCALER_AUDIENCE
+              value: "__SCALER_URL__"
+            - name: VMA_SCALER_SERVICE_ACCOUNT
+              value: "vma-pool-scheduler@__PROJECT_ID__.iam.gserviceaccount.com"
+            - name: VMA_DB_POOL_SIZE
+              value: "1"
+            - name: VMA_DB_MAX_OVERFLOW
+              value: "0"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vma-database-url__SECRET_SUFFIX__
+                  key: latest

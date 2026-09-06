@@ -26,6 +26,7 @@ from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.models import Session, SessionEvent, SessionTurn
 from app.db.queries import sessions as sessions_q
+from app.services.worker_pool import allow_execution
 
 logger = structlog.get_logger(__name__)
 LEASE_SECONDS = 120
@@ -176,6 +177,8 @@ async def acquire(session_id: str, generation: int) -> Execution | None:
         if not expired(turn.lease_until):
             return None
         if not expired(turn.retry_after):
+            return None
+        if not await allow_execution(db):
             return None
         turn.owner = uuid4().hex
         turn.retry_after = None

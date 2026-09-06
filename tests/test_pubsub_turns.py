@@ -1,6 +1,7 @@
 """Durable handoff, restart recovery, and delivery acknowledgement boundaries."""
 
 import asyncio
+import copy
 import json
 import os
 from contextlib import asynccontextmanager
@@ -21,12 +22,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import worker
 from app.config import get_settings
-from app.db.models import Base, SessionEvent, SessionTurn
+from app.db.models import Base, SessionEvent, SessionTurn, WorkerPoolControl
 from app.db.queries import sessions as sessions_q
 from app.models.errors import SessionBusy
 from app.runtime import engine
 from app.runtime.recovery import Recovery, RecoveryRequired
-from app.services import pubsub, sessions
+from app.services import pubsub, sessions, worker_pool
 from app.services import turn_execution as turns
 
 MESSAGE = {"type": "user.message", "content": [{"type": "text", "text": "hello"}]}
@@ -539,3 +540,200 @@ async def test_restart_preserves_a_human_pause(
         )
     ).all()
     assert len(rows) == 1
+
+
+class FakePool:
+    """Cloud Run accepts updates asynchronously and enforces etag preconditions."""
+
+    def __init__(self):
+        self.pool = {
+            "scaling": {"manualInstanceCount": 0}, "etag": "v1",
+            "generation": "1", "observedGeneration": "1",
+            "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
+            "annotations": {"other.example/note": "preserve"},
+        }
+        self.patches = []
+
+    def apply(self, body):
+        if body["etag"] != self.pool["etag"]:
+            raise RuntimeError("etag conflict")
+        generation = str(int(self.pool["generation"]) + 1)
+        self.pool.update(copy.deepcopy(body))
+        self.pool.update(etag="v" + generation, generation=generation, reconciling=True)
+        return {"name": "operations/" + generation}
+
+    async def request(self, method, body=None):
+        if method == "GET":
+            return copy.deepcopy(self.pool)
+        self.patches.append(copy.deepcopy(body))
+        return self.apply(body)
+
+    def settle(self):
+        self.pool.update(reconciling=False, observedGeneration=self.pool["generation"])
+        self.pool["terminalCondition"] = {"state": "CONDITION_SUCCEEDED"}
+
+
+@pytest_asyncio.fixture
+async def scaler(db, dispatch, monkeypatch):
+    monkeypatch.setenv("VMA_WORKER_POOL_ON_DEMAND", "true")
+    monkeypatch.setenv("VMA_WORKER_POOL", "projects/test/locations/us-east4/workerPools/test")
+    get_settings.cache_clear()
+
+    @asynccontextmanager
+    async def scope():
+        async with dispatch() as connection:
+            yield connection
+
+    monkeypatch.setattr(worker_pool, "session_scope", scope)
+    fake = FakePool()
+    monkeypatch.setattr(worker_pool, "_request", fake.request)
+    db.add(WorkerPoolControl(id=1))  # Production's migration seeds this row.
+    await db.commit()
+    return fake
+
+
+async def start_pool(scaler):
+    assert await worker_pool.reconcile() == "pending"
+    scaler.settle()
+    assert await worker_pool.reconcile() == "ready"
+
+
+async def age_idle(db):
+    await db.execute(update(WorkerPoolControl).values(
+        idle_since=turns.now() - timedelta(seconds=901)
+    ))
+    await db.commit()
+
+
+async def test_zero_workers_recover_even_when_wake_and_publish_fail(
+    db, session, scaler, monkeypatch
+):
+    monkeypatch.setattr(sessions, "_dispatch_turn", REAL_DISPATCH)
+    monkeypatch.setattr(worker_pool, "_request", AsyncMock(side_effect=TimeoutError))
+    publisher = AsyncMock(side_effect=ConnectionError)
+    monkeypatch.setattr(pubsub, "publish_turn", publisher)
+    key = await accepted(db, session)
+    assert await turns.acquire(*key) is None
+    monkeypatch.setattr(worker_pool, "_request", scaler.request)
+    # Scheduler has the DB record even though neither queue nor worker can help.
+    await start_pool(scaler)
+    publisher.side_effect = None
+    assert await turns.recover_once() == 1
+    assert await turns.acquire(*key) is not None
+    assert scaler.pool["scaling"]["manualInstanceCount"] == 1
+
+
+@pytest.mark.parametrize("retry_wait", [False, True])
+async def test_long_running_and_delayed_retry_turns_prevent_scale_down(
+    db, session, scaler, retry_wait
+):
+    key = await accepted(db, session)
+    await start_pool(scaler)
+    if retry_wait:
+        await db.execute(update(SessionTurn).values(retry_after=turns.now() + timedelta(hours=2)))
+        await db.commit()
+    else:
+        assert await turns.acquire(*key) is not None
+    await age_idle(db)
+    assert await worker_pool.reconcile() == "ready"
+    assert [p["scaling"]["manualInstanceCount"] for p in scaler.patches] == [1]
+
+
+async def test_cooldown_then_stop_and_gate_waits_for_completed_restart(db, session, scaler):
+    key = await accepted(db, session)
+    await start_pool(scaler)
+    owner = await turns.acquire(*key)
+    await owner.finish({"type": "end_turn"})
+    assert await worker_pool.reconcile() == "ready"
+    assert len(scaler.patches) == 1  # First idle observation starts 15-minute timer.
+    await age_idle(db)
+    assert await worker_pool.reconcile() == "pending"
+    new_key = await accepted(db, session)
+    assert await turns.acquire(*new_key) is None
+    assert await worker_pool.reconcile(wake_only=True) == "pending"
+    assert await turns.acquire(*new_key) is None  # PATCH(1) alone is not readiness.
+    scaler.settle()
+    assert await worker_pool.reconcile(wake_only=True) == "ready"
+    assert (await turns.acquire(*new_key)).attempts == 1
+    assert [p["scaling"]["manualInstanceCount"] for p in scaler.patches] == [1, 0, 1]
+    assert scaler.pool["annotations"]["other.example/note"] == "preserve"
+
+
+async def test_subminute_turn_resets_idle_timer_between_scheduler_ticks(db, session, scaler):
+    key = await accepted(db, session)
+    await start_pool(scaler)
+    await age_idle(db)
+    owner = await turns.acquire(*key)
+    await owner.finish({"type": "end_turn"})
+    assert await worker_pool.reconcile() == "ready"
+    assert len(scaler.patches) == 1
+
+
+async def test_lost_stop_response_cannot_stop_a_newly_reopened_worker(
+    db, session, scaler, monkeypatch
+):
+    key = await accepted(db, session)
+    await start_pool(scaler)
+    await (await turns.acquire(*key)).finish({"type": "end_turn"})
+    await age_idle(db)
+    delayed = []
+
+    async def lose_request(method, body=None):
+        if method == "PATCH":
+            delayed.append(copy.deepcopy(body))
+            raise TimeoutError("request is still in flight")
+        return await scaler.request(method, body)
+
+    monkeypatch.setattr(worker_pool, "_request", lose_request)
+    with pytest.raises(TimeoutError):
+        await worker_pool.reconcile()
+    new_key = await accepted(db, session)
+    assert await turns.acquire(*new_key) is None
+    monkeypatch.setattr(worker_pool, "_request", scaler.request)
+    await start_pool(scaler)
+    # Count was already one, but the new annotation forces a resource change.
+    # Without that fence, a delayed stop could kill this newly admitted turn.
+    assert await turns.acquire(*new_key) is not None
+    with pytest.raises(RuntimeError, match="etag conflict"):
+        scaler.apply(delayed[0])
+
+
+async def test_failed_cloud_operation_keeps_gate_closed_and_can_retry(db, session, scaler):
+    key = await accepted(db, session)
+    assert await worker_pool.reconcile() == "pending"
+    scaler.settle()
+    scaler.pool["terminalCondition"]["state"] = "CONDITION_FAILED"
+    assert await worker_pool.reconcile() == "pending"
+    assert await turns.acquire(*key) is None
+    await start_pool(scaler)
+    assert await turns.acquire(*key) is not None
+
+
+@pytest.mark.postgres
+async def test_new_submission_during_scale_down_cannot_start(db, session, scaler, monkeypatch):
+    if db.bind.dialect.name != "postgresql":
+        pytest.skip("set VMA_TEST_POSTGRES_URL for real row-lock contention")
+    key = await accepted(db, session)
+    await start_pool(scaler)
+    await (await turns.acquire(*key)).finish({"type": "end_turn"})
+    await age_idle(db)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def stop_in_flight(method, body=None):
+        if method == "PATCH":
+            entered.set()
+            await release.wait()
+        return await scaler.request(method, body)
+
+    monkeypatch.setattr(worker_pool, "_request", stop_in_flight)
+    stopping = asyncio.create_task(worker_pool.reconcile())
+    await asyncio.wait_for(entered.wait(), 2)
+    try:
+        new_key = await accepted(db, session)
+        acquiring = asyncio.create_task(turns.acquire(*new_key))
+        # A second controller yields instead of waiting with another connection.
+        assert await worker_pool.reconcile() == "busy"
+    finally:
+        release.set()
+    assert await asyncio.wait_for(stopping, 2) == "pending"
+    assert await asyncio.wait_for(acquiring, 2) is None

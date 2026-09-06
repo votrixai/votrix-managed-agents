@@ -60,6 +60,7 @@ from app.db.models.sessions import (
 )
 from app.db.models.skills import Skill
 from app.db.models.vma_api_keys import VMA_API_SCOPE, VmaApiKey
+from app.db.models.worker_pool import WorkerPoolControl
 
 __all__ = [
     "ACCOUNT_ACTIVE",
@@ -117,4 +118,5 @@ __all__ = [
     "VOLUME_READY",
     "VMA_API_SCOPE",
     "VmaApiKey",
+    "WorkerPoolControl",
 ]

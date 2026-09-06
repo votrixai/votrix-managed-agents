@@ -15,6 +15,26 @@ case "$APP_ENV" in
   *) echo "Invalid APP_ENV: $APP_ENV" >&2; exit 2 ;;
 esac
 POOL_NAME="${SERVICE_NAME}-pool"
+ON_DEMAND=$(sed -n '/name: VMA_WORKER_POOL_ON_DEMAND/{n;s/.*value: "\(.*\)"/\1/p;}' \
+  "${REPO_ROOT}/service.${APP_ENV}.yaml")
+case "$ON_DEMAND" in true|false) ;; *) echo "Set VMA_WORKER_POOL_ON_DEMAND to true or false." >&2; exit 1 ;; esac
+if [ "$ON_DEMAND" = true ]; then
+  SCALER_URL=$(gcloud run services describe "${POOL_NAME}-scaler" --project="$PROJECT_ID" \
+    --region="$REGION" --format='value(status.url)')
+  # Refuse activation at zero without the independently scheduled recovery path.
+  SCHEDULER_JSON=$(gcloud scheduler jobs describe "${POOL_NAME}-reconcile" \
+    --project="$PROJECT_ID" --location="$REGION" --format=json)
+  printf '%s' "$SCHEDULER_JSON" | python3 -c '
+import json, sys
+j = json.load(sys.stdin); url, account = sys.argv[1:]
+h = j.get("httpTarget", {}); oidc = h.get("oidcToken", {})
+if not (url.startswith("https://") and j.get("state") == "ENABLED"
+        and j.get("schedule") == "* * * * *" and h.get("httpMethod") == "POST"
+        and h.get("uri") == url + "/internal/worker-pool/reconcile"
+        and oidc.get("audience") == url and oidc.get("serviceAccountEmail") == account):
+    sys.exit("Run 10-setup-worker-pool-scaling.sh and enable the Scheduler job before activation")
+' "$SCALER_URL" "$SCALER_SERVICE_ACCOUNT"
+fi
 SUBSCRIPTION="vma-turns-worker${SUFFIX}"
 PUSH_ENDPOINT=$(gcloud pubsub subscriptions describe "$SUBSCRIPTION" \
   --project="$PROJECT_ID" --format='value(pushConfig.pushEndpoint)')
@@ -31,9 +51,17 @@ INSTANCE_COUNT=$(printf '%s' "$POOL_JSON" | python3 -c '
 import json, sys
 pools = json.load(sys.stdin)
 p = pools[0] if pools else {}
-print(p.get("scaling", {}).get("manualInstanceCount",
-      p.get("metadata", {}).get("annotations", {}).get("run.googleapis.com/manualInstanceCount", 1)))
-')
+on_demand = sys.argv[1] == "true"
+count = p.get("scaling", {}).get("manualInstanceCount",
+        p.get("metadata", {}).get("annotations", {}).get("run.googleapis.com/manualInstanceCount", 0 if on_demand else 1))
+if on_demand and int(count) > 1:
+    sys.exit("Disable on-demand mode in the API manifest to preserve a manually expanded pool")
+print(count)
+' "$ON_DEMAND")
+if [ "$ON_DEMAND" = true ]; then
+  gcloud run services update "${POOL_NAME}-scaler" --project="$PROJECT_ID" --region="$REGION" \
+    --image="$IMAGE" --quiet
+fi
 sed \
   -e "s|IMAGE_URL|${IMAGE}|g" \
   -e "s|__SERVICE_NAME__|${SERVICE_NAME}|g" \
@@ -42,6 +70,7 @@ sed \
   -e "s|__REGION__|${REGION}|g" \
   -e "s|__SECRET_SUFFIX__|${SUFFIX}|g" \
   -e "s|__INSTANCE_COUNT__|${INSTANCE_COUNT}|g" \
+  -e "s|__ON_DEMAND__|${ON_DEMAND}|g" \
   -e "s|__VMA_PUBLIC_BUILD_ID__|${BUILD_ID}|g" \
   -e "s|__VMA_GIT_COMMIT_SHA__|${COMMIT_SHA}|g" \
   "${REPO_ROOT}/worker-pool.yaml" | \

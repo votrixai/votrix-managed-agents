@@ -64,6 +64,7 @@ async def handle_message(message: Message) -> None:
 async def run_forever() -> None:
     from app.runtime.engine import aclose_checkpoint_pools
     from app.services.turn_execution import RECOVERY_SECONDS, recover_once
+    from app.services.worker_pool import reconcile
 
     settings = get_settings()
     if settings.turn_dispatch != "pubsub":
@@ -93,11 +94,17 @@ async def run_forever() -> None:
 
     async def recover():
         while True:
+            delay = RECOVERY_SECONDS
             try:
-                await recover_once()
+                if await reconcile(wake_only=True) in {"ready", "disabled"}:
+                    await recover_once()
+                else:
+                    # Finish the cold-start handshake as soon as Cloud Run is
+                    # ready; do not add a Scheduler minute to first output.
+                    delay = 2
             except Exception:
                 logger.exception("turn_recovery_scan_failed")
-            await asyncio.sleep(RECOVERY_SECONDS)
+            await asyncio.sleep(delay)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stopped.set)

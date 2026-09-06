@@ -750,7 +750,9 @@ async def _dispatch_turn(
     """
     if get_settings().turn_dispatch == "pubsub":
         from app.services.pubsub import publish_turn
+        from app.services.worker_pool import wake
 
+        await wake()
         await publish_turn(session_id=session_id, generation=generation)
         return
     if get_settings().turn_dispatch == "cloud":
