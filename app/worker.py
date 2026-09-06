@@ -81,5 +81,16 @@ async def run_forever() -> None:
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
 
+def main():
+    from app.config import get_settings
+
+    if get_settings().turn_dispatch == "pubsub":
+        from app.services.pubsub import run_forever as consume
+
+        asyncio.run(consume())
+    else:
+        asyncio.run(run_forever())
+
+
 if __name__ == "__main__":
-    asyncio.run(run_forever())
+    main()

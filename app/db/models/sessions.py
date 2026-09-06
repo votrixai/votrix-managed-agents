@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -114,6 +115,33 @@ class SessionEvent(Base):
     )
 
 
+class SessionTurn(Base):
+    """Durable handoff and ownership for one Pub/Sub turn.
+
+    Pub/Sub carries only the two-part key. Keeping the input in the accepting
+    transaction also lets the worker repair a commit followed by a lost publish.
+    """
+
+    __tablename__ = "session_turns"
+    __table_args__ = (Index("ix_session_turns_recovery", "done", "available_at"),)
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True,
+    )
+    generation: Mapped[int] = mapped_column(Integer, primary_key=True)
+    events: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    owner: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    history_ids: Mapped[list[str] | None] = mapped_column(JSON)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class SessionFile(Base):
     """A file this session was given to work on.
 
@@ -146,5 +174,3 @@ class SessionFile(Base):
         server_default=func.now(),
         nullable=False,
     )
-
-

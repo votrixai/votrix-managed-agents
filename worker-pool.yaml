@@ -1,0 +1,100 @@
+apiVersion: run.googleapis.com/v1
+kind: WorkerPool
+metadata:
+  name: __SERVICE_NAME__-pool
+  labels:
+    cloud.googleapis.com/location: __REGION__
+  annotations:
+    run.googleapis.com/manualInstanceCount: "__INSTANCE_COUNT__"
+spec:
+  template:
+    spec:
+      serviceAccountName: vma-runtime@__PROJECT_ID__.iam.gserviceaccount.com
+      containers:
+        - image: IMAGE_URL
+          command: ["python"]
+          args: ["-m", "app.worker"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: 4Gi
+          env:
+            - name: APP_ENV
+              value: "__APP_ENV__"
+            - name: DATABASE_SCHEMA
+              value: "vma"
+            - name: VMA_PUBLIC_BUILD_ID
+              value: "__VMA_PUBLIC_BUILD_ID__"
+            - name: VMA_GIT_COMMIT_SHA
+              value: "__VMA_GIT_COMMIT_SHA__"
+            - name: TURN_DISPATCH
+              value: "pubsub"
+            - name: VMA_WORKER_POOL_ON_DEMAND
+              value: "__ON_DEMAND__"
+            - name: VMA_WORKER_POOL
+              value: "projects/__PROJECT_ID__/locations/__REGION__/workerPools/__SERVICE_NAME__-pool"
+            - name: PUBSUB_PROJECT
+              value: "__PROJECT_ID__"
+            - name: PUBSUB_TOPIC
+              value: "vma-turns__SECRET_SUFFIX__"
+            - name: PUBSUB_SUBSCRIPTION
+              value: "vma-turns-worker__SECRET_SUFFIX__"
+            - name: VMA_WORKER_CONCURRENCY
+              value: "10"
+            - name: PUBSUB_MAX_LEASE_SECONDS
+              value: "86400"
+            - name: VMA_TURN_TIMEOUT_SECONDS
+              value: "0"
+            - name: VMA_DB_POOL_SIZE
+              value: "8"
+            - name: VMA_DB_MAX_OVERFLOW
+              value: "4"
+            - name: VMA_CHECKPOINT_POOL_MAX_SIZE
+              value: "6"
+            - name: SANDBOX_TIMEOUT_SECONDS
+              value: "360"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vma-database-url__SECRET_SUFFIX__
+                  key: latest
+            - name: VMA_CHECKPOINT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vma-database-url-direct__SECRET_SUFFIX__
+                  key: latest
+            - name: VMA_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vma-encryption-key__SECRET_SUFFIX__
+                  key: latest
+            - name: E2B_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vma-e2b-api-key__SECRET_SUFFIX__
+                  key: latest
+            - name: FIRECRAWL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vma-firecrawl-api-key__SECRET_SUFFIX__
+                  key: latest
+            - name: S3_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vma-s3-endpoint-url__SECRET_SUFFIX__
+                  key: latest
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vma-s3-access-key-id__SECRET_SUFFIX__
+                  key: latest
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vma-s3-secret-access-key__SECRET_SUFFIX__
+                  key: latest
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: vma-s3-bucket-name__SECRET_SUFFIX__
+                  key: latest

@@ -56,9 +56,11 @@ from app.db.models.sessions import (
     Session,
     SessionEvent,
     SessionFile,
+    SessionTurn,
 )
 from app.db.models.skills import Skill
 from app.db.models.vma_api_keys import VMA_API_SCOPE, VmaApiKey
+from app.db.models.worker_pool import WorkerPoolControl
 
 __all__ = [
     "ACCOUNT_ACTIVE",
@@ -101,6 +103,7 @@ __all__ = [
     "Session",
     "SessionEvent",
     "SessionFile",
+    "SessionTurn",
     "SessionMemoryStore",
     "Skill",
     "TimestampMixin",
@@ -115,4 +118,5 @@ __all__ = [
     "VOLUME_READY",
     "VMA_API_SCOPE",
     "VmaApiKey",
+    "WorkerPoolControl",
 ]

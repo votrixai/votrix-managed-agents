@@ -31,6 +31,7 @@ dependencies = [
     "e2b==2.31.0",
     "langchain-e2b==0.0.5",
     "pillow>=12.2,<13",
+    "google-cloud-pubsub>=2.34,<3",
 ]
 
 [project.scripts]

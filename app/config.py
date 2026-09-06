@@ -1,8 +1,8 @@
-from functools import lru_cache
 import re
+from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -157,10 +157,28 @@ class Settings(BaseSettings):
     max_output_files: int = 50
     max_output_bytes: int = 100 * 1024 * 1024
 
-    # How a turn gets run once a message is accepted. `inline` runs it inside
-    # the request, which is slow but needs no infrastructure — the default so a
-    # fresh clone works with no configuration. Deployments set `cloud`.
-    turn_dispatch: Literal["cloud", "inline"] = "inline"
+    # `inline` schedules in the API process. `cloud` keeps the legacy HTTP
+    # worker; `pubsub` hands a durable turn to the independent Pull worker.
+    turn_dispatch: Literal["cloud", "inline", "pubsub"] = "inline"
+
+    pubsub_project: str = ""
+    pubsub_topic: str = ""
+    pubsub_subscription: str = ""
+    vma_worker_concurrency: int = Field(default=10, ge=1, le=100)
+    # This is the SDK's message lease budget, not an execution deadline.
+    pubsub_max_lease_seconds: int = Field(default=86400, ge=3600)
+    vma_turn_max_attempts: int = Field(default=3, ge=1)
+    # Pub/Sub turns have no whole-turn deadline by default. Individual model
+    # and tool requests retain their own timeouts. Cloud Tasks stays at 20 min.
+    vma_turn_timeout_seconds: float = Field(default=0, ge=0)
+
+    # Optional 0 ↔ 1 control, only used with Pub/Sub. Empty locally; hosted
+    # deploys supply the full Cloud Run resource and Scheduler's OIDC audience.
+    vma_worker_pool_on_demand: bool = False
+    vma_worker_pool: str = ""
+    vma_worker_pool_idle_seconds: int = Field(default=900, ge=60)
+    vma_scaler_audience: str = ""
+    vma_scaler_service_account: str = ""
 
     # Only read when `turn_dispatch` is "cloud", and then all of them are
     # required. Where the queue lives, who the task authenticates as, and the
@@ -187,6 +205,10 @@ class Settings(BaseSettings):
     vma_run_sweeper: bool = False
 
     @property
+    def worker_pool_on_demand(self) -> bool:
+        return self.turn_dispatch == "pubsub" and self.vma_worker_pool_on_demand
+
+    @property
     def cors_origins(self) -> tuple[str, ...]:
         """The configured origins, in order, without blanks or duplicates."""
         seen: dict[str, None] = {}
@@ -207,6 +229,20 @@ class Settings(BaseSettings):
             r"[A-Za-z_][A-Za-z0-9_]*", self.database_schema
         ):
             raise ValueError("DATABASE_SCHEMA must be a valid PostgreSQL identifier")
+        if self.turn_dispatch == "pubsub":
+            if self.vma_worker_pool_on_demand and not re.fullmatch(
+                r"projects/[a-z0-9-]+/locations/[a-z0-9-]+/workerPools/[a-z0-9-]+",
+                self.vma_worker_pool,
+            ):
+                raise ValueError("On-demand workers require a full VMA_WORKER_POOL resource name")
+            missing = [
+                name for name in ("pubsub_project", "pubsub_topic", "pubsub_subscription")
+                if not getattr(self, name).strip()
+            ]
+            if missing:
+                raise ValueError(
+                    "TURN_DISPATCH=pubsub requires: " + ", ".join(n.upper() for n in missing)
+                )
         if self.turn_dispatch != "cloud":
             return self
         missing = [

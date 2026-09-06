@@ -14,7 +14,7 @@ from app.config import clear_settings_cache
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PREVIOUS_HEAD = "b7e1c4d9a620"
 REWIRED_RELEASE_HEAD = "b7f2d4a91c53"
-CURRENT_HEAD = "c1e7a3b58f42"
+CURRENT_HEAD = "d71f806c2e43"
 
 
 def test_member_migration_preserves_existing_owner_and_has_one_head(
@@ -72,6 +72,9 @@ def test_member_migration_preserves_existing_owner_and_has_one_head(
 
         command.upgrade(config, "head")
         with sqlite3.connect(database_path) as connection:
+            assert connection.execute(
+                "SELECT id, target, command, ready, idle_since FROM worker_pool_control"
+            ).fetchall() == [(1, 0, "", 0, None)]
             member = connection.execute(
                 """
                 SELECT id, organization_id, user_id, email, role,
@@ -102,7 +105,7 @@ def test_member_migration_preserves_existing_owner_and_has_one_head(
             "2026-08-02 10:11:12+00:00",
         )
         assert "organization_owners" not in tables
-        assert {"organization_members", "vma_api_keys"} <= tables
+        assert {"organization_members", "vma_api_keys", "session_turns"} <= tables
         assert "slug" not in organization_columns
 
         command.downgrade(config, PREVIOUS_HEAD)

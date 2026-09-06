@@ -118,6 +118,7 @@ async def execute_agent(
     attached_files: list[str] | None = None,
     attached_memory_stores: list[dict[str, Any]] | None = None,
     tool_completed: ToolCompleted | None = None,
+    recovery: Any = None,
 ) -> dict[str, Any]:
     """Run one turn to completion, or to the next point it needs the user.
 
@@ -134,6 +135,8 @@ async def execute_agent(
     cancelled turn unwinds through the next call rather than running to the end.
     """
     config = {"configurable": {"thread_id": session.id}}
+    if recovery is not None:
+        config["metadata"] = {"vma_turn_id": recovery.execution.key}
     declared = version.tools or []
 
     # DeepAgents' native tools are never filtered — whatever create_deep_agent()
@@ -211,7 +214,13 @@ async def execute_agent(
         await emit(event_types.SESSION_STATUS_RUNNING, {})
 
         state = await graph.aget_state(config)
-        if event_types.is_action_result(events[0].get("type", "")):
+        recovering = recovery is not None and recovery.matches(state)
+        if recovery is not None:
+            await recovery.prepare(state)
+        if recovering:
+            recovery.check_resume(state)
+            graph_input = None
+        elif event_types.is_action_result(events[0].get("type", "")):
             if not state.next:
                 raise UnsupportedEventError(
                     "received an action result but the graph is not paused on an interrupt"
@@ -242,11 +251,34 @@ async def execute_agent(
         # took the `emit` path would allocate a seq and a row for every quarter
         # second of a turn, and then need deleting.
         deltas = _DeltaBuffer(publish)
+
+        async def translate_message(message, sink):
+            await _translate(message, sink, tool_kind, interrupt_on, announced, tool_completed)
+
+        async def committed_messages(messages):
+            await deltas.flush()
+            for message in messages:
+                await recovery.translate(message, translate_message)
+
+        if recovery is not None:
+            recovery.install(checkpointer, committed_messages)
+            if recovering:
+                await committed_messages((state.values or {}).get("messages", []))
+
         async with timed("graph_streamed", session_id=session.id) as span:
             steps = 0
-            async for mode, payload in graph.astream(
-                graph_input, config, stream_mode=["values", "messages"]
-            ):
+            # A completed or human-paused checkpoint only needs its missing
+            # public events reconciled; invoking it again would start more work.
+            async def stream():
+                if recovering and (not state.next or state.interrupts):
+                    return
+                async for item in graph.astream(
+                    graph_input, config, stream_mode=["values", "messages"],
+                    **({"durability": "sync"} if recovery is not None else {}),
+                ):
+                    yield item
+
+            async for mode, payload in stream():
                 if mode == "messages":
                     chunk, metadata = payload
                     if (metadata or {}).get("langgraph_node") != _MODEL_NODE:
@@ -263,7 +295,9 @@ async def execute_agent(
                 # is written, and Postgres delivers one connection's
                 # notifications in the order they were issued.
                 await deltas.flush()
-                for msg in messages[last_index:]:
+                # Owned turns publish from the saver callback, after the
+                # checkpoint commit, so a replay has stable message identities.
+                for msg in messages[last_index:] if recovery is None else []:
                     await _translate(
                         msg,
                         emit,
@@ -280,7 +314,10 @@ async def execute_agent(
         # Read the graph again rather than infer: whether it stopped for a human
         # is a fact it records, and deciding for ourselves would be a second
         # opinion that can disagree with it.
-        stop_reason = _stop_reason(await graph.aget_state(config), interrupt_on)
+        final_state = await graph.aget_state(config)
+        stop_reason = _stop_reason(final_state, interrupt_on)
+        if recovery is not None:
+            await committed_messages((final_state.values or {}).get("messages", []))
         await emit(event_types.SESSION_STATUS_IDLE, {"stop_reason": stop_reason})
         # Handed back as well as emitted. The event tells the client why the
         # turn ended; the caller puts the same answer on the session row, where

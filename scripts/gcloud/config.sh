@@ -23,3 +23,4 @@ STAGING_TASKS_QUEUE="vma-turns-staging"
 
 RUNTIME_SERVICE_ACCOUNT_NAME="vma-runtime"
 RUNTIME_SERVICE_ACCOUNT="${RUNTIME_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+SCALER_SERVICE_ACCOUNT="vma-pool-scheduler@${PROJECT_ID}.iam.gserviceaccount.com"

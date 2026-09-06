@@ -66,6 +66,11 @@ steps:
           --wait \
           --quiet
 
+        if sed -n '/name: TURN_DISPATCH/{n;p;}' "${_SERVICE_CONFIG}" | grep -q '"pubsub"'; then
+          sh scripts/gcloud/deploy-pubsub.sh "${_APP_ENV}" "${_REGION}" "$$IMAGE" "${SHORT_SHA}" "${COMMIT_SHA}"
+          exit 0
+        fi
+
         WORKER_URL=$$(gcloud run services describe "$$WORKER_SERVICE" \
           --project="${PROJECT_ID}" \
           --region="${_REGION}" \
