@@ -34,7 +34,9 @@ class Environment(TimestampMixin, Base):
     # normal shape of that history — the id is what identifies them apart.
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    # {"packages": {"pip": [...], "apt": [...], ...}}
+    # {"steps": [{"apt": [...]}, {"run": "..."}, ...], "cpu": ..., "memory_mb": ...}
+    # Rows written before build steps existed hold a legacy {"packages": {...}}
+    # block instead; EnvironmentConfig reads either shape.
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     # The image itself, over at the sandbox provider — the provider's own id,

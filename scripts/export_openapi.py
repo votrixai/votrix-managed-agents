@@ -1022,10 +1022,11 @@ COMPONENT_DESCRIPTIONS = {
         "Fields to change on an Environment. A supplied config replaces the "
         "complete previous recipe."
     ),
-    "PackagesConfig": (
-        "Packages installed while building an Environment image. Entries use "
-        "each manager's own version syntax and unpinned entries select that "
-        "manager's current version."
+    "BuildStep": (
+        "One step of an Environment image build, run in the order the steps are "
+        "listed. Set exactly one field: `run` for an arbitrary root command, or "
+        "one manager shorthand (apt, cargo, gem, go, npm, pip). Entries use each "
+        "manager's own version syntax; unpinned entries select its current version."
     ),
     "FileResource": (
         "A File attached when a Session is created. `path` is relative to "
@@ -1190,8 +1191,10 @@ PROPERTY_DESCRIPTIONS = {
         "Complete replacement recipe. Include every package list and machine "
         "setting the updated Environment should keep."
     ),
-    ("EnvironmentConfig", "packages"): (
-        "Packages installed into the image through apt, cargo, gem, go, npm, or pip."
+    ("EnvironmentConfig", "steps"): (
+        "Ordered image build steps. A later step can rely on what an earlier one "
+        "installed, so a step may add a package source, the next install from it, "
+        "and a last initialize the tool it brought in."
     ),
     ("EnvironmentConfig", "cpu"): (
         "CPU count baked into a custom Environment image. Defaults to 2."
@@ -1199,12 +1202,13 @@ PROPERTY_DESCRIPTIONS = {
     ("EnvironmentConfig", "memory_mb"): (
         "Memory in MiB baked into a custom Environment image. Defaults to 1,024."
     ),
-    ("PackagesConfig", "apt"): "Packages passed to apt install.",
-    ("PackagesConfig", "cargo"): "Packages passed to cargo install.",
-    ("PackagesConfig", "gem"): "Packages passed to gem install.",
-    ("PackagesConfig", "go"): "Packages passed to go install.",
-    ("PackagesConfig", "npm"): "Packages installed globally with npm.",
-    ("PackagesConfig", "pip"): "Packages passed to pip install.",
+    ("BuildStep", "run"): "An arbitrary command run as root during the build.",
+    ("BuildStep", "apt"): "Packages passed to apt install.",
+    ("BuildStep", "cargo"): "Packages passed to cargo install.",
+    ("BuildStep", "gem"): "Packages passed to gem install.",
+    ("BuildStep", "go"): "Packages passed to go install.",
+    ("BuildStep", "npm"): "Packages installed globally with npm.",
+    ("BuildStep", "pip"): "Packages passed to pip install.",
     ("EnvironmentResponse", "config"): (
         "The complete stored package and machine recipe."
     ),

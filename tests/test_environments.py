@@ -66,7 +66,56 @@ async def test_declaring_packages_starts_a_build(client, headers, builds):
     )
 
     assert response.json()["build_state"] == "building"
-    assert builds.started[0]["packages"] == {"pip": ["pandas"], "npm": ["express"]}
+    # A legacy packages block builds in the fixed manager order (…npm, pip).
+    assert builds.started[0]["steps"] == [{"npm": ["express"]}, {"pip": ["pandas"]}]
+
+
+async def test_declaring_steps_builds_them_in_the_order_given(client, headers, builds):
+    """A step's `run` is the general form; the order is what makes it work —
+    add a source, install from it, then initialize the tool just installed."""
+    response = await create(
+        client,
+        headers,
+        config={
+            "steps": [
+                {"run": "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"},
+                {"apt": ["nodejs"]},
+                {"npm": ["hyperframes@0.8.30"]},
+                {"run": "npx hyperframes browser ensure"},
+            ]
+        },
+    )
+
+    assert response.json()["build_state"] == "building"
+    assert builds.started[0]["steps"] == [
+        {"run": "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"},
+        {"apt": ["nodejs"]},
+        {"npm": ["hyperframes@0.8.30"]},
+        {"run": "npx hyperframes browser ensure"},
+    ]
+
+
+async def test_a_legacy_packages_config_is_read_as_steps(client, headers, builds):
+    """Rows and clients from before build steps still work: the packages block
+    is translated to steps in the order it used to build in."""
+    response = await create(
+        client, headers, config={"packages": {"pip": ["pandas"], "apt": ["ffmpeg"]}}
+    )
+
+    assert response.json()["build_state"] == "building"
+    assert builds.started[0]["steps"] == [{"apt": ["ffmpeg"]}, {"pip": ["pandas"]}]
+    # The response only ever speaks the new shape.
+    assert "packages" not in response.json()["config"]
+    assert response.json()["config"]["steps"] == [{"apt": ["ffmpeg"]}, {"pip": ["pandas"]}]
+
+
+async def test_a_step_must_set_exactly_one_action(client, headers, builds):
+    response = await create(
+        client, headers, config={"steps": [{"apt": ["ffmpeg"], "run": "echo hi"}]}
+    )
+
+    assert response.status_code == 422
+    assert builds.started == []
 
 
 async def test_the_image_is_named_after_the_environment_not_the_label(client, headers, builds):
@@ -168,7 +217,7 @@ async def test_changing_packages_rebuilds(client, headers, builds):
     )).json()
 
     assert len(builds.started) == 2
-    assert builds.started[1]["packages"] == {"pip": ["pandas", "numpy"]}
+    assert builds.started[1]["steps"] == [{"pip": ["pandas", "numpy"]}]
     assert body["build_state"] == "building"
 
 

@@ -428,7 +428,7 @@ class Image:
         db: AsyncSession,
         environment: Environment,
         *,
-        packages: dict[str, list[str]],
+        steps: list[dict[str, Any]],
         cpu: int,
         memory_mb: int,
     ) -> Image:
@@ -436,7 +436,7 @@ class Image:
 
         Installing a real package set takes minutes, which no HTTP request
         should sit through. E2B caches build layers, so re-declaring the same
-        packages is cheap.
+        steps is cheap.
 
         The image is named after the environment's id rather than the label the
         user chose: template names are global at the provider, and two
@@ -447,10 +447,16 @@ class Image:
         want very different machines.
         """
         builder = AsyncTemplate().from_base_image()
-        for manager in PACKAGE_MANAGERS:
-            entries = packages.get(manager) or []
-            if entries:
-                builder = _install(builder, manager, entries)
+        for step in steps:
+            command = step.get("run")
+            if command is not None:
+                builder = builder.run_cmd(command, user="root")
+                continue
+            for manager in PACKAGE_MANAGERS:
+                entries = step.get(manager)
+                if entries:
+                    builder = _install(builder, manager, entries)
+                    break
 
         build = await AsyncTemplate.build_in_background(
             builder,
